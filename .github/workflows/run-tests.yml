@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [ beta, main, canary ]
     types: [ opened, synchronize, reopened ]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: run-tests-${{ github.head_ref || github.ref }}
+  group: run-tests-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
