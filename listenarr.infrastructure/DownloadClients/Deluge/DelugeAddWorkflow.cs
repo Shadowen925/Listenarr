@@ -10,7 +10,6 @@
 
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Listenarr.Infrastructure.Torrents;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.DownloadClients.Deluge

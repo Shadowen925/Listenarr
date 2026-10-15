@@ -11,9 +11,7 @@
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Mocks.Api;
-using Listenarr.Infrastructure.Torrents;
 using Listenarr.Domain.Downloads.Exceptions;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Deluge
 {

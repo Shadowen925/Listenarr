@@ -1123,16 +1123,17 @@ const displayBasePath = computed(() => {
   const year = audiobook.value?.publishYear || ''
   const seriesNumber = audiobook.value?.seriesNumber || ''
   const numericSeriesNumber = Number(seriesNumber)
-  const seriesBook = series && seriesNumber
-    ? `Book ${
-        Number.isFinite(numericSeriesNumber)
-          ? numericSeriesNumber.toLocaleString(undefined, {
-              minimumIntegerDigits: 2,
-              useGrouping: false,
-            })
-          : seriesNumber
-      }`
-    : ''
+  const seriesBook =
+    series && seriesNumber
+      ? `Book ${
+          Number.isFinite(numericSeriesNumber)
+            ? numericSeriesNumber.toLocaleString(undefined, {
+                minimumIntegerDigits: 2,
+                useGrouping: false,
+              })
+            : seriesNumber
+        }`
+      : ''
 
   // Basic variable replacement mirroring server pattern keys
   let relative = pattern

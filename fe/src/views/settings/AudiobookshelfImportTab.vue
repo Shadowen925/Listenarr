@@ -43,7 +43,9 @@
           </button>
         </div>
       </div>
-      <p v-if="connection.hasSavedApiKey" class="muted">An API key is saved; it is never returned to the browser.</p>
+      <p v-if="connection.hasSavedApiKey" class="muted">
+        An API key is saved; it is never returned to the browser.
+      </p>
     </div>
 
     <div v-if="libraries.length > 0" class="form-section">
@@ -64,7 +66,9 @@
         </select>
         <span v-if="mappingRootId === root.id" class="muted">Saving…</span>
       </div>
-      <p v-if="rootFolders.length === 0" class="muted">Add a Listenarr root folder before importing.</p>
+      <p v-if="rootFolders.length === 0" class="muted">
+        Add a Listenarr root folder before importing.
+      </p>
     </div>
 
     <div v-if="libraries.length > 0" class="form-section">
@@ -297,9 +301,7 @@ async function loadPreview() {
   try {
     preview.value = await apiService.previewAudiobookshelfImport(selectedLibraryId.value)
     selectedItemIds.value = new Set(
-      preview.value.items
-        .filter((item) => item.status === 'Matched')
-        .map((item) => item.itemId),
+      preview.value.items.filter((item) => item.status === 'Matched').map((item) => item.itemId),
     )
   } catch (reason) {
     error.value = errorMessage(reason)
@@ -320,10 +322,9 @@ async function importSelected() {
   importing.value = true
   error.value = ''
   try {
-    importResult.value = await apiService.importAudiobookshelfItems(
-      selectedLibraryId.value,
-      [...selectedItemIds.value],
-    )
+    importResult.value = await apiService.importAudiobookshelfItems(selectedLibraryId.value, [
+      ...selectedItemIds.value,
+    ])
     await loadPreview()
   } catch (reason) {
     error.value = errorMessage(reason)
