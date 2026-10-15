@@ -282,6 +282,54 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.RootFolders
         }
 
         [Fact]
+        public async Task Update_AudiobookshelfMapping_IsSavedReturnedReloadedAndCleared()
+        {
+            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options;
+            var factory = new TestDbFactory(options);
+            var repository = new EfRootFolderRepository(
+                factory,
+                Mock.Of<ILogger<EfRootFolderRepository>>());
+            var rootPath = Path.Combine(Path.GetTempPath(), "abs-map-" + Guid.NewGuid().ToString("N"));
+            var semantics = FileSystemPathSemantics.CurrentHostDefault;
+            var root = new RootFolder
+            {
+                Name = "Library",
+                Path = rootPath,
+                CaseSensitivityMode = semantics.CaseSensitivity == FileSystemCaseSensitivity.Sensitive
+                    ? FileSystemCaseSensitivityMode.Sensitive
+                    : FileSystemCaseSensitivityMode.Insensitive,
+                ResolvedCaseSensitivity = semantics.CaseSensitivity,
+                PathIdentityState = PathIdentityState.Valid,
+                PathIdentityKey = FileSystemPathIdentity.CreateKey("root", rootPath, semantics)
+            };
+            await repository.AddAsync(root);
+            var service = new RootFolderService(repository, null);
+
+            RootFolder Request(string? library) => new()
+            {
+                Id = root.Id,
+                Name = root.Name,
+                Path = root.Path,
+                IsDefault = root.IsDefault,
+                CaseSensitivityMode = root.CaseSensitivityMode,
+                AudiobookshelfLibraryId = library
+            };
+
+            var saved = await service.UpdateAsync(Request(" lib-1 "));
+            Assert.Equal("lib-1", saved.AudiobookshelfLibraryId);
+            var reloaded = new EfRootFolderRepository(
+                factory,
+                Mock.Of<ILogger<EfRootFolderRepository>>());
+            Assert.Equal("lib-1", (await reloaded.GetByIdAsync(root.Id))!.AudiobookshelfLibraryId);
+
+            var cleared = await service.UpdateAsync(Request(null));
+            Assert.Null(cleared.AudiobookshelfLibraryId);
+            Assert.Null((await reloaded.GetByIdAsync(root.Id))!.AudiobookshelfLibraryId);
+        }
+
+        [Fact]
         public async Task Update_MetadataOnly_WhenAuthorizedStorageIsOffline_DoesNotRequireFilesystemAccess()
         {
             var options = new DbContextOptionsBuilder<ListenArrDbContext>()

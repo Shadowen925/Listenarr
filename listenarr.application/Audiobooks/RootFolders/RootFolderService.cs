@@ -222,6 +222,9 @@ namespace Listenarr.Application.Audiobooks.RootFolders
                 persistedSemantics.Semantics);
             existing.Name = root.Name;
             existing.IsDefault = root.IsDefault;
+            existing.AudiobookshelfLibraryId = string.IsNullOrWhiteSpace(root.AudiobookshelfLibraryId)
+                ? null
+                : root.AudiobookshelfLibraryId.Trim();
             var conflict = await FindConflictingRootFolderAsync(
                 existing.Path,
                 persistedSemantics.Semantics,
