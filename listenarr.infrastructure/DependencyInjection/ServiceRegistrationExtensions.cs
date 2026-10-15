@@ -30,6 +30,7 @@ public static class ServiceRegistrationExtensions
         services.AddDownloadClientHttpClients();
         services.AddDownloadHttpClients();
         services.AddMetadataHttpClients(configuration);
+        services.AddAudiobookshelfHttpClient();
         return services;
     }
 

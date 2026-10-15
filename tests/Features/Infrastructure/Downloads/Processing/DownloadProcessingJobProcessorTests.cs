@@ -492,7 +492,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             var processor = _provider.GetRequiredService<DownloadProcessingJobProcessor>();
             await processor.ProcessQueueAsync(CancellationToken.None);
 
-            Assert.True(File.Exists(Path.Join(basePath, "Target Book.m4b")));
+            Assert.True(File.Exists(Path.Join(basePath, "Unknown Author - Target Book.m4b")));
             Assert.True(File.Exists(Path.Join(basePath, "cover.jpg")));
             Assert.False(File.Exists(Path.Join(basePath, "Different Book.m4b")));
         }

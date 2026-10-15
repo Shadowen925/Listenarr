@@ -145,6 +145,7 @@
               <li><code>{Author}</code> - Author name</li>
               <li><code>{Narrator}</code> - Narrator name(s)</li>
               <li><code>{Series}</code> - Series name</li>
+              <li><code>{SeriesBook}</code> - Optional "Book XX" label for books in a series</li>
               <li><code>{Title}</code> - Book title</li>
               <li><code>{Subtitle}</code> - Book subtitle</li>
               <li><code>{Edition}</code> - User-defined edition label</li>
@@ -168,6 +169,7 @@
               <li><code>{Author}</code> - Author name</li>
               <li><code>{Narrator}</code> - Narrator name(s)</li>
               <li><code>{Series}</code> - Series name</li>
+              <li><code>{SeriesBook}</code> - Optional "Book XX" label for books in a series</li>
               <li><code>{Title}</code> - Book title</li>
               <li><code>{Subtitle}</code> - Book subtitle</li>
               <li><code>{Edition}</code> - User-defined edition label</li>
@@ -225,13 +227,14 @@ const sampleVariables = {
   Author: 'Stephen King',
   Narrator: 'George Guidall',
   Series: 'The Dark Tower',
+  SeriesBook: 'Book 02',
   Title: 'The Gunslinger',
   Subtitle: 'The Dark Tower Begins',
   Edition: 'Revised Edition',
   Publisher: 'Penguin Audio',
   Language: 'English',
   Asin: 'B000FC1R84',
-  SeriesNumber: '1',
+  SeriesNumber: '2',
   Year: '1982',
   DiskNumber: '3',
   ChapterNumber: '3',

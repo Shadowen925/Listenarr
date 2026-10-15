@@ -22,6 +22,10 @@ import type {
   DownloadClientConfiguration,
   ApplicationSettings,
   ProwlarrImportConnectionSettings,
+  AudiobookshelfImportConnectionSettings,
+  AudiobookshelfLibrary,
+  AudiobookshelfImportPreview,
+  AudiobookshelfImportResult,
   Audiobook,
   AudiobookUpdateRequest,
   History,
@@ -880,6 +884,53 @@ class ApiService {
     return this.request<ProwlarrImportConnectionSettings>('/configuration/prowlarr-import')
   }
 
+  async getAudiobookshelfImportSettings(): Promise<AudiobookshelfImportConnectionSettings> {
+    return this.request<AudiobookshelfImportConnectionSettings>('/audiobookshelf/settings')
+  }
+
+  async saveAudiobookshelfImportSettings(
+    settings: AudiobookshelfImportConnectionSettings,
+  ): Promise<AudiobookshelfImportConnectionSettings> {
+    return this.request<AudiobookshelfImportConnectionSettings>('/audiobookshelf/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  }
+
+  async testAudiobookshelfConnection(): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>('/audiobookshelf/test', {
+      method: 'POST',
+    })
+  }
+
+  async getAudiobookshelfLibraries(): Promise<AudiobookshelfLibrary[]> {
+    return this.request<AudiobookshelfLibrary[]>('/audiobookshelf/libraries')
+  }
+
+  async previewAudiobookshelfImport(libraryId: string): Promise<AudiobookshelfImportPreview> {
+    return this.request<AudiobookshelfImportPreview>('/audiobookshelf/import/preview', {
+      method: 'POST',
+      body: JSON.stringify({ libraryId }),
+    })
+  }
+
+  async importAudiobookshelfItems(
+    libraryId: string,
+    itemIds: string[],
+  ): Promise<AudiobookshelfImportResult> {
+    return this.request<AudiobookshelfImportResult>('/audiobookshelf/import', {
+      method: 'POST',
+      body: JSON.stringify({ libraryId, itemIds }),
+    })
+  }
+
+  async triggerAudiobookshelfLibraryScan(libraryId: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(
+      `/audiobookshelf/libraries/${encodeURIComponent(libraryId)}/scan`,
+      { method: 'POST' },
+    )
+  }
+
   // Root Folders
   async getRootFolders(): Promise<RootFolder[]> {
     return this.request<RootFolder[]>('/rootfolders')
@@ -911,6 +962,16 @@ class ApiService {
         isDefault: root.isDefault === true,
         caseSensitivityMode: root.caseSensitivityMode ?? 'Auto',
       }),
+    })
+  }
+
+  async updateRootFolderAudiobookshelfMapping(
+    id: number,
+    libraryId: string | null,
+  ): Promise<RootFolder> {
+    return this.request<RootFolder>(`/rootfolders/${id}/audiobookshelf`, {
+      method: 'PATCH',
+      body: JSON.stringify({ libraryId }),
     })
   }
 

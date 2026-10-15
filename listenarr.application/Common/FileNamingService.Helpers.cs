@@ -79,6 +79,7 @@ namespace Listenarr.Application.Common
                 // For Series we must not fallback to Album or Title - when Series is blank we want
                 // the variable to be empty so ApplyNamingPattern can remove any adjacent separators
                 { "Series", string.IsNullOrWhiteSpace(metadata.Series) ? string.Empty : SanitizePathComponent(metadata.Series) },
+                { "SeriesBook", SeriesBookLabel(metadata.Series, metadata.SeriesPosition?.ToString(CultureInfo.InvariantCulture)) },
                 { "Title", SanitizePathComponent(FirstNonEmpty(metadata.Title, "Unknown Title")) },
                 { "Subtitle", string.IsNullOrWhiteSpace(metadata.Subtitle) ? string.Empty : SanitizePathComponent(metadata.Subtitle) },
                 { "Edition", string.IsNullOrWhiteSpace(metadata.Edition) ? string.Empty : SanitizePathComponent(metadata.Edition) },
@@ -107,6 +108,7 @@ namespace Listenarr.Application.Common
             {
                 { "Author", SanitizePathComponent(author) },
                 { "Series", string.IsNullOrWhiteSpace(metadata.Series) ? string.Empty : SanitizePathComponent(metadata.Series) },
+                { "SeriesBook", SeriesBookLabel(metadata.Series, metadata.SeriesNumber?.ToString()) },
                 { "Title", SanitizePathComponent(FirstNonEmpty(metadata.Title, "Unknown Title")) },
                 { "Subtitle", string.IsNullOrWhiteSpace(metadata.Subtitle) ? string.Empty : SanitizePathComponent(metadata.Subtitle) },
                 { "Edition", string.IsNullOrWhiteSpace(metadata.Edition) ? string.Empty : SanitizePathComponent(metadata.Edition) },
@@ -125,6 +127,23 @@ namespace Listenarr.Application.Common
         private static string FirstNonEmpty(params string?[] candidates)
         {
             return candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? string.Empty;
+        }
+
+        private static string SeriesBookLabel(string? series, string? seriesNumber)
+        {
+            if (string.IsNullOrWhiteSpace(series)
+                || string.IsNullOrWhiteSpace(seriesNumber))
+            {
+                return string.Empty;
+            }
+
+            return decimal.TryParse(
+                seriesNumber,
+                NumberStyles.Number,
+                CultureInfo.InvariantCulture,
+                out var position)
+                ? $"Book {position.ToString("00.##", CultureInfo.InvariantCulture)}"
+                : $"Book {seriesNumber.Trim()}";
         }
 
         // Heuristic: sometimes metadata.Artist can contain the title/series (noisy tags).

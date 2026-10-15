@@ -334,6 +334,7 @@ export interface RootFolder {
   canRetireAfterVerifiedCopy?: boolean
   weakStorageSourceCleanupPolicy?: 'RetainSource' | 'DeleteSourceAfterVerifiedCopy'
   weakStoragePolicyRevision?: number
+  audiobookshelfLibraryId?: string | null
   confirmationToken?: string | null
   activeRelocation?: RootFolderPathChangeResult | null
 }
@@ -490,6 +491,42 @@ export interface ProwlarrImportConnectionSettings {
   port?: number
   tagFilter?: string
   hasSavedApiKey: boolean
+}
+
+export interface AudiobookshelfImportConnectionSettings {
+  url: string
+  apiKey?: string | null
+  hasSavedApiKey: boolean
+}
+
+export interface AudiobookshelfLibrary {
+  id: string
+  name: string
+  mediaType?: string | null
+  folderPaths: string[]
+}
+
+export interface AudiobookshelfImportPreviewItem {
+  itemId: string
+  title: string
+  author: string
+  audiobookshelfPath: string
+  listenarrPath?: string | null
+  rootFolderId?: number | null
+  status: 'Matched' | 'Unmatched' | 'Duplicate'
+  missingIdentifiers: boolean
+  reason?: string | null
+}
+
+export interface AudiobookshelfImportPreview {
+  libraryId: string
+  items: AudiobookshelfImportPreviewItem[]
+}
+
+export interface AudiobookshelfImportResult {
+  importedCount: number
+  skippedCount: number
+  messages: string[]
 }
 
 export interface StartupConfig {

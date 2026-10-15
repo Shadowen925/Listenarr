@@ -15,6 +15,7 @@ namespace Listenarr.Domain.Configuration
         // {Narrator} - Narrator name(s)
         // {Series} - Series name (if applicable)
         // {SeriesNumber} - Position in series (e.g., "1", "2")
+        // {SeriesBook} - Optional "Book XX" label for a series position
         // {Title} - Book/audiobook title
         // {Subtitle} - Book subtitle
         // {Edition} - User-defined edition label
@@ -22,7 +23,8 @@ namespace Listenarr.Domain.Configuration
         // {Language} - Metadata language
         // {Asin} - Audible ASIN
         // {Year} - Publication year
-        public string FolderNamingPattern { get; set; } = "{Author}/{Series}/{Title}";
+        public string FolderNamingPattern { get; set; } =
+            "{Author} - {Series}/{Author} - {Series} - {SeriesBook} - {Title}";
 
         // File naming pattern for SINGLE-FILE imports (one audio file per audiobook)
         // Available variables:
@@ -30,6 +32,7 @@ namespace Listenarr.Domain.Configuration
         // {Narrator} - Narrator name(s)
         // {Series} - Series name (if applicable)
         // {SeriesNumber} - Position in series (e.g., "1", "2")
+        // {SeriesBook} - Optional "Book XX" label for a series position
         // {Title} - Book/audiobook title
         // {Subtitle} - Book subtitle
         // {Edition} - User-defined edition label
@@ -38,7 +41,8 @@ namespace Listenarr.Domain.Configuration
         // {Asin} - Audible ASIN
         // {Year} - Publication year
         // {Quality} - Audio quality (e.g., "64kbps mp3")
-        public string FileNamingPattern { get; set; } = "{Title}";
+        public string FileNamingPattern { get; set; } =
+            "{Author} - {Series} - {SeriesBook} - {Title}";
 
         // File naming pattern for MULTI-FILE imports (multiple audio files per audiobook)
         // Use {DiskNumber} or {DiskNumber:00}, {ChapterNumber} or {ChapterNumber:00} to differentiate files
@@ -47,6 +51,7 @@ namespace Listenarr.Domain.Configuration
         // {Narrator} - Narrator name(s)
         // {Series} - Series name (if applicable)
         // {SeriesNumber} - Position in series (e.g., "1", "2")
+        // {SeriesBook} - Optional "Book XX" label for a series position
         // {Title} - Book/audiobook title
         // {Subtitle} - Book subtitle
         // {Edition} - User-defined edition label
@@ -57,7 +62,8 @@ namespace Listenarr.Domain.Configuration
         // {ChapterNumber} or {ChapterNumber:00} - Chapter number (00 = zero-padded)
         // {Year} - Publication year
         // {Quality} - Audio quality (e.g., "64kbps mp3")
-        public string MultiFileNamingPattern { get; set; } = "{Title}-{DiskNumber:00}-{ChapterNumber:00}";
+        public string MultiFileNamingPattern { get; set; } =
+            "{Author} - {Series} - {SeriesBook} - {Title} - Part {DiskNumber:00}-{ChapterNumber:00}";
 
         public bool EnableMetadataProcessing { get; set; } = true;
         public bool EnableCoverArtDownload { get; set; } = true;
@@ -190,6 +196,16 @@ namespace Listenarr.Domain.Configuration
         /// When set, only indexers with this tag are imported and the audiobook category filter is bypassed.
         /// </summary>
         public string? ProwlarrTagFilter { get; set; }
+
+        /// <summary>
+        /// Audiobookshelf server URL used for library synchronization.
+        /// </summary>
+        public string? AudiobookshelfUrl { get; set; }
+
+        /// <summary>
+        /// Protected Audiobookshelf API key used for server-side requests.
+        /// </summary>
+        public string? AudiobookshelfApiKeyEncrypted { get; set; }
 
         /// <summary>
         /// Primary command group name (e.g. "request"). We'll create a slash command with this group and

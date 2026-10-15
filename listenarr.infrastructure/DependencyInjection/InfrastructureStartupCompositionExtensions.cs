@@ -80,6 +80,12 @@ public static class InfrastructureStartupCompositionExtensions
                     "[Startup] Normalized {Count} legacy move job row(s) after applying durable move migrations",
                     repairedPostMigrationData.MoveJobsRepaired);
             }
+            if (repairedPostMigrationData.NamingDefaultsUpdated > 0)
+            {
+                Log.Logger.Information(
+                    "[Startup] Updated {Count} unchanged built-in audiobook naming default(s) to the current organization pattern",
+                    repairedPostMigrationData.NamingDefaultsUpdated);
+            }
             Log.Logger.Information("[Startup] EF Core migrations applied successfully");
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)

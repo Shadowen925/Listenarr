@@ -45,6 +45,9 @@ namespace Listenarr.Domain.Audiobooks
         public string? OpenLibraryId { get; set; }
         // Typed external identifiers for robust metadata/image lookup and manual correction.
         public List<AudiobookExternalIdentifier>? ExternalIdentifiers { get; set; }
+        public string? AudiobookshelfLibraryId { get; set; }
+        public string? AudiobookshelfItemId { get; set; }
+        public bool AudiobookshelfMetadataAuthoritative { get; set; }
         public string? Publisher { get; set; }
         public string? Language { get; set; }
         public int? Runtime { get; set; }

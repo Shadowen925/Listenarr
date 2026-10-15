@@ -1,9 +1,9 @@
-using Listenarr.Application.Downloads.Common;
-using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 
 namespace Listenarr.Tests.Features.Application.Downloads.Submission
 {
+    [Trait("Name", nameof(DelugeSelectionAndMetadataTests))]
+    [Trait("Category", "Application")]
     public class DelugeSelectionAndMetadataTests : BaseTests
     {
         [Fact]

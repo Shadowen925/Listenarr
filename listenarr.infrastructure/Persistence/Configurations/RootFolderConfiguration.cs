@@ -36,6 +36,11 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
 
             builder.Property(r => r.Name).HasMaxLength(200).IsRequired();
             builder.Property(r => r.Path).HasMaxLength(1000).IsRequired();
+            builder.Property(r => r.AudiobookshelfLibraryId).HasMaxLength(128);
+            builder.HasIndex(r => r.AudiobookshelfLibraryId)
+                .IsUnique()
+                .HasDatabaseName("IX_RootFolders_AudiobookshelfLibraryId")
+                .HasFilter("\"AudiobookshelfLibraryId\" IS NOT NULL");
             builder.Property(r => r.IsDefault).HasDefaultValue(false);
             builder.Property(r => r.CaseSensitivityMode)
                 .HasConversion<string>()

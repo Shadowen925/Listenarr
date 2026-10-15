@@ -1,6 +1,13 @@
 
 namespace Listenarr.Application.Configuration.Contracts
 {
+    public sealed class AudiobookshelfImportConnectionSettings
+    {
+        public string Url { get; set; } = string.Empty;
+        public string? ApiKey { get; set; }
+        public bool HasSavedApiKey { get; set; }
+    }
+
     /// <summary>
     /// Manages application configuration including APIs, download clients, and settings
     /// </summary>
@@ -83,6 +90,18 @@ namespace Listenarr.Application.Configuration.Contracts
         /// </summary>
         /// <param name="settings">The connection settings to save.</param>
         Task<ProwlarrImportConnectionSettings> SaveProwlarrImportSettingsAsync(ProwlarrImportConnectionSettings settings);
+
+        /// <summary>
+        /// Gets Audiobookshelf connection settings. The API key is included only for server-side use.
+        /// </summary>
+        Task<AudiobookshelfImportConnectionSettings> GetAudiobookshelfImportSettingsAsync(
+            bool includeSecret = false);
+
+        /// <summary>
+        /// Saves Audiobookshelf connection settings while protecting the API key at rest.
+        /// </summary>
+        Task<AudiobookshelfImportConnectionSettings> SaveAudiobookshelfImportSettingsAsync(
+            AudiobookshelfImportConnectionSettings settings);
 
         /// <summary>
         /// Gets the startup configuration

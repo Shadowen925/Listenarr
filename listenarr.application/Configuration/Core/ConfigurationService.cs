@@ -160,6 +160,13 @@ namespace Listenarr.Application.Configuration.Core
                     {
                         settings.ProwlarrApiKeyEncrypted = existing.ProwlarrApiKeyEncrypted;
                     }
+                    if (string.IsNullOrWhiteSpace(settings.AudiobookshelfUrl))
+                        settings.AudiobookshelfUrl = existing.AudiobookshelfUrl;
+                    if (string.IsNullOrWhiteSpace(settings.AudiobookshelfApiKeyEncrypted)
+                        || string.Equals(settings.AudiobookshelfApiKeyEncrypted, ApiResponseRedactor.RedactedValue, StringComparison.Ordinal))
+                    {
+                        settings.AudiobookshelfApiKeyEncrypted = existing.AudiobookshelfApiKeyEncrypted;
+                    }
                     if (settings.EnabledNotificationTriggers == null)
                         settings.EnabledNotificationTriggers = existing.EnabledNotificationTriggers;
                     if (settings.Webhooks == null)
@@ -318,6 +325,59 @@ namespace Listenarr.Application.Configuration.Core
                 logger.LogError(ex, "Error saving Prowlarr import settings");
                 throw;
             }
+        }
+
+        public async Task<AudiobookshelfImportConnectionSettings> GetAudiobookshelfImportSettingsAsync(
+            bool includeSecret = false)
+        {
+            var settings = await settingsRepository.GetAsync();
+            var result = new AudiobookshelfImportConnectionSettings
+            {
+                Url = settings?.AudiobookshelfUrl?.Trim() ?? string.Empty,
+                HasSavedApiKey = !string.IsNullOrWhiteSpace(settings?.AudiobookshelfApiKeyEncrypted)
+            };
+
+            if (includeSecret && result.HasSavedApiKey)
+            {
+                try
+                {
+                    result.ApiKey = secretProtector.Unprotect(settings!.AudiobookshelfApiKeyEncrypted!);
+                }
+                catch (Exception exception) when (
+                    exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
+                {
+                    logger.LogWarning(exception, "Failed to decrypt saved Audiobookshelf API key");
+                    result.HasSavedApiKey = false;
+                }
+            }
+
+            return result;
+        }
+
+        public async Task<AudiobookshelfImportConnectionSettings> SaveAudiobookshelfImportSettingsAsync(
+            AudiobookshelfImportConnectionSettings settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+            var url = settings.Url?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(url)
+                && (!Uri.TryCreate(url, UriKind.Absolute, out var parsedUrl)
+                    || parsedUrl.Scheme is not ("http" or "https")
+                    || !string.IsNullOrEmpty(parsedUrl.UserInfo)
+                    || !string.IsNullOrEmpty(parsedUrl.Fragment)))
+            {
+                throw new ArgumentException("Audiobookshelf URL must be an absolute HTTP or HTTPS URL.", nameof(settings));
+            }
+
+            var existing = await settingsRepository.GetAsync() ?? new ApplicationSettings { Id = 1 };
+            existing.AudiobookshelfUrl = url;
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey)
+                && !string.Equals(settings.ApiKey, ApiResponseRedactor.RedactedValue, StringComparison.Ordinal))
+            {
+                existing.AudiobookshelfApiKeyEncrypted = secretProtector.Protect(settings.ApiKey.Trim());
+            }
+
+            await settingsRepository.SaveAsync(existing);
+            return await GetAudiobookshelfImportSettingsAsync();
         }
 
         private string? TryUnprotectProwlarrApiKey(string? encryptedApiKey)

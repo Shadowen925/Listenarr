@@ -27,6 +27,7 @@ namespace Listenarr.Api.Features.Library
         string Path,
         string? PathSyntax,
         bool IsDefault,
+        string? AudiobookshelfLibraryId,
         string CaseSensitivityMode,
         string ResolvedCaseSensitivity,
         string PathIdentityState,
@@ -53,6 +54,8 @@ namespace Listenarr.Api.Features.Library
         string Name,
         bool IsDefault,
         FileSystemCaseSensitivityMode CaseSensitivityMode);
+
+    public sealed record RootFolderAudiobookshelfMappingRequest(string? LibraryId);
 
     public sealed record RootFolderPathChangeRequest(
         string TargetPath,
@@ -170,7 +173,8 @@ namespace Listenarr.Api.Features.Library
                     Name = request.Name,
                     Path = request.Path,
                     IsDefault = request.IsDefault,
-                    CaseSensitivityMode = request.CaseSensitivityMode
+                    CaseSensitivityMode = request.CaseSensitivityMode,
+                    AudiobookshelfLibraryId = request.AudiobookshelfLibraryId
                 });
                 return CreatedAtAction(nameof(Get), new { id = created.Id }, await MapAsync(created));
             }
@@ -229,6 +233,7 @@ namespace Listenarr.Api.Features.Library
                 if (!pathChanged && !semanticsChanged)
                 {
                     request.Path = existing.Path;
+                    request.AudiobookshelfLibraryId ??= existing.AudiobookshelfLibraryId;
                     var updatedMetadata = await _service.UpdateAsync(request);
                     return Ok(await MapAsync(updatedMetadata));
                 }

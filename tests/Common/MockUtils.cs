@@ -68,6 +68,8 @@ namespace Listenarr.Tests.Common
                 OutputPath = outputPath,
                 CompletedFileAction = FileAction.Copy,
                 EnableMetadataProcessing = false,
+                FolderNamingPattern = string.Empty,
+                FileNamingPattern = "{Title}",
                 MultiFileNamingPattern = "{Title}-{DiskNumber:00}-{ChapterNumber:00}",
             });
             if (downloadClientConfiguration != null)

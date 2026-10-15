@@ -3,7 +3,12 @@ namespace Listenarr.Tests.Builders
 {
     public class ApplicationSettingsBuilder
     {
-        private readonly ApplicationSettings _applicationSettings = new();
+        private readonly ApplicationSettings _applicationSettings = new()
+        {
+            FolderNamingPattern = "{Author}/{Series}/{Title}",
+            FileNamingPattern = "{Title}",
+            MultiFileNamingPattern = "{Title}-{DiskNumber:00}-{ChapterNumber:00}"
+        };
         private List<string> _importBlacklistExtensions = [];
 
         public ApplicationSettingsBuilder WithMoveFileOnCompleted()

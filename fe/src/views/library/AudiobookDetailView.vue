@@ -1110,7 +1110,8 @@ const displayBasePath = computed(() => {
   // Use default root folder path, fallback to legacy outputPath
   const defaultRoot = rootFoldersStore.defaultFolder
   const root = (defaultRoot?.path || settings.outputPath || '').trim()
-  const pattern = (settings.folderNamingPattern || settings.fileNamingPattern || '').trim()
+  const folderPattern = (settings.folderNamingPattern || '').trim()
+  const pattern = (folderPattern || settings.fileNamingPattern || '').trim()
   if (!root || !pattern) return root || ''
 
   const author =
@@ -1121,17 +1122,34 @@ const displayBasePath = computed(() => {
   const title = audiobook.value?.title || 'Unknown Title'
   const year = audiobook.value?.publishYear || ''
   const seriesNumber = audiobook.value?.seriesNumber || ''
+  const numericSeriesNumber = Number(seriesNumber)
+  const seriesBook = series && seriesNumber
+    ? `Book ${
+        Number.isFinite(numericSeriesNumber)
+          ? numericSeriesNumber.toLocaleString(undefined, {
+              minimumIntegerDigits: 2,
+              useGrouping: false,
+            })
+          : seriesNumber
+      }`
+    : ''
 
   // Basic variable replacement mirroring server pattern keys
   let relative = pattern
     .replace(/\{Author(?::[^}]+)?\}/gi, sanitizePathComponent(author))
-    .replace(/\{Series(?::[^}]+)?\}/gi, sanitizePathComponent(series))
+    .replace(/\{Series(?::[^}]+)?\}/gi, series ? sanitizePathComponent(series) : '')
     .replace(/\{Title(?::[^}]+)?\}/gi, sanitizePathComponent(title))
     .replace(/\{Year(?::[^}]+)?\}/gi, year)
     .replace(/\{SeriesNumber(?::[^}]+)?\}/gi, seriesNumber)
+    .replace(/\{SeriesBook(?::[^}]+)?\}/gi, seriesBook)
+    .replace(/\{SeriesBook(?::[^}]+)?\}/gi, seriesBook)
 
   // Remove file-level variables (Disk/Chapter/Quality) if present
   relative = relative
+    .replace(/\s*-\s*(?:-\s*)+/g, ' - ')
+    .replace(/\s*-\s*(?=\/|$)/g, '')
+    .replace(/\s*-\s*(?:-\s*)+/g, ' - ')
+    .replace(/\s*-\s*(?=\/|$)/g, '')
     .replace(/\{DiskNumber(?::[^}]+)?\}/gi, '')
     .replace(/\{ChapterNumber(?::[^}]+)?\}/gi, '')
     .replace(/\{Quality(?::[^}]+)?\}/gi, '')
@@ -1140,6 +1158,8 @@ const displayBasePath = computed(() => {
   relative = relative.replace(/[\\/]{2,}/g, '/').replace(/^\/+|\/+$/g, '')
 
   const combined = joinPaths(root, relative)
+  if (folderPattern) return combined
+
   // Base path should be the directory containing the files -> strip the last segment
   const parts = combined.split(/[/\\]+/).filter(Boolean)
   if (parts.length <= 1) return combined

@@ -45,6 +45,14 @@
             Root Folders
           </button>
           <button
+            @click="router.push({ hash: '#audiobookshelf' })"
+            :class="{ active: activeTab === 'audiobookshelf' }"
+            class="tab-button"
+          >
+            <PhBookOpen />
+            Audiobookshelf
+          </button>
+          <button
             @click="router.push({ hash: '#indexers' })"
             :class="{ active: activeTab === 'indexers' }"
             class="tab-button"
@@ -251,6 +259,8 @@
       <!-- Root Folders Tab -->
       <RootFoldersTab v-if="activeTab === 'rootfolders'" ref="rootFoldersRef" />
 
+      <AudiobookshelfImportTab v-if="activeTab === 'audiobookshelf'" />
+
       <!-- Discord Bot Tab -->
       <DiscordBotTab
         v-if="activeTab === 'bot' && settings"
@@ -410,6 +420,7 @@ import { useAuthStore } from '@/stores/auth'
 import { sessionTokenManager } from '@/utils/sessionToken'
 import type { ApiConfiguration, DownloadClientConfiguration, ApplicationSettings } from '@/types'
 import RootFoldersTab from '@/views/settings/RootFoldersTab.vue'
+import AudiobookshelfImportTab from '@/views/settings/AudiobookshelfImportTab.vue'
 import DownloadClientsTab from '@/views/settings/DownloadClientsTab.vue'
 import QualityProfilesTab from '@/views/settings/QualityProfilesTab.vue'
 import DiscordBotTab from '@/views/settings/DiscordBotTab.vue'
@@ -422,6 +433,7 @@ import CustomSelect from '@/components/form/CustomSelect.vue'
 import PasswordInput from '@/components/form/PasswordInput.vue'
 import {
   PhFolder,
+  PhBookOpen,
   PhListMagnifyingGlass,
   PhDownload,
   PhStar,
@@ -455,11 +467,19 @@ const filesystemReadinessStore = useFilesystemReadinessStore()
 const auth = useAuthStore()
 const toast = useToast()
 const activeTab = ref<
-  'rootfolders' | 'indexers' | 'clients' | 'quality-profiles' | 'notifications' | 'bot' | 'general'
+  | 'rootfolders'
+  | 'audiobookshelf'
+  | 'indexers'
+  | 'clients'
+  | 'quality-profiles'
+  | 'notifications'
+  | 'bot'
+  | 'general'
 >('rootfolders')
 
 const mobileTabOptions = computed(() => [
   { value: 'rootfolders', label: 'Root Folders', icon: PhFolder },
+  { value: 'audiobookshelf', label: 'Audiobookshelf', icon: PhBookOpen },
   { value: 'indexers', label: 'Indexers', icon: PhListMagnifyingGlass },
   { value: 'clients', label: 'Download Clients', icon: PhDownload },
   { value: 'quality-profiles', label: 'Quality Profiles', icon: PhStar },
@@ -1120,6 +1140,7 @@ onUnmounted(() => {
 const syncTabFromHash = () => {
   const hash = route.hash.replace('#', '') as
     | 'rootfolders'
+    | 'audiobookshelf'
     | 'indexers'
     | 'clients'
     | 'quality-profiles'
@@ -1130,6 +1151,7 @@ const syncTabFromHash = () => {
     hash &&
     [
       'rootfolders',
+      'audiobookshelf',
       'indexers',
       'clients',
       'quality-profiles',

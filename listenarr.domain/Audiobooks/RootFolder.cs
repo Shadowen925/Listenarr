@@ -41,6 +41,9 @@ namespace Listenarr.Domain.Audiobooks
 
         public bool IsDefault { get; set; } = false;
 
+        [MaxLength(128)]
+        public string? AudiobookshelfLibraryId { get; set; }
+
         public FileSystemCaseSensitivityMode CaseSensitivityMode { get; set; } = FileSystemCaseSensitivityMode.Auto;
 
         public FileSystemCaseSensitivity ResolvedCaseSensitivity { get; set; } = FileSystemCaseSensitivity.Unknown;

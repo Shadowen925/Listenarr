@@ -29,6 +29,7 @@ public static class AppServiceRegistrationExtensions
         IConfiguration configuration)
     {
         services.AddConfigurationAndSecurityServices();
+        services.AddAudiobookshelfIntegration();
         services.AddSearchServices();
         services.AddMetadataServices();
         services.AddLibraryServices();

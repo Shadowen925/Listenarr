@@ -231,6 +231,17 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("Asin")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AudiobookshelfItemId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudiobookshelfLibraryId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AudiobookshelfMetadataAuthoritative")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("AuthorAsins")
                         .HasColumnType("TEXT");
 
@@ -322,6 +333,11 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.HasIndex("Monitored");
 
                     b.HasIndex("QualityProfileId");
+
+                    b.HasIndex("AudiobookshelfLibraryId", "AudiobookshelfItemId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Audiobooks_AudiobookshelfItem")
+                        .HasFilter("\"AudiobookshelfItemId\" IS NOT NULL");
 
                     b.ToTable("Audiobooks");
                 });
@@ -1367,6 +1383,10 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AudiobookshelfLibraryId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("CaseSensitivityMode")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1444,6 +1464,11 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .HasDefaultValue("RetainSource");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AudiobookshelfLibraryId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RootFolders_AudiobookshelfLibraryId")
+                        .HasFilter("\"AudiobookshelfLibraryId\" IS NOT NULL");
 
                     b.HasIndex("IsDefault")
                         .IsUnique()
@@ -1801,6 +1826,12 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("AllowedFileExtensions")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudiobookshelfApiKeyEncrypted")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudiobookshelfUrl")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("AudnexusApiUrl")

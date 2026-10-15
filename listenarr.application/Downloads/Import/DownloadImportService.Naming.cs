@@ -1,7 +1,40 @@
+using System.Globalization;
+
 namespace Listenarr.Application.Downloads.Import;
 
 public partial class DownloadImportService
 {
+    private static Dictionary<string, object> BuildImportNamingVariables(
+        AudioMetadata metadata,
+        int? diskNumber,
+        int? chapterNumber,
+        string fallbackTitle)
+    {
+        var seriesBook = string.IsNullOrWhiteSpace(metadata.Series)
+            || !metadata.SeriesPosition.HasValue
+                ? string.Empty
+                : $"Book {metadata.SeriesPosition.Value.ToString("00.##", CultureInfo.InvariantCulture)}";
+
+        return new Dictionary<string, object>
+        {
+            { "Author", metadata.Artist ?? "Unknown Author" },
+            { "Series", string.IsNullOrWhiteSpace(metadata.Series) ? string.Empty : metadata.Series },
+            { "SeriesBook", seriesBook },
+            { "Title", metadata.Title ?? fallbackTitle },
+            { "Subtitle", string.IsNullOrWhiteSpace(metadata.Subtitle) ? string.Empty : metadata.Subtitle },
+            { "Edition", string.IsNullOrWhiteSpace(metadata.Edition) ? string.Empty : metadata.Edition },
+            { "Narrator", string.IsNullOrWhiteSpace(metadata.Narrator) ? string.Empty : metadata.Narrator },
+            { "Publisher", string.IsNullOrWhiteSpace(metadata.Publisher) ? string.Empty : metadata.Publisher },
+            { "Language", string.IsNullOrWhiteSpace(metadata.Language) ? string.Empty : metadata.Language },
+            { "Asin", string.IsNullOrWhiteSpace(metadata.Asin) ? string.Empty : metadata.Asin },
+            { "SeriesNumber", metadata.SeriesPosition?.ToString(CultureInfo.InvariantCulture) ?? chapterNumber?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
+            { "Year", metadata.Year?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
+            { "Quality", (metadata.BitRate.HasValue ? $"{metadata.BitRate}kbps" : null) ?? metadata.Format ?? string.Empty },
+            { "DiskNumber", diskNumber?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
+            { "ChapterNumber", chapterNumber?.ToString(CultureInfo.InvariantCulture) ?? string.Empty }
+        };
+    }
+
     private static AudioMetadata BuildNamingMetadata(
         Audiobook? audiobook,
         AudioMetadata? extractedMetadata,

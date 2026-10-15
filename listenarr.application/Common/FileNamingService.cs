@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Listenarr.Domain.Common;
 using Microsoft.Extensions.Logging;
@@ -234,6 +235,32 @@ namespace Listenarr.Application.Common
                         else if (int.TryParse(value.ToString(), out var parsedInt))
                         {
                             renderedValue = parsedInt.ToString(format);
+                        }
+                        else if (decimal.TryParse(
+                                     value.ToString(),
+                                     NumberStyles.Number,
+                                     CultureInfo.InvariantCulture,
+                                     out var parsedDecimal))
+                        {
+                            if (parsedDecimal != decimal.Truncate(parsedDecimal)
+                                && format.All(character => character == '0'))
+                            {
+                                var absoluteValue = Math.Abs(parsedDecimal);
+                                var invariantValue = absoluteValue.ToString(
+                                    CultureInfo.InvariantCulture);
+                                var decimalSeparatorIndex = invariantValue.IndexOf('.');
+                                var paddedInteger = decimal.Truncate(absoluteValue)
+                                    .ToString(format, CultureInfo.InvariantCulture);
+                                renderedValue = (parsedDecimal < 0 ? "-" : string.Empty)
+                                    + paddedInteger
+                                    + invariantValue[decimalSeparatorIndex..];
+                            }
+                            else
+                            {
+                                renderedValue = parsedDecimal.ToString(
+                                    format,
+                                    CultureInfo.InvariantCulture);
+                            }
                         }
                         else
                         {

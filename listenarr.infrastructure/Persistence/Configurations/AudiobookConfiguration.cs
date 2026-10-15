@@ -38,6 +38,13 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
 
         public void Configure(EntityTypeBuilder<Audiobook> builder)
         {
+            builder.Property(a => a.AudiobookshelfLibraryId).HasMaxLength(128);
+            builder.Property(a => a.AudiobookshelfItemId).HasMaxLength(128);
+            builder.HasIndex(a => new { a.AudiobookshelfLibraryId, a.AudiobookshelfItemId })
+                .IsUnique()
+                .HasDatabaseName("IX_Audiobooks_AudiobookshelfItem")
+                .HasFilter("\"AudiobookshelfItemId\" IS NOT NULL");
+
             // Map list-of-string properties as JSON TEXT columns so EF will properly
             // deserialize the JSON arrays that migrations now produce (e.g. ["Name"]).
             var authorsConverter = (ValueConverter<List<string>?, string>)new JsonValueConverter<List<string>?>();

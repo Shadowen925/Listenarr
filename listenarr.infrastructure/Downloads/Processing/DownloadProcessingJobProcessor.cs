@@ -18,6 +18,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
+using Listenarr.Application.Audiobookshelf.Contracts;
 
 namespace Listenarr.Infrastructure.Downloads.Processing
 {
@@ -421,6 +422,39 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                     $"Library scan {scanJobId} queued",
                     new Dictionary<string, object> { ["JobId"] = job.Id, ["ScanJobId"] = scanJobId },
                     cancellationToken);
+            }
+
+            if (!job.HasCheckpoint("AudiobookshelfScanRequested"))
+            {
+                try
+                {
+                    var audiobookshelf = scope.ServiceProvider
+                        .GetRequiredService<IAudiobookshelfIntegrationService>();
+                    var requested = await audiobookshelf.TriggerScanForAudiobookAsync(
+                        audiobook.Id,
+                        cancellationToken);
+                    job.SetCheckpoint(
+                        "AudiobookshelfScanRequested",
+                        requested ? "requested" : "not-mapped");
+                }
+                catch (HttpRequestException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Audiobookshelf scan could not be requested for audiobook {AudiobookId}",
+                        audiobook.Id);
+                    job.SetCheckpoint("AudiobookshelfScanRequested", "request-failed");
+                }
+                catch (InvalidOperationException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Audiobookshelf scan is not configured for audiobook {AudiobookId}",
+                        audiobook.Id);
+                    job.SetCheckpoint("AudiobookshelfScanRequested", "unavailable");
+                }
+
+                await downloadProcessingJobService.UpdateJobAsync(job);
             }
 
             var finalizationService = scope.ServiceProvider.GetRequiredService<IImportFinalizationService>();

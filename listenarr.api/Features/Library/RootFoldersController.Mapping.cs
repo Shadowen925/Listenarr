@@ -30,6 +30,7 @@ public partial class RootFoldersController
                         ? initializingPathSyntax.ToString()
                         : null,
                 root.IsDefault,
+                root.AudiobookshelfLibraryId,
                 root.CaseSensitivityMode.ToString(),
                 root.ResolvedCaseSensitivity.ToString(),
                 root.PathIdentityState.ToString(),
@@ -68,6 +69,7 @@ public partial class RootFoldersController
                     ? pathSyntax.ToString()
                     : null,
             root.IsDefault,
+            root.AudiobookshelfLibraryId,
             root.CaseSensitivityMode.ToString(),
             root.ResolvedCaseSensitivity.ToString(),
             root.PathIdentityState.ToString(),

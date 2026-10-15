@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 using Microsoft.AspNetCore.Mvc;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Features.Library;
 
@@ -92,6 +93,40 @@ public partial class RootFoldersController
             return Conflict(new
             {
                 message = "The root folder metadata conflicts with an existing root folder."
+            });
+        }
+    }
+
+    [HttpPatch("{id}/audiobookshelf")]
+    public async Task<IActionResult> PatchAudiobookshelfMapping(
+        int id,
+        [FromBody] RootFolderAudiobookshelfMappingRequest request)
+    {
+        if (request.LibraryId?.Length > 128)
+        {
+            return BadRequest(new { message = "The Audiobookshelf library ID is invalid." });
+        }
+
+        var existing = await _service.GetByIdAsync(id);
+        if (existing == null)
+        {
+            return NotFound(new { message = "Root folder not found" });
+        }
+
+        existing.AudiobookshelfLibraryId = string.IsNullOrWhiteSpace(request.LibraryId)
+            ? null
+            : request.LibraryId.Trim();
+
+        try
+        {
+            var updated = await _service.UpdateAsync(existing);
+            return Ok(await MapAsync(updated));
+        }
+        catch (UniqueConstraintViolationException)
+        {
+            return Conflict(new
+            {
+                message = "This Audiobookshelf library is already mapped to another root folder."
             });
         }
     }
