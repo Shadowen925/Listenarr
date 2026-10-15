@@ -7,6 +7,7 @@ namespace Listenarr.Infrastructure.Audiobookshelf;
 
 public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobookshelfClient
 {
+    private const int MaxDetailRequests = 4;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task TestConnectionAsync(
@@ -59,7 +60,53 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
             await response.Content.ReadAsStreamAsync(cancellationToken),
             cancellationToken: cancellationToken);
         var items = GetArray(document.RootElement, "results", "libraryItems", "items");
-        return items.Select(ParseLibraryItem).ToList();
+        var parsed = items.Select(ParseLibraryItem).ToList();
+
+        // The Audiobookshelf list endpoint returns minified media (counts only, no audioFiles),
+        // so file paths must be read from each item's detail record. Bounded and read-only.
+        using var gate = new SemaphoreSlim(MaxDetailRequests);
+        var enriched = await Task.WhenAll(parsed.Select(async item =>
+        {
+            if (item.AudioFilePaths.Count > 0)
+            {
+                return item;
+            }
+
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                return await GetItemWithFilesAsync(url, apiKey, item, cancellationToken);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+        return enriched;
+    }
+
+    private async Task<AudiobookshelfLibraryItem> GetItemWithFilesAsync(
+        string url,
+        string apiKey,
+        AudiobookshelfLibraryItem item,
+        CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(
+            url,
+            apiKey,
+            HttpMethod.Get,
+            $"api/items/{Uri.EscapeDataString(item.Id)}",
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var document = await JsonDocument.ParseAsync(
+            await response.Content.ReadAsStreamAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        var detailed = ParseLibraryItem(document.RootElement);
+        return item with
+        {
+            Path = string.IsNullOrWhiteSpace(item.Path) ? detailed.Path : item.Path,
+            AudioFilePaths = detailed.AudioFilePaths
+        };
     }
 
     public async Task TriggerLibraryScanAsync(

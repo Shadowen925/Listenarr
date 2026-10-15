@@ -45,6 +45,35 @@ public sealed record AudiobookshelfImportPreviewItem(
     int? RootFolderId,
     AudiobookshelfImportMatchStatus Status,
     bool MissingIdentifiers,
+    string? Reason,
+    string? Series = null,
+    string? SeriesPosition = null,
+    int FileCount = 0,
+    IReadOnlyList<string>? FileFormats = null,
+    string? Asin = null,
+    IReadOnlyList<string>? Isbn = null,
+    string? FailureCategory = null);
+
+public static class AudiobookshelfImportFailureCategories
+{
+    public const string LibraryNotMapped = "LibraryNotMapped";
+    public const string AmbiguousLibraryMapping = "AmbiguousLibraryMapping";
+    public const string NoMappableAudioFiles = "NoMappableAudioFiles";
+    public const string AudioFilesMissing = "AudioFilesMissing";
+    public const string Duplicate = "Duplicate";
+}
+
+public enum AudiobookshelfImportItemOutcome
+{
+    Imported,
+    Skipped,
+    Failed
+}
+
+public sealed record AudiobookshelfImportItemResult(
+    string ItemId,
+    string Title,
+    AudiobookshelfImportItemOutcome Outcome,
     string? Reason);
 
 public sealed record AudiobookshelfImportPreview(
@@ -59,6 +88,11 @@ public sealed record AudiobookshelfImportRequest(
 public sealed record AudiobookshelfImportResult(
     int ImportedCount,
     int SkippedCount,
-    IReadOnlyList<string> Messages);
+    IReadOnlyList<string> Messages,
+    int FailedCount = 0,
+    string LibraryId = "",
+    DateTimeOffset ImportedAt = default,
+    int SelectedCount = 0,
+    IReadOnlyList<AudiobookshelfImportItemResult>? Items = null);
 
 public sealed record AudiobookshelfImage(byte[] Content, string ContentType);

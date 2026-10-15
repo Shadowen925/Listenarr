@@ -94,6 +94,119 @@ public sealed class AudiobookshelfIntegrationServiceTests : BaseTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task PreviewImportAsync_WorksWithEmptyDatabaseAndReportsDiagnosticFields()
+    {
+        var fixture = new ImportFixture();
+
+        var preview = await fixture.Service.PreviewImportAsync(fixture.Library.Id);
+
+        var item = Assert.Single(preview.Items);
+        Assert.Equal(AudiobookshelfImportMatchStatus.Matched, item.Status);
+        Assert.Equal("Series", item.Series);
+        Assert.Equal("2", item.SeriesPosition);
+        Assert.Equal(1, item.FileCount);
+        Assert.Contains("m4b", item.FileFormats!, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(fixture.MappedBookPath, item.ListenarrPath);
+    }
+
+    [Fact]
+    public async Task PreviewImportAsync_CategorizesUnmatchedItemWhenFilesAreMissing()
+    {
+        var fixture = new ImportFixture();
+        fixture.FileSystem.Setup(fileSystem => fileSystem.FileExists(It.IsAny<string>())).Returns(false);
+
+        var preview = await fixture.Service.PreviewImportAsync(fixture.Library.Id);
+
+        var item = Assert.Single(preview.Items);
+        Assert.Equal(AudiobookshelfImportMatchStatus.Unmatched, item.Status);
+        Assert.Equal(AudiobookshelfImportFailureCategories.AudioFilesMissing, item.FailureCategory);
+        Assert.False(string.IsNullOrWhiteSpace(item.Reason));
+        Assert.Equal(fixture.MappedBookPath, item.ListenarrPath);
+    }
+
+    [Fact]
+    public async Task ImportAsync_ReturnsAuditSummaryAndRetryDoesNotCreateDuplicates()
+    {
+        var fixture = new ImportFixture();
+        var library = new List<Audiobook>();
+        fixture.AudiobookRepository
+            .Setup(repository => repository.GetLibraryAsync())
+            .ReturnsAsync(() => library.ToList());
+        fixture.AudiobookRepository
+            .Setup(repository => repository.AddAsync(It.IsAny<Audiobook>()))
+            .Callback<Audiobook>(audiobook =>
+            {
+                audiobook.Id = 41;
+                library.Add(audiobook);
+            })
+            .ReturnsAsync((Audiobook audiobook) => audiobook);
+        fixture.ScanService
+            .Setup(service => service.RegisterExistingFileAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var request = new AudiobookshelfImportRequest(fixture.Library.Id, [fixture.Item.Id]);
+
+        var first = await fixture.Service.ImportAsync(request);
+        var retry = await fixture.Service.ImportAsync(request);
+
+        Assert.Equal(1, first.ImportedCount);
+        Assert.Equal(0, first.FailedCount);
+        Assert.Equal(1, first.SelectedCount);
+        Assert.Equal(fixture.Library.Id, first.LibraryId);
+        Assert.NotEqual(default, first.ImportedAt);
+        Assert.Equal(AudiobookshelfImportItemOutcome.Imported, Assert.Single(first.Items!).Outcome);
+        Assert.Equal(0, retry.ImportedCount);
+        Assert.Equal(1, retry.SkippedCount);
+        Assert.Equal(AudiobookshelfImportItemOutcome.Skipped, Assert.Single(retry.Items!).Outcome);
+        fixture.AudiobookRepository.Verify(
+            repository => repository.AddAsync(It.IsAny<Audiobook>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task PreviewImportAsync_MatchesRepresentativeLibraryWithoutPriorScan()
+    {
+        var fixture = new ImportFixture();
+        var metadata = fixture.Item.Metadata with { Asin = null, Isbn = [] };
+        AudiobookshelfLibraryItem Make(string id, string path, params string[] files) =>
+            new(id, path, files, metadata);
+        var items = new[]
+        {
+            Make("a", "/audiobooks/Author - Series/Author - Series - Book 01 - Title",
+                "/audiobooks/Author - Series/Author - Series - Book 01 - Title/Author - Series - Book 01 - Title.m4b"),
+            Make("b", "/audiobooks/Author/Multi",
+                "/audiobooks/Author/Multi/Part 01.mp3", "/audiobooks/Author/Multi/Part 02.mp3"),
+            Make("c", "/audiobooks/Zoë Ünïcode/Book: [Odd] #1 & 'More'",
+                "/audiobooks/Zoë Ünïcode/Book: [Odd] #1 & 'More'/track (1).m4b")
+        };
+        fixture.Client.Setup(client => client.GetLibraryItemsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), fixture.Library.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(items);
+
+        var preview = await fixture.Service.PreviewImportAsync(fixture.Library.Id);
+
+        Assert.All(preview.Items, item => Assert.Equal(AudiobookshelfImportMatchStatus.Matched, item.Status));
+        Assert.Equal(3, preview.Items.Count);
+        Assert.Equal(2, preview.Items.Single(item => item.ItemId == "b").FileCount);
+        Assert.All(preview.Items, item => Assert.DoesNotContain("/audiobooks", item.ListenarrPath));
+    }
+
+    [Fact]
+    public async Task PreviewImportAsync_ItemWithoutAudioFilePaths_IsUnmatchedWithCategory()
+    {
+        var fixture = new ImportFixture();
+        fixture.Client.Setup(client => client.GetLibraryItemsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), fixture.Library.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([fixture.Item with { AudioFilePaths = [] }]);
+
+        var preview = await fixture.Service.PreviewImportAsync(fixture.Library.Id);
+
+        Assert.Equal(
+            AudiobookshelfImportFailureCategories.NoMappableAudioFiles,
+            Assert.Single(preview.Items).FailureCategory);
+    }
+
     private sealed class ImportFixture
     {
         private const string ServerUrl = "http://audiobookshelf:13378";

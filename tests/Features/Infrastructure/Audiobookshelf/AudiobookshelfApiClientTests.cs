@@ -96,6 +96,48 @@ public sealed class AudiobookshelfApiClientTests : BaseTests
     }
 
     [Fact]
+    public async Task GetLibraryItemsAsync_MinifiedListResponse_LoadsAudioFilesFromItemDetails()
+    {
+        var requested = new List<string>();
+        using var httpClient = new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            requested.Add(request.RequestUri!.AbsolutePath);
+            return request.RequestUri.AbsolutePath == "/api/items/li_book"
+                ? JsonResponse(
+                    """
+                    {
+                      "id": "li_book",
+                      "path": "/audiobooks/Author/Book",
+                      "media": {
+                        "metadata": { "title": "T" },
+                        "audioFiles": [
+                          { "metadata": { "path": "/audiobooks/Author/Book/a.m4b" } }
+                        ]
+                      }
+                    }
+                    """)
+                : JsonResponse(
+                    """
+                    {
+                      "results": [
+                        {
+                          "id": "li_book",
+                          "path": "/audiobooks/Author/Book",
+                          "media": { "metadata": { "title": "T" }, "numAudioFiles": 1 }
+                        }
+                      ]
+                    }
+                    """);
+        }));
+        var client = new AudiobookshelfApiClient(httpClient);
+
+        var items = await client.GetLibraryItemsAsync("http://audiobookshelf:13378", "private-token", "lib_a");
+
+        Assert.Equal(["/audiobooks/Author/Book/a.m4b"], Assert.Single(items).AudioFilePaths);
+        Assert.Equal(["/api/libraries/lib_a/items", "/api/items/li_book"], requested);
+    }
+
+    [Fact]
     public async Task TestConnectionAsync_RejectsUnsuccessfulResponses()
     {
         using var httpClient = new HttpClient(new StubHttpMessageHandler(_ =>

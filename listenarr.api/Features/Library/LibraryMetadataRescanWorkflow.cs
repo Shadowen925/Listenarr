@@ -77,6 +77,14 @@ namespace Listenarr.Api.Features.Library
                 return new NotFoundObjectResult(new { message = "Audiobook not found" });
             }
 
+            if (audiobook.AudiobookshelfMetadataAuthoritative)
+            {
+                return new ConflictObjectResult(new
+                {
+                    message = "This audiobook's metadata comes from Audiobookshelf, which is the source of truth. Metadata rescans are disabled to avoid overwriting it."
+                });
+            }
+
             if (_memoryCache != null &&
                 !TryConsumeMetadataRescanQuota(_memoryCache, httpContext, audiobook.Id, out var rateLimitMessage, out var retryAfterSeconds))
             {

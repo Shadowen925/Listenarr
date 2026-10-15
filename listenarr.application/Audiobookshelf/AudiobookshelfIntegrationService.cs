@@ -3,6 +3,7 @@ using Listenarr.Application.Audiobookshelf.Models;
 using Listenarr.Application.Common;
 using Listenarr.Domain.Common;
 using Microsoft.Extensions.Logging;
+using static Listenarr.Application.Audiobookshelf.AudiobookshelfImportRecords;
 
 namespace Listenarr.Application.Audiobookshelf;
 
@@ -16,8 +17,6 @@ public sealed class AudiobookshelfIntegrationService(
     IFileSystem fileSystem,
     ILogger<AudiobookshelfIntegrationService> logger) : IAudiobookshelfIntegrationService
 {
-    private const string CoverRoute = "/api/v1/audiobookshelf/items/{0}/cover";
-
     public Task<AudiobookshelfImportConnectionSettings> GetConnectionSettingsAsync() =>
         configurationService.GetAudiobookshelfImportSettingsAsync();
 
@@ -81,6 +80,9 @@ public sealed class AudiobookshelfIntegrationService(
                     item,
                     missingIdentifiers,
                     mappedRoots.Count == 0
+                        ? AudiobookshelfImportFailureCategories.LibraryNotMapped
+                        : AudiobookshelfImportFailureCategories.AmbiguousLibraryMapping,
+                    mappedRoots.Count == 0
                         ? "Map this Audiobookshelf library to one Listenarr root folder."
                         : "This Audiobookshelf library is mapped to more than one Listenarr root folder."));
                 continue;
@@ -90,10 +92,18 @@ public sealed class AudiobookshelfIntegrationService(
             var audioPaths = ResolveAudioPaths(item, library, root.Path);
             if (audioPaths.Count == 0 || audioPaths.Any(path => !fileSystem.FileExists(path)))
             {
+                var missing = audioPaths.Where(path => !fileSystem.FileExists(path)).ToList();
                 previews.Add(CreateUnmatchedPreview(
                     item,
                     missingIdentifiers,
-                    "The audiobook files could not be mapped to existing Listenarr files."));
+                    audioPaths.Count == 0
+                        ? AudiobookshelfImportFailureCategories.NoMappableAudioFiles
+                        : AudiobookshelfImportFailureCategories.AudioFilesMissing,
+                    audioPaths.Count == 0
+                        ? $"None of the {item.AudioFilePaths.Count} Audiobookshelf audio file path(s) could be translated into root folder '{root.Path}'. Check the library folder mapping and container path mappings."
+                        : $"{missing.Count} of {audioPaths.Count} translated audio file(s) do not exist in Listenarr (first missing: {missing[0]}).",
+                    TryMapItemPath(item, library, root.Path),
+                    audioPaths));
                 continue;
             }
 
@@ -124,7 +134,14 @@ public sealed class AudiobookshelfIntegrationService(
                     ? AudiobookshelfImportMatchStatus.Duplicate
                     : AudiobookshelfImportMatchStatus.Matched,
                 missingIdentifiers,
-                duplicate ? "An existing Listenarr audiobook already matches this record or file path." : null));
+                duplicate ? "An existing Listenarr audiobook already matches this record or file path." : null,
+                item.Metadata.Series,
+                item.Metadata.SeriesNumber,
+                audioPaths.Count,
+                DescribeFormats(audioPaths),
+                item.Metadata.Asin,
+                item.Metadata.Isbn,
+                duplicate ? AudiobookshelfImportFailureCategories.Duplicate : null));
         }
 
         return new AudiobookshelfImportPreview(libraryId, previews);
@@ -172,7 +189,18 @@ public sealed class AudiobookshelfIntegrationService(
         var importedPaths = new HashSet<string>(StringComparer.Ordinal);
         var imported = 0;
         var skipped = 0;
+        var failed = 0;
         var messages = new List<string>();
+        var results = new List<AudiobookshelfImportItemResult>(selected.Count);
+
+        void Record(AudiobookshelfImportPreviewItem entry, AudiobookshelfImportItemOutcome outcome, string? reason)
+        {
+            results.Add(new AudiobookshelfImportItemResult(entry.ItemId, entry.Title, outcome, reason));
+            if (reason != null)
+            {
+                messages.Add($"{entry.Title}: {reason}");
+            }
+        }
 
         foreach (var item in selected)
         {
@@ -183,7 +211,12 @@ public sealed class AudiobookshelfIntegrationService(
                 || !sourceById.TryGetValue(item.ItemId, out var source))
             {
                 skipped++;
-                messages.Add($"{item.Title}: skipped because no safe in-place path match was available.");
+                Record(
+                    item,
+                    AudiobookshelfImportItemOutcome.Skipped,
+                    item.Status == AudiobookshelfImportMatchStatus.Duplicate
+                        ? "skipped because it is already imported."
+                        : "skipped because no safe in-place path match was available.");
                 continue;
             }
 
@@ -194,7 +227,10 @@ public sealed class AudiobookshelfIntegrationService(
                 || filePaths.Any(importedPaths.Contains))
             {
                 skipped++;
-                messages.Add($"{item.Title}: skipped because the record is now missing or already imported.");
+                Record(
+                    item,
+                    AudiobookshelfImportItemOutcome.Skipped,
+                    "skipped because the record is now missing or already imported.");
                 continue;
             }
 
@@ -223,11 +259,19 @@ public sealed class AudiobookshelfIntegrationService(
                     importedPaths.Add(filePath);
                 }
                 imported++;
+                results.Add(new AudiobookshelfImportItemResult(
+                    item.ItemId,
+                    item.Title,
+                    AudiobookshelfImportItemOutcome.Imported,
+                    null));
             }
             catch (UniqueConstraintViolationException)
             {
                 skipped++;
-                messages.Add($"{item.Title}: skipped because it was imported concurrently.");
+                Record(
+                    item,
+                    AudiobookshelfImportItemOutcome.Skipped,
+                    "skipped because it was imported concurrently.");
             }
             catch (Exception exception) when (
                 exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
@@ -247,11 +291,30 @@ public sealed class AudiobookshelfIntegrationService(
                     exception,
                     "Non-destructive Audiobookshelf import failed for item {ItemId}",
                     item.ItemId);
-                messages.Add($"{item.Title}: import failed; existing files were left unchanged.");
+                failed++;
+                Record(
+                    item,
+                    AudiobookshelfImportItemOutcome.Failed,
+                    "import failed; existing files were left unchanged.");
             }
         }
 
-        return new AudiobookshelfImportResult(imported, skipped, messages);
+        logger.LogInformation(
+            "Audiobookshelf import for library {LibraryId}: selected {Selected}, imported {Imported}, skipped {Skipped}, failed {Failed}",
+            request.LibraryId,
+            selected.Count,
+            imported,
+            skipped,
+            failed);
+        return new AudiobookshelfImportResult(
+            imported,
+            skipped,
+            messages,
+            failed,
+            request.LibraryId,
+            DateTimeOffset.UtcNow,
+            selected.Count,
+            results);
     }
 
     public async Task<bool> TriggerLibraryScanAsync(
@@ -349,136 +412,5 @@ public sealed class AudiobookshelfIntegrationService(
         }
 
         return result.Distinct(StringComparer.Ordinal).ToList();
-    }
-
-    private static bool IsDuplicate(
-        AudiobookshelfLibraryItem item,
-        string libraryId,
-        IReadOnlyCollection<string> mappedPaths,
-        IEnumerable<Audiobook> existingAudiobooks)
-    {
-        foreach (var existing in existingAudiobooks)
-        {
-            if (string.Equals(existing.AudiobookshelfItemId, item.Id, StringComparison.Ordinal)
-                && (string.IsNullOrWhiteSpace(existing.AudiobookshelfLibraryId)
-                    || string.Equals(existing.AudiobookshelfLibraryId, libraryId, StringComparison.Ordinal)))
-            {
-                return true;
-            }
-
-            var existingPaths = (existing.Files ?? [])
-                .Select(file => file.Path)
-                .Append(existing.FilePath)
-                .Where(path => !string.IsNullOrWhiteSpace(path));
-            if (existingPaths.Any(existingPath => mappedPaths.Any(mappedPath =>
-                    string.Equals(existingPath, mappedPath, StringComparison.Ordinal))))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static AudiobookshelfImportPreviewItem CreateUnmatchedPreview(
-        AudiobookshelfLibraryItem item,
-        bool missingIdentifiers,
-        string reason) =>
-        new(
-            item.Id,
-            item.Metadata.Title ?? Path.GetFileName(item.Path),
-            string.Join(", ", item.Metadata.Authors),
-            item.Path,
-            null,
-            null,
-            AudiobookshelfImportMatchStatus.Unmatched,
-            missingIdentifiers,
-            reason);
-
-    private static Audiobook CreateAudiobook(
-        AudiobookshelfLibraryItem item,
-        AudiobookshelfImportRequest request,
-        AudiobookshelfLibrary library,
-        RootFolder root,
-        IReadOnlyList<string> filePaths)
-    {
-        var metadata = item.Metadata;
-        var basePath = AudiobookshelfPathMapper.TryMapPath(
-            item.Path,
-            library.FolderPaths,
-            root.Path,
-            out var mappedItemPath)
-            && filePaths.All(path => IsSameOrInsidePath(path, mappedItemPath))
-                ? mappedItemPath
-                : root.Path;
-        var audiobook = new Audiobook
-        {
-            Title = metadata.Title ?? Path.GetFileName(item.Path),
-            Subtitle = metadata.Subtitle,
-            Authors = metadata.Authors.ToList(),
-            Narrators = metadata.Narrators.ToList(),
-            Series = metadata.Series,
-            SeriesNumber = metadata.SeriesNumber,
-            Description = metadata.Description,
-            ImageUrl = string.Format(
-                System.Globalization.CultureInfo.InvariantCulture,
-                CoverRoute,
-                Uri.EscapeDataString(item.Id)),
-            Asin = metadata.Asin,
-            Isbn = metadata.Isbn.ToList(),
-            OpenLibraryId = metadata.OpenLibraryId,
-            Publisher = metadata.Publisher,
-            Language = metadata.Language,
-            PublishYear = metadata.PublishedYear,
-            Genres = metadata.Genres.ToList(),
-            AudiobookshelfLibraryId = request.LibraryId,
-            AudiobookshelfItemId = item.Id,
-            AudiobookshelfMetadataAuthoritative = true,
-            Monitored = request.Monitored,
-            BasePath = basePath,
-            FilePath = filePaths.Count == 1 ? filePaths[0] : null
-        };
-
-        foreach (var (type, value) in metadata.Isbn
-            .Select(value => (Type: AudiobookExternalIdentifierType.Isbn, Value: (string?)value))
-            .Prepend((Type: AudiobookExternalIdentifierType.Asin, Value: metadata.Asin))
-            .Prepend((Type: AudiobookExternalIdentifierType.OpenLibraryId, Value: metadata.OpenLibraryId)))
-        {
-            if (!AudiobookIdentifierNormalizer.TryNormalize(type, value, out var normalized, out _))
-            {
-                continue;
-            }
-
-            audiobook.ExternalIdentifiers ??= [];
-            audiobook.ExternalIdentifiers.Add(new AudiobookExternalIdentifier
-            {
-                Type = type,
-                ValueRaw = AudiobookIdentifierNormalizer.NormalizeRawValueForStorage(value),
-                ValueNormalized = normalized,
-                Source = AudiobookExternalIdentifierSource.Imported,
-                IsPrimary = audiobook.ExternalIdentifiers.All(identifier => identifier.Type != type)
-            });
-        }
-
-        return audiobook;
-    }
-
-    private static bool IsSameOrInsidePath(string candidatePath, string rootPath)
-    {
-        try
-        {
-            var fullRoot = Path.GetFullPath(rootPath);
-            var fullCandidate = Path.GetFullPath(candidatePath);
-            var relative = Path.GetRelativePath(fullRoot, fullCandidate);
-            return !Path.IsPathRooted(relative)
-                && relative != ".."
-                && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
     }
 }

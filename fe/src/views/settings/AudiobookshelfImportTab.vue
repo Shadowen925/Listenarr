@@ -106,6 +106,76 @@
         <span>Missing ASIN/ISBN: {{ missingIdentifierCount }}</span>
       </div>
 
+      <div v-if="preview" class="selection-toolbar" role="toolbar" aria-label="Import selection">
+        <strong class="selected-count" data-testid="selected-count"
+          >{{ selectedItemIds.size }} selected</strong
+        >
+        <button
+          class="btn btn-primary"
+          data-testid="import-selected"
+          :disabled="selectedItemIds.size === 0 || importing"
+          @click="importSelected"
+        >
+          {{ importing ? 'Importing…' : `Import ${selectedItemIds.size} selected` }}
+        </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="select-all-matched"
+          :disabled="matchedCount === 0"
+          @click="selectAllMatched"
+        >
+          Select All Matched ({{ matchedCount }})
+        </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="select-visible-matched"
+          :disabled="visibleMatchedCount === 0"
+          @click="selectVisibleMatched"
+        >
+          Select Visible Matched ({{ visibleMatchedCount }})
+        </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="clear-selection"
+          :disabled="selectedItemIds.size === 0"
+          @click="clearSelection"
+        >
+          Clear selection
+        </button>
+      </div>
+
+      <div v-if="preview" class="actions">
+        <label>
+          Search
+          <input v-model.trim="searchText" type="search" placeholder="Title, author or path" />
+        </label>
+        <label>
+          Status
+          <select v-model="statusFilter">
+            <option value="All">All</option>
+            <option value="Matched">Matched</option>
+            <option value="Unmatched">Unmatched</option>
+            <option value="Duplicate">Duplicate</option>
+            <option value="MissingIdentifiers">Missing ASIN/ISBN</option>
+          </select>
+        </label>
+        <label class="inline-check">
+          <input v-model="exportFilteredOnly" type="checkbox" />
+          Export filtered only
+        </label>
+        <button
+          class="btn btn-secondary"
+          data-testid="export-unmatched"
+          :disabled="exportUnmatchedCount === 0"
+          @click="exportUnmatched"
+        >
+          Export Unmatched ({{ exportUnmatchedCount }})
+        </button>
+        <button class="btn btn-secondary" data-testid="export-full" @click="exportFullPreview">
+          Export Full Preview
+        </button>
+      </div>
+
       <div v-if="preview?.items.length" class="preview-table-wrap">
         <table class="preview-table">
           <thead>
@@ -119,7 +189,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in preview.items" :key="item.itemId">
+            <tr v-for="item in pagedItems" :key="item.itemId">
               <td>
                 <input
                   v-if="item.status === 'Matched'"
@@ -137,33 +207,57 @@
             </tr>
           </tbody>
         </table>
+        <div class="actions pager">
+          <button class="btn btn-secondary" :disabled="page <= 1" @click="page--">Previous</button>
+          <span data-testid="page-info"
+            >Page {{ page }} of {{ pageCount }} ({{ filteredItems.length }} books)</span
+          >
+          <button class="btn btn-secondary" :disabled="page >= pageCount" @click="page++">
+            Next
+          </button>
+        </div>
       </div>
 
-      <div v-if="preview" class="actions import-actions">
-        <button
-          class="btn btn-primary"
-          :disabled="selectedItemIds.size === 0 || importing"
-          @click="importSelected"
-        >
-          {{ importing ? 'Importing…' : `Import ${selectedItemIds.size} selected` }}
-        </button>
-      </div>
       <div v-if="importResult" class="result-message" role="status">
-        Imported {{ importResult.importedCount }}; skipped {{ importResult.skippedCount }}.
-        <ul v-if="importResult.messages.length">
+        <strong>
+          Imported {{ importResult.importedCount }}; skipped {{ importResult.skippedCount }}; failed
+          {{ importResult.failedCount ?? 0 }}
+          <template v-if="importResult.selectedCount !== undefined">
+            (of {{ importResult.selectedCount }} selected)
+          </template>
+        </strong>
+        <span v-if="importResult.importedAt" class="muted">
+          at {{ importResult.importedAt }} · library {{ importResult.libraryId }}
+        </span>
+        <ul v-if="importResult.items?.length">
+          <li v-for="item in importResult.items" :key="item.itemId">
+            {{ item.outcome }} — {{ item.title
+            }}<template v-if="item.reason">: {{ item.reason }}</template>
+          </li>
+        </ul>
+        <ul v-else-if="importResult.messages.length">
           <li v-for="message in importResult.messages" :key="message">{{ message }}</li>
         </ul>
+        <button class="btn btn-secondary" data-testid="export-results" @click="exportImportResults">
+          Export import results
+        </button>
       </div>
     </div>
-
     <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     <p v-if="notice" class="success-message" role="status">{{ notice }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { apiService } from '@/services/api'
+import {
+  buildFullPreviewCsv,
+  buildImportResultCsv,
+  buildUnmatchedCsv,
+  downloadCsv,
+  exportFileName,
+} from '@/utils/audiobookshelfImport'
 import type {
   AudiobookshelfImportConnectionSettings,
   AudiobookshelfImportPreview,
@@ -184,6 +278,11 @@ const selectedLibraryId = ref('')
 const preview = ref<AudiobookshelfImportPreview | null>(null)
 const selectedItemIds = ref(new Set<string>())
 const importResult = ref<AudiobookshelfImportResult | null>(null)
+const searchText = ref('')
+const statusFilter = ref('All')
+const exportFilteredOnly = ref(false)
+const page = ref(1)
+const PAGE_SIZE = 50
 const saving = ref(false)
 const testing = ref(false)
 const loadingLibraries = ref(false)
@@ -207,6 +306,36 @@ const missingIdentifierCount = computed(
   () => preview.value?.items.filter((item) => item.missingIdentifiers).length ?? 0,
 )
 
+const filteredItems = computed(() => {
+  const needle = searchText.value.toLowerCase()
+  return (preview.value?.items ?? []).filter((item) => {
+    if (statusFilter.value === 'MissingIdentifiers') {
+      if (!item.missingIdentifiers) return false
+    } else if (statusFilter.value !== 'All' && item.status !== statusFilter.value) {
+      return false
+    }
+    if (!needle) return true
+    return [item.title, item.author, item.audiobookshelfPath, item.listenarrPath]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(needle))
+  })
+})
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / PAGE_SIZE)))
+const pagedItems = computed(() =>
+  filteredItems.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
+const visibleMatchedCount = computed(
+  () => pagedItems.value.filter((item) => item.status === 'Matched').length,
+)
+const exportUnmatchedCount = computed(() => {
+  const source = exportFilteredOnly.value ? filteredItems.value : (preview.value?.items ?? [])
+  return source.filter((item) => item.status === 'Unmatched').length
+})
+
+// Filters change what is listed, never what is selected.
+watch([searchText, statusFilter], () => {
+  page.value = 1
+})
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : 'Audiobookshelf request failed.'
 }
@@ -300,9 +429,8 @@ async function loadPreview() {
   error.value = ''
   try {
     preview.value = await apiService.previewAudiobookshelfImport(selectedLibraryId.value)
-    selectedItemIds.value = new Set(
-      preview.value.items.filter((item) => item.status === 'Matched').map((item) => item.itemId),
-    )
+    selectedItemIds.value = new Set()
+    page.value = 1
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
@@ -317,8 +445,66 @@ function toggleSelection(itemId: string) {
   selectedItemIds.value = next
 }
 
+function selectAllMatched() {
+  selectedItemIds.value = new Set(
+    (preview.value?.items ?? [])
+      .filter((item) => item.status === 'Matched')
+      .map((item) => item.itemId),
+  )
+}
+
+function selectVisibleMatched() {
+  const next = new Set(selectedItemIds.value)
+  for (const item of pagedItems.value) {
+    if (item.status === 'Matched') next.add(item.itemId)
+  }
+  selectedItemIds.value = next
+}
+
+function clearSelection() {
+  selectedItemIds.value = new Set()
+}
+
+function runExport(kind: 'unmatched' | 'preview' | 'import-results', build: () => string) {
+  error.value = ''
+  try {
+    downloadCsv(exportFileName(kind), build())
+  } catch (reason) {
+    error.value = `Export failed: ${errorMessage(reason)}`
+  }
+}
+
+function exportUnmatched() {
+  runExport('unmatched', () =>
+    buildUnmatchedCsv(
+      exportFilteredOnly.value ? filteredItems.value : (preview.value?.items ?? []),
+    ),
+  )
+}
+
+function exportFullPreview() {
+  runExport('preview', () =>
+    buildFullPreviewCsv(
+      exportFilteredOnly.value ? filteredItems.value : (preview.value?.items ?? []),
+    ),
+  )
+}
+
+function exportImportResults() {
+  if (importResult.value) {
+    const result = importResult.value
+    runExport('import-results', () => buildImportResultCsv(result))
+  }
+}
+
 async function importSelected() {
-  if (!selectedLibraryId.value || selectedItemIds.value.size === 0) return
+  const count = selectedItemIds.value.size
+  if (!selectedLibraryId.value || count === 0) return
+  const noun = count === 1 ? 'audiobook' : 'audiobooks'
+  const confirmed = window.confirm(
+    `Import ${count} selected ${noun} from Audiobookshelf? Existing files will not be moved, renamed or modified.`,
+  )
+  if (!confirmed) return
   importing.value = true
   error.value = ''
   try {
@@ -431,6 +617,25 @@ onMounted(loadInitialState)
   overflow-wrap: anywhere;
 }
 
+.selection-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: var(--card-bg, #1e1e1e);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 0.5rem;
+}
+
+.inline-check {
+  display: flex !important;
+  align-items: center;
+  grid-template-columns: none;
+}
 .muted {
   opacity: 0.75;
 }

@@ -516,6 +516,13 @@ export interface AudiobookshelfImportPreviewItem {
   status: 'Matched' | 'Unmatched' | 'Duplicate'
   missingIdentifiers: boolean
   reason?: string | null
+  series?: string | null
+  seriesPosition?: string | null
+  fileCount?: number
+  fileFormats?: string[] | null
+  asin?: string | null
+  isbn?: string[] | null
+  failureCategory?: string | null
 }
 
 export interface AudiobookshelfImportPreview {
@@ -523,10 +530,22 @@ export interface AudiobookshelfImportPreview {
   items: AudiobookshelfImportPreviewItem[]
 }
 
+export interface AudiobookshelfImportItemResult {
+  itemId: string
+  title: string
+  outcome: 'Imported' | 'Skipped' | 'Failed'
+  reason?: string | null
+}
+
 export interface AudiobookshelfImportResult {
   importedCount: number
   skippedCount: number
   messages: string[]
+  failedCount?: number
+  libraryId?: string
+  importedAt?: string
+  selectedCount?: number
+  items?: AudiobookshelfImportItemResult[] | null
 }
 
 export interface StartupConfig {

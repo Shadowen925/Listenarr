@@ -310,6 +310,41 @@ namespace Listenarr.Tests.Features.Infrastructure.Repositories
         }
 
         [Fact]
+        public async Task UpdateAsync_DetachedPayloadWithoutProvenance_PreservesAudiobookshelfAuthority()
+        {
+            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options;
+            int id;
+            await using (var seed = new ListenArrDbContext(options))
+            {
+                var audiobook = new AudiobookBuilder().WithTitle("ABS Book").WithBasePath("/data/book").Build();
+                audiobook.AudiobookshelfLibraryId = "lib_a";
+                audiobook.AudiobookshelfItemId = "li_1";
+                audiobook.AudiobookshelfMetadataAuthoritative = true;
+                seed.Audiobooks.Add(audiobook);
+                await seed.SaveChangesAsync();
+                id = audiobook.Id;
+            }
+
+            var detached = new AudiobookBuilder().WithTitle("ABS Book").WithBasePath("/data/book").Build();
+            detached.Id = id;
+            detached.Monitored = false;
+
+            await using (var context = new ListenArrDbContext(options))
+            {
+                await new AudiobookRepository(context).UpdateAsync(detached);
+            }
+
+            await using var verification = new ListenArrDbContext(options);
+            var persisted = await verification.Audiobooks.SingleAsync(candidate => candidate.Id == id);
+            Assert.Equal("lib_a", persisted.AudiobookshelfLibraryId);
+            Assert.Equal("li_1", persisted.AudiobookshelfItemId);
+            Assert.True(persisted.AudiobookshelfMetadataAuthoritative);
+            Assert.False(persisted.Monitored);
+        }
+
+        [Fact]
         public async Task UpdateWithIdentifierReplaceAsync_DoesNotOverwriteNewerBasePath()
         {
             var databaseName = Guid.NewGuid().ToString();

@@ -121,6 +121,49 @@ namespace Listenarr.Tests.Features.Api
         }
 
         [Fact]
+        public async Task RescanMetadata_AudiobookshelfAuthoritativeBook_ReturnsConflictAndKeepsMetadata()
+        {
+            var metadataMock = new Mock<IAudiobookMetadataService>();
+            var factory = _factory.WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.RemoveAll<IAudiobookMetadataService>();
+                    services.AddSingleton(metadataMock.Object);
+                });
+            });
+
+            int audiobookId;
+            using (var scope = factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ListenArrDbContext>();
+                var audiobook = new Audiobook
+                {
+                    Title = "Corrected ABS Title",
+                    Authors = new List<string> { "ABS Author" },
+                    Monitored = true,
+                    Asin = "B0TESTASIN",
+                    AudiobookshelfLibraryId = "lib_a",
+                    AudiobookshelfItemId = "li_1",
+                    AudiobookshelfMetadataAuthoritative = true
+                };
+                db.Audiobooks.Add(audiobook);
+                await db.SaveChangesAsync();
+                audiobookId = audiobook.Id;
+            }
+
+            var response = await PostRescanAsync(factory.CreateClient(), audiobookId);
+
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+            metadataMock.Verify(
+                m => m.GetMetadataAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()),
+                Times.Never);
+            using var verifyScope = factory.Services.CreateScope();
+            var verifyDb = verifyScope.ServiceProvider.GetRequiredService<ListenArrDbContext>();
+            Assert.Equal("Corrected ABS Title", (await verifyDb.Audiobooks.FirstAsync(a => a.Id == audiobookId)).Title);
+        }
+
+        [Fact]
         public async Task RescanMetadata_UsesIdentifiersAndUpdatesAudiobook()
         {
             var metadataMock = new Mock<IAudiobookMetadataService>();
