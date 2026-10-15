@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.Persistence;
@@ -7,18 +8,48 @@ public sealed class AudiobookDeletionIntentReconciler(
     IAudiobookRepository audiobookRepository,
     IAudiobookDeletionCommitService deletionCommitService,
     IAudiobookFilesystemDeleteService filesystemDeleteService,
-    ILogger<AudiobookDeletionIntentReconciler> logger) : IAudiobookDeletionIntentReconciler
+    ILogger<AudiobookDeletionIntentReconciler> logger,
+    IConfiguration? configuration = null) : IAudiobookDeletionIntentReconciler
 {
+    /// <summary>
+    /// Operator opt-in: comma/semicolon separated deletion-intent IDs that may be
+    /// closed (without any filesystem mutation) when their audiobook row is gone.
+    /// </summary>
+    public const string AcknowledgedOrphanedIntentsConfigurationKey =
+        "Listenarr:Recovery:AcknowledgedOrphanedDeletionIntents";
+
+    private const string OrphanedReason =
+        "The audiobook row disappeared before its durable filesystem cleanup completed.";
+
     public async Task ReconcileAsync(CancellationToken cancellationToken = default)
     {
+        var acknowledged = GetAcknowledgedIntentIds();
         var intents = await intentStore.GetActiveAsync(cancellationToken);
         foreach (var intent in intents)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (intent.State is AudiobookDeletionIntentState.Planned
+                or AudiobookDeletionIntentState.NeedsAttention
+                && acknowledged.Contains(intent.Id)
+                && await audiobookRepository.GetByIdSnapshotAsync(
+                    intent.AudiobookId,
+                    cancellationToken) == null
+                && await intentStore.CompleteOrphanedWithoutFilesystemCleanupAsync(
+                    intent.Id,
+                    $"Operator-acknowledged orphaned deletion intent closed without filesystem cleanup; audiobook {intent.AudiobookId} row was absent.",
+                    CancellationToken.None))
+            {
+                logger.LogWarning(
+                    "Closed operator-acknowledged orphaned deletion intent {IntentId} for missing audiobook {AudiobookId}; no filesystem changes were made",
+                    intent.Id,
+                    intent.AudiobookId);
+                continue;
+            }
+
             if (intent.State == AudiobookDeletionIntentState.NeedsAttention)
             {
                 throw new InvalidOperationException(
-                    $"Audiobook deletion intent {intent.Id} requires operator attention: {intent.Error}");
+                    $"Audiobook deletion intent {intent.Id} (audiobook {intent.AudiobookId}) requires operator attention: {intent.Error}");
             }
 
             if (intent.State == AudiobookDeletionIntentState.Planned)
@@ -29,7 +60,7 @@ public sealed class AudiobookDeletionIntentReconciler(
                 if (audiobook == null)
                 {
                     var reason =
-                        "The audiobook row disappeared before its durable filesystem cleanup completed.";
+                        $"{OrphanedReason} Intent {intent.Id} (audiobook {intent.AudiobookId}) is retained; no files were changed. To close it, set {AcknowledgedOrphanedIntentsConfigurationKey} to the intent ID.";
                     await intentStore.MarkNeedsAttentionAsync(
                         intent.Id,
                         reason,
@@ -115,6 +146,28 @@ public sealed class AudiobookDeletionIntentReconciler(
                 intent.Id,
                 intent.AudiobookId);
         }
+    }
+
+    private HashSet<Guid> GetAcknowledgedIntentIds()
+    {
+        var ids = new HashSet<Guid>();
+        var raw = configuration?[AcknowledgedOrphanedIntentsConfigurationKey];
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return ids;
+        }
+
+        foreach (var token in raw.Split(
+            [',', ';', ' '],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (Guid.TryParse(token, out var id) && id != Guid.Empty)
+            {
+                ids.Add(id);
+            }
+        }
+
+        return ids;
     }
 
     private static bool IsTransientRecoveryFilesystemException(Exception exception)

@@ -115,6 +115,42 @@ public sealed class AudiobookDeletionIntentStore(
             cancellationToken);
     }
 
+    public async Task<bool> CompleteOrphanedWithoutFilesystemCleanupAsync(
+        Guid intentId,
+        string note,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(note);
+        if (intentId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A deletion intent ID must not be empty.",
+                nameof(intentId));
+        }
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var intent = await db.AudiobookDeletionIntents
+            .SingleAsync(candidate => candidate.Id == intentId, cancellationToken);
+        if (intent.State is not (AudiobookDeletionIntentState.Planned
+            or AudiobookDeletionIntentState.NeedsAttention))
+        {
+            return false;
+        }
+
+        if (await db.Audiobooks.AnyAsync(
+            audiobook => audiobook.Id == intent.AudiobookId,
+            cancellationToken))
+        {
+            return false;
+        }
+
+        intent.State = AudiobookDeletionIntentState.Completed;
+        intent.Error = note.Length > 2048 ? note[..2048] : note;
+        intent.UpdatedAt = timeProvider.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<IReadOnlyList<AudiobookDeletionIntent>> GetActiveAsync(
         CancellationToken cancellationToken = default)
     {

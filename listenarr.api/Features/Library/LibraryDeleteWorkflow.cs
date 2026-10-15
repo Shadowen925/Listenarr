@@ -294,6 +294,9 @@ namespace Listenarr.Api.Features.Library
             }
             else
             {
+                var pendingIntent = await GetActiveDeletionIntentAsync(
+                    id,
+                    cancellationToken);
                 var commit = await _deletionCommitService.DeleteAsync(
                     id,
                     includeFiles: false,
@@ -310,6 +313,16 @@ namespace Listenarr.Api.Features.Library
                     {
                         StatusCode = StatusCodes.Status500InternalServerError
                     };
+                }
+
+                if (pendingIntent != null)
+                {
+                    // The user explicitly chose a database-only removal, so the earlier
+                    // delete-with-files intent can no longer be driven by startup recovery.
+                    await _deletionIntentStore.CompleteOrphanedWithoutFilesystemCleanupAsync(
+                        pendingIntent.Id,
+                        "Superseded by an explicit database-only audiobook deletion; no filesystem cleanup was performed.",
+                        CancellationToken.None);
                 }
 
                 audiobook = commit.Audiobook;
