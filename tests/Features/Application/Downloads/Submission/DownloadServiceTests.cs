@@ -76,6 +76,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Submission
 
             var searchResult = new SearchResult
             {
+                Id = "release-42",
                 Title = "Artemis",
                 Artist = "Andy Weir",
                 DownloadType = "Torrent",
@@ -89,6 +90,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Submission
             Assert.NotNull(persisted);
             Assert.Equal("ABCDEF1234567890ABCDEF1234567890ABCDEF12", persisted!.Metadata["ClientDownloadId"]?.ToString());
             Assert.Equal("ABCDEF1234567890ABCDEF1234567890ABCDEF12", persisted.Metadata["TorrentHash"]?.ToString());
+            Assert.Equal("release-42", persisted.Metadata["ReleaseId"]?.ToString());
         }
 
         [Fact]

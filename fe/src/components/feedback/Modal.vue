@@ -32,7 +32,7 @@
           <slot name="header">
             <h3 v-if="title">{{ title }}</h3>
             <button v-if="showClose" @click="onClose" class="close-btn" aria-label="Close modal">
-              <slot name="close-icon">✕</slot>
+              <slot name="close-icon">âœ•</slot>
             </button>
           </slot>
         </div>
@@ -69,7 +69,7 @@ const props = defineProps({
   visible: { type: Boolean, required: true },
   title: { type: String, default: '' },
   showClose: { type: Boolean, default: true },
-  size: { type: String as () => 'sm' | 'md' | 'lg', default: 'md' },
+  size: { type: String as () => 'sm' | 'md' | 'lg' | 'xl', default: 'md' },
 })
 const emit = defineEmits(['close'])
 
@@ -78,7 +78,13 @@ function onClose() {
 }
 
 const sizeClass = computed(() => {
-  return props.size === 'sm' ? 'modal-sm' : props.size === 'lg' ? 'modal-lg' : 'modal-md'
+  return props.size === 'sm'
+    ? 'modal-sm'
+    : props.size === 'xl'
+      ? 'modal-xl'
+      : props.size === 'lg'
+        ? 'modal-lg'
+        : 'modal-md'
 })
 
 const contentRef = ref<HTMLElement | null>(null)
@@ -212,5 +218,9 @@ watch(
 }
 .modal-lg {
   max-width: 1000px;
+}
+.modal-xl {
+  width: 95vw;
+  max-width: 95vw;
 }
 </style>

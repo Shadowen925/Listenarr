@@ -147,11 +147,151 @@
         title="Auto-search on Failed Downloads"
         description="Automatically search for a replacement when a download fails (requires failed download handling)."
       />
+
+      <h4 class="stalled-heading">Stalled Downloads</h4>
+      <CheckboxCard
+        :modelValue="settings.stalledHandlingEnabled ?? true"
+        @update:modelValue="(v: boolean) => updateField('stalledHandlingEnabled', v)"
+        title="Detect Stalled Downloads"
+        description="A download is stalled when its downloaded bytes have not increased for the timeout. Zero speed alone is never treated as a stall. Usenet repair/unpack is never stalled."
+      />
+      <FormRow
+        label="Stalled Timeout (minutes)"
+        help="Minutes without byte progress before a download is stalled."
+      >
+        <input
+          :value="settings.stalledTimeoutMinutes ?? 60"
+          @input="
+            (e) =>
+              updateField(
+                'stalledTimeoutMinutes',
+                Number((e.target as HTMLInputElement).value || 60),
+              )
+          "
+          type="number"
+          min="5"
+          max="10080"
+        />
+      </FormRow>
+      <FormRow
+        label="Metadata Timeout (minutes)"
+        help="Minutes a torrent may stay on 'Retrieving metadata'. Torrent clients only."
+      >
+        <input
+          :value="settings.stalledMetadataTimeoutMinutes ?? 15"
+          @input="
+            (e) =>
+              updateField(
+                'stalledMetadataTimeoutMinutes',
+                Number((e.target as HTMLInputElement).value || 15),
+              )
+          "
+          type="number"
+          min="1"
+          max="1440"
+        />
+      </FormRow>
+      <FormRow
+        label="Max Replacement Attempts"
+        help="Automatic replacements per audiobook before giving up."
+      >
+        <input
+          :value="settings.stalledMaxReplacementAttempts ?? 3"
+          @input="
+            (e) =>
+              updateField(
+                'stalledMaxReplacementAttempts',
+                Number((e.target as HTMLInputElement).value || 0),
+              )
+          "
+          type="number"
+          min="0"
+          max="10"
+        />
+      </FormRow>
+      <FormRow
+        label="Minimum Progress (bytes)"
+        help="Bytes that must be downloaded between checks to count as progress."
+      >
+        <input
+          :value="settings.stalledMinimumProgressBytes ?? 1"
+          @input="
+            (e) =>
+              updateField(
+                'stalledMinimumProgressBytes',
+                Number((e.target as HTMLInputElement).value || 1),
+              )
+          "
+          type="number"
+          min="1"
+          max="1000000000"
+        />
+      </FormRow>
+      <FormRow
+        label="Retry Delay (minutes)"
+        help="Minimum wait between automatic replacement attempts for the same audiobook."
+      >
+        <input
+          :value="settings.stalledRetryDelayMinutes ?? 5"
+          @input="
+            (e) =>
+              updateField(
+                'stalledRetryDelayMinutes',
+                Number((e.target as HTMLInputElement).value || 0),
+              )
+          "
+          type="number"
+          min="0"
+          max="1440"
+        />
+      </FormRow>
+      <CheckboxCard
+        :modelValue="settings.stalledAutoSearchAlternatives ?? false"
+        @update:modelValue="(v: boolean) => updateField('stalledAutoSearchAlternatives', v)"
+        title="Automatically Replace Stalled Downloads (off by default)"
+        description="Replace a stalled torrent with the next-best release. The same release is never retried. Never applies to Usenet clients."
+      />
+      <CheckboxCard
+        :modelValue="settings.stalledIgnoreManuallyPaused ?? true"
+        @update:modelValue="(v: boolean) => updateField('stalledIgnoreManuallyPaused', v)"
+        title="Ignore Manually Paused Downloads"
+        description="Paused downloads are never marked as stalled."
+      />
+      <CheckboxCard
+        :modelValue="settings.stalledAutoBlocklist ?? true"
+        @update:modelValue="(v: boolean) => updateField('stalledAutoBlocklist', v)"
+        title="Blocklist Stalled Releases"
+        description="Remember stalled releases durably so they are not selected again for this audiobook."
+      />
+      <FormRow
+        label="Stalled Cleanup (off by default)"
+        help="What to do with the stalled item in the client when replacing it. Delete only removes partial download data, never library files."
+      >
+        <select
+          :value="settings.stalledCleanupBehavior ?? 'none'"
+          @change="
+            (e) => updateField('stalledCleanupBehavior', (e.target as HTMLSelectElement).value)
+          "
+        >
+          <option value="none">Leave in client</option>
+          <option value="remove">Remove from client, keep files</option>
+          <option value="remove_and_delete">Remove from client, delete partial data</option>
+        </select>
+      </FormRow>
+      <p v-if="stalledError" class="form-help stalled-error" role="alert">{{ stalledError }}</p>
+      <p class="form-help effective-values" data-testid="stalled-effective">
+        Effective: detection {{ effective.enabled ? 'on' : 'off' }}, timeout
+        {{ effective.timeout }} min, metadata {{ effective.metadata }} min, replacement
+        {{ effective.auto ? 'automatic' : 'manual only' }} (max {{ effective.attempts }}), cleanup
+        {{ effective.cleanup }}. Per-client overrides are set in each download client's "Stalled
+        Download Overrides" section and take precedence over these values.
+      </p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ApplicationSettings } from '@/types'
 import { PhDownload } from '@phosphor-icons/vue'
 import FormRow from '@/components/settings/FormRow.vue'
@@ -161,6 +301,33 @@ const props = defineProps<{ settings: Partial<ApplicationSettings> }>()
 const emit = defineEmits<{
   'update:settings': [value: Partial<ApplicationSettings>]
 }>()
+
+const effective = computed(() => ({
+  enabled: props.settings.stalledHandlingEnabled ?? true,
+  timeout: props.settings.stalledTimeoutMinutes ?? 60,
+  metadata: props.settings.stalledMetadataTimeoutMinutes ?? 15,
+  attempts: props.settings.stalledMaxReplacementAttempts ?? 3,
+  auto: props.settings.stalledAutoSearchAlternatives ?? false,
+  cleanup: props.settings.stalledCleanupBehavior ?? 'none',
+}))
+
+const stalledError = computed(() => {
+  const s = props.settings
+  const checks: [string, number | null | undefined, number, number][] = [
+    ['Stalled timeout', s.stalledTimeoutMinutes, 5, 10080],
+    ['Metadata timeout', s.stalledMetadataTimeoutMinutes, 1, 1440],
+    ['Max replacement attempts', s.stalledMaxReplacementAttempts, 0, 10],
+    ['Retry delay', s.stalledRetryDelayMinutes, 0, 1440],
+    ['Minimum progress', s.stalledMinimumProgressBytes, 1, 1_000_000_000],
+  ]
+  for (const [label, value, min, max] of checks) {
+    if (value == null) continue
+    if (!Number.isInteger(value) || value < min || value > max) {
+      return `${label} must be a whole number between ${min} and ${max}.`
+    }
+  }
+  return null
+})
 
 function updateField(field: keyof ApplicationSettings, value: unknown) {
   const payload = { ...(props.settings || {}), [field]: value } as Partial<ApplicationSettings>

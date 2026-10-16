@@ -46,7 +46,8 @@ namespace Listenarr.Infrastructure.DownloadClients.Qbittorrent
 
                 // Limit fields returned to reduce memory usage.
                 var fields = "name,progress,size,downloaded,dlspeed,eta,state,hash,added_on,num_seeds,num_leechs,ratio,save_path";
-                var categoryFilter = QBittorrentHelpers.BuildCategoryParameter(client.Settings, "&");
+                // Id-targeted monitor polls identify Listenarr-owned torrents by hash; the category must not hide them.
+                var categoryFilter = ids.Count > 0 ? string.Empty : QBittorrentHelpers.BuildCategoryParameter(client.Settings, "&");
 
                 var category = client.Settings?.TryGetValue("category", out var categoryObj) is true
                     ? categoryObj?.ToString()

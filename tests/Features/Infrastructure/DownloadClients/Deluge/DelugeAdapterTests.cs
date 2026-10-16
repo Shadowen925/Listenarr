@@ -240,6 +240,81 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Deluge
             Assert.Empty(items);
         }
 
+        [Theory]
+        [InlineData("")]
+        [InlineData("movies")]
+        public async Task GetQueueAsync_WithTrackedIds_FindsTorrentWhenLabelMissingOrDifferent(string label)
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.UpdateUiResponseOverride = BuildUpdateUiResponse("Downloading", 10.0, label);
+            var client = await SaveLabelledClientAsync();
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var tracked = await adapter.GetQueueAsync(client, ["abcdef1234567890"], CancellationToken.None);
+            var untargeted = await adapter.GetQueueAsync(client, CancellationToken.None);
+
+            Assert.Single(tracked);
+            Assert.Equal("downloading", tracked[0].Status);
+            Assert.Empty(untargeted);
+        }
+
+        [Fact]
+        public async Task GetQueueAsync_WithTrackedIds_DoesNotReturnUntrackedTorrents()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.UpdateUiResponseOverride = BuildUpdateUiResponse("Seeding", 100.0, "listenarr");
+            var client = await SaveLabelledClientAsync();
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var items = await adapter.GetQueueAsync(client, ["0000000000000000"], CancellationToken.None);
+
+            Assert.Empty(items);
+        }
+
+        [Fact]
+        public async Task GetQueueAsync_WithTrackedIds_ReturnsMagnetAwaitingMetadata()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.UpdateUiResponseOverride = BuildUpdateUiResponse("Downloading Metadata", 0.0, "");
+            var client = await SaveLabelledClientAsync();
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var items = await adapter.GetQueueAsync(client, ["ABCDEF1234567890"], CancellationToken.None);
+
+            Assert.Single(items);
+            Assert.Equal("downloading", items[0].Status);
+        }
+
+        [Fact]
+        public async Task AddAsync_WhenLabelAssignmentFails_StillReturnsNormalizedTrackedId()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.FailLabelAssignment = true;
+            var client = await SaveLabelledClientAsync();
+
+            var submission = new PreparedTorrentSubmission(
+                "Book", "Author", "Book", "test", null, null, 100,
+                "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12",
+                "abcdef1234567890abcdef1234567890abcdef12", null,
+                "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12", null, []);
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var result = await adapter.AddAsync(client, submission, CancellationToken.None);
+
+            Assert.Equal("abcdef1234567890", result.ExternalId);
+        }
+
+        private async Task<DownloadClientConfiguration> SaveLabelledClientAsync()
+            => await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfigurationBuilder()
+                .WithId("deluge-label-test")
+                .WithName("Deluge")
+                .WithType("deluge")
+                .WithHost("localhost")
+                .WithPort(8112)
+                .WithPassword("deluge")
+                .WithSettings("category", "listenarr")
+                .Build());
+
         private static string BuildUpdateUiResponse(string state, double progress, string label)
             => $$"""
             {

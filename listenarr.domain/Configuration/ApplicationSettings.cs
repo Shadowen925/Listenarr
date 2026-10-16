@@ -207,6 +207,20 @@ namespace Listenarr.Domain.Configuration
         /// </summary>
         public string? AudiobookshelfApiKeyEncrypted { get; set; }
 
+        // Stalled download handling. Null means "use the built-in default".
+        public bool? StalledHandlingEnabled { get; set; }
+        public int? StalledTimeoutMinutes { get; set; }
+        public int? StalledMetadataTimeoutMinutes { get; set; }
+        public int? StalledMaxReplacementAttempts { get; set; }
+        public bool? StalledAutoSearchAlternatives { get; set; }
+        public bool? StalledIgnoreManuallyPaused { get; set; }
+        public long? StalledMinimumProgressBytes { get; set; }
+
+        /// <summary>One of "none", "remove" (keep files) or "remove_and_delete".</summary>
+        public string? StalledCleanupBehavior { get; set; }
+        public bool? StalledAutoBlocklist { get; set; }
+        public int? StalledRetryDelayMinutes { get; set; }
+
         /// <summary>
         /// Primary command group name (e.g. "request"). We'll create a slash command with this group and
         /// a subcommand for specific request types (e.g. "audiobook").

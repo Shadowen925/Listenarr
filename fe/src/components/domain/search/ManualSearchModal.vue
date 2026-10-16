@@ -16,7 +16,7 @@
   along with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 <template>
-  <Modal :visible="isOpen" size="lg" @close="close">
+  <Modal :visible="isOpen" size="xl" @close="close">
     <template #header>
       <ModalHeader
         :title="`Manual Search - ${audiobook?.title || ''}`"
@@ -81,31 +81,66 @@
             <table class="results-table">
               <thead>
                 <tr>
-                  <th class="col-source sortable" @click="setSort('Source')">
+                  <th
+                    class="col-source sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Source')"
+                    @keydown.enter.prevent="setSort('Source')"
+                    @keydown.space.prevent="setSort('Source')"
+                  >
                     <span class="header-content">
                       Source
                       <component :is="getSortIcon('Source')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-age sortable" @click="setSort('PublishedDate')">
+                  <th
+                    class="col-age sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('PublishedDate')"
+                    @keydown.enter.prevent="setSort('PublishedDate')"
+                    @keydown.space.prevent="setSort('PublishedDate')"
+                  >
                     <span class="header-content">
                       Age
                       <component :is="getSortIcon('PublishedDate')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-title sortable" @click="setSort('Title')">
+                  <th
+                    class="col-title sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Title')"
+                    @keydown.enter.prevent="setSort('Title')"
+                    @keydown.space.prevent="setSort('Title')"
+                  >
                     <span class="header-content">
                       Title
                       <component :is="getSortIcon('Title')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-indexer sortable" @click="setSort('Source')">
+                  <th
+                    class="col-indexer sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Source')"
+                    @keydown.enter.prevent="setSort('Source')"
+                    @keydown.space.prevent="setSort('Source')"
+                  >
                     <span class="header-content">
                       Indexer
                       <component :is="getSortIcon('Source')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-size sortable" @click="setSort('Size')">
+                  <th
+                    class="col-size sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Size')"
+                    @keydown.enter.prevent="setSort('Size')"
+                    @keydown.space.prevent="setSort('Size')"
+                  >
                     <span class="header-content">
                       Size
                       <component :is="getSortIcon('Size')" class="sort-icon" />
@@ -123,7 +158,14 @@
                       <component :is="getSortIcon('Leechers')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-grabs sortable" @click="setSort('Grabs')">
+                  <th
+                    class="col-grabs sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Grabs')"
+                    @keydown.enter.prevent="setSort('Grabs')"
+                    @keydown.space.prevent="setSort('Grabs')"
+                  >
                     <span class="header-content">
                       Grabs
                       <component :is="getSortIcon('Grabs')" class="sort-icon" />
@@ -145,7 +187,14 @@
                       <component :is="getSortIcon('Quality')" class="sort-icon" />
                     </span>
                   </th>
-                  <th class="col-score sortable" @click="setSort('Score')">
+                  <th
+                    class="col-score sortable"
+                    tabindex="0"
+                    role="button"
+                    @click="setSort('Score')"
+                    @keydown.enter.prevent="setSort('Score')"
+                    @keydown.space.prevent="setSort('Score')"
+                  >
                     <span class="header-content">
                       Score
                       <component :is="getSortIcon('Score')" class="sort-icon" />
@@ -168,12 +217,15 @@
                         v-if="getResultLink(result)"
                         :href="getResultLink(result)"
                         class="title-text"
+                        :title="safeText(result.title)"
                         target="_blank"
                         rel="noopener noreferrer"
                       >
                         {{ safeText(result.title) }}
                       </a>
-                      <span v-else class="title-text">{{ safeText(result.title) }}</span>
+                      <span v-else class="title-text" :title="safeText(result.title)">{{
+                        safeText(result.title)
+                      }}</span>
                     </div>
                   </td>
                   <td class="col-indexer">
@@ -215,7 +267,7 @@
                     <span v-if="result.quality" class="quality-badge">
                       {{ result.quality }}
                       <small v-if="shouldShowFormatFallback(result)" class="format-fallback">
-                        · {{ result.format }}</small
+                        Â· {{ result.format }}</small
                       >
                     </span>
                     <span v-else-if="result.format" class="quality-badge format-only">
@@ -245,14 +297,16 @@
                   <td class="col-actions">
                     <button
                       class="btn-icon btn-download"
-                      @click="downloadResult(result)"
+                      @click="onDownloadClick(result)"
                       :disabled="downloading[result.id] || !result.downloadReference"
                       :title="
                         !result.downloadReference
                           ? 'Run the search again to refresh this download'
                           : downloading[result.id]
                             ? 'Sending to download client...'
-                            : 'Download'
+                            : activeDownload
+                              ? 'Download this instead'
+                              : 'Download'
                       "
                     >
                       <span v-if="!downloading[result.id]"><PhDownloadSimple /></span>
@@ -267,6 +321,22 @@
       </ModalBody>
     </template>
   </Modal>
+  <DownloadActionDialog
+    variant="replace"
+    :open="!!pendingReplace"
+    :audiobook-title="audiobook?.title"
+    :current-title="activeDownload?.title"
+    :client-name="activeDownload?.downloadClientId"
+    :progress="activeDownload?.progress ?? 0"
+    :data-size="activeDownload ? formatSize(activeDownload.downloadedSize) : ''"
+    :new-title="pendingReplace?.title"
+    :new-size="pendingReplace ? formatSize(pendingReplace.size) : ''"
+    :new-quality="pendingReplace?.quality"
+    :busy="replacing"
+    :error="replaceError"
+    @confirm="confirmReplace"
+    @cancel="cancelReplace"
+  />
 </template>
 
 <script setup lang="ts">
@@ -292,7 +362,10 @@ import type {
   QualityProfile,
   SearchSortBy,
   SearchSortDirection,
+  Download,
+  DownloadRemovalMode,
 } from '@/types'
+import DownloadActionDialog from '@/components/domain/download/DownloadActionDialog.vue'
 import { getScoreBreakdownTooltip, computeNormalizedSmart } from '@/composables/useScore'
 import ScorePopover from '@/components/ui/ScorePopover.vue'
 import { safeText } from '@/utils/textUtils'
@@ -300,6 +373,7 @@ import { safeText } from '@/utils/textUtils'
 interface Props {
   isOpen: boolean
   audiobook: Audiobook | null
+  activeDownload?: Download | null
 }
 
 const props = defineProps<Props>()
@@ -458,7 +532,7 @@ function sortFrontendResults() {
     if (!hasA && hasB) return 1
     if (!hasA && !hasB) return 0
 
-    // Both have numeric scores — compare numerically
+    // Both have numeric scores â€” compare numerically
     const scoreA = qa!.totalScore
     const scoreB = qb!.totalScore
 
@@ -729,6 +803,49 @@ function buildSearchQuery(): string {
   }
 
   return parts.join(' ')
+}
+
+const pendingReplace = ref<SearchResult | null>(null)
+const replacing = ref(false)
+const replaceError = ref('')
+
+function onDownloadClick(result: SearchResult) {
+  if (props.activeDownload) {
+    replaceError.value = ''
+    pendingReplace.value = result
+    return
+  }
+  void downloadResult(result)
+}
+
+function cancelReplace() {
+  pendingReplace.value = null
+  replaceError.value = ''
+}
+
+async function confirmReplace(mode: DownloadRemovalMode) {
+  const target = pendingReplace.value
+  const current = props.activeDownload
+  if (!target || !current) return
+  replacing.value = true
+  replaceError.value = ''
+  try {
+    const outcome = await apiService.replaceDownload(
+      current.id,
+      target,
+      mode,
+      current.downloadClientId,
+    )
+    if (!outcome.success) {
+      replaceError.value = outcome.message || 'The download could not be replaced.'
+      useToast().error('Replace failed', replaceError.value)
+      return
+    }
+    pendingReplace.value = null
+    emit('downloaded', target)
+  } finally {
+    replacing.value = false
+  }
 }
 
 async function downloadResult(result: SearchResult) {
@@ -1178,7 +1295,7 @@ function getScoreClass(score: number): string {
   background-color: rgba(27, 39, 52, 0.96);
 }
 
-/* Remove row background change on hover — underline title text instead */
+/* Remove row background change on hover â€” underline title text instead */
 .title-text {
   color: white;
   font-weight: 500;

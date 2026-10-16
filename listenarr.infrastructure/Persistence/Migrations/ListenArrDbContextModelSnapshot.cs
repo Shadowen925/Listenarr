@@ -1960,6 +1960,36 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<bool>("ShowCompletedExternalDownloads")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool?>("StalledAutoBlocklist")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("StalledAutoSearchAlternatives")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StalledCleanupBehavior")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("StalledHandlingEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("StalledIgnoreManuallyPaused")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StalledMaxReplacementAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StalledMetadataTimeoutMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("StalledMinimumProgressBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StalledRetryDelayMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StalledTimeoutMinutes")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("UnmatchedScanConcurrency")
                         .HasColumnType("INTEGER");
 
@@ -2254,6 +2284,61 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.ToTable("DownloadClientConfigurations");
                 });
 
+            modelBuilder.Entity("Listenarr.Domain.Downloads.DownloadEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AudiobookId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DownloadId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReleaseId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DownloadId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.ToTable("DownloadEvents", (string)null);
+                });
+
             modelBuilder.Entity("Listenarr.Domain.Downloads.DownloadProcessingJob", b =>
                 {
                     b.Property<string>("Id")
@@ -2408,6 +2493,45 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.HasIndex("UpdatedAt");
 
                     b.ToTable("FileMutationJournals", (string)null);
+                });
+
+            modelBuilder.Entity("Listenarr.Domain.Downloads.ReleaseRejection", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AudiobookId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReleaseKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReleaseTitle")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AudiobookId", "ReleaseKey")
+                        .IsUnique();
+
+                    b.ToTable("ReleaseRejections", (string)null);
                 });
 
             modelBuilder.Entity("Listenarr.Domain.Downloads.RemotePathMapping", b =>

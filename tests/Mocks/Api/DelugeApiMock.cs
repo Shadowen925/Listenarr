@@ -10,6 +10,7 @@ namespace Listenarr.Tests.Mocks.Api
         public bool DaemonConnected { get; set; } = true;
         public string? UpdateUiResponseOverride { get; set; }
         public bool FailRequests { get; set; } = false;
+        public bool FailLabelAssignment { get; set; } = false;
 
         public DelugeApiMock()
         {
@@ -84,6 +85,13 @@ namespace Listenarr.Tests.Mocks.Api
                       "id": 1,
                       "result": ["ABCDEF1234567890"],
                       "error": null
+                    }
+                    """,
+                    "label.set_torrent" when FailLabelAssignment => """
+                    {
+                      "id": 1,
+                      "result": null,
+                      "error": { "message": "Unknown method label.set_torrent", "code": 2 }
                     }
                     """,
                     "label.set_torrent" => """

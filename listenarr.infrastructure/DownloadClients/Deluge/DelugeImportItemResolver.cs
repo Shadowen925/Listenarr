@@ -139,9 +139,13 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
                 var res = await rpcClient.InvokeAsync(client, "web.update_ui", [StatusKeys, new Dictionary<string, object>()], ct);
                 if (res.TryGetProperty("torrents", out var torrents) && torrents.ValueKind == JsonValueKind.Object)
                 {
-                    if (torrents.TryGetProperty(torrentId, out var torrent))
+                    var wanted = DelugeTorrentId.Normalize(torrentId);
+                    foreach (var candidate in torrents.EnumerateObject())
                     {
-                        return torrent.Clone();
+                        if (DelugeTorrentId.Normalize(candidate.Name) == wanted)
+                        {
+                            return candidate.Value.Clone();
+                        }
                     }
                 }
             }

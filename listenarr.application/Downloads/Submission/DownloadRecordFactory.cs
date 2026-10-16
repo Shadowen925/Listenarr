@@ -28,6 +28,25 @@ namespace Listenarr.Application.Downloads.Submission
             string downloadClientId,
             int? audiobookId)
         {
+            var metadata = new Dictionary<string, object>
+            {
+                ["Source"] = candidate.Source,
+                ["Seeders"] = candidate.Seeders ?? 0,
+                ["Quality"] = candidate.Quality ?? string.Empty,
+                ["Language"] = candidate.Language ?? string.Empty,
+                ["DownloadType"] = submission.Protocol.ToString()
+            };
+
+            if (!string.IsNullOrWhiteSpace(candidate.Id))
+            {
+                metadata["ReleaseId"] = candidate.Id;
+            }
+
+            if (submission is PreparedTorrentSubmission torrent && !string.IsNullOrWhiteSpace(torrent.InfoHash))
+            {
+                metadata["TorrentHash"] = torrent.InfoHash;
+            }
+
             return new Download
             {
                 Id = downloadId,
@@ -44,14 +63,7 @@ namespace Listenarr.Application.Downloads.Submission
                 FinalPath = string.Empty,
                 StartedAt = DateTime.UtcNow,
                 DownloadClientId = downloadClientId,
-                Metadata = new Dictionary<string, object>
-                {
-                    ["Source"] = candidate.Source,
-                    ["Seeders"] = candidate.Seeders ?? 0,
-                    ["Quality"] = candidate.Quality ?? string.Empty,
-                    ["Language"] = candidate.Language ?? string.Empty,
-                    ["DownloadType"] = submission.Protocol.ToString()
-                }
+                Metadata = metadata
             };
         }
     }

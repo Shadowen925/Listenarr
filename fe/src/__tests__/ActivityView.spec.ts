@@ -37,7 +37,8 @@ type ActivityViewVm = {
   clientHasQueueEntry: boolean | null
   queueHealthClients: Array<{ name: string; isUnavailable?: boolean }>
   removeFromQueue: (item: ActivityItem) => Promise<void> | void
-  confirmRemove: () => Promise<void>
+  removeError: string
+  confirmRemove: (mode?: string) => Promise<void>
 }
 
 const mockSignalR = () => {
@@ -53,6 +54,7 @@ const mockApi = (overrides: Record<string, unknown> = {}) => {
     getQueue: vi.fn(async () => []),
     removeFromQueue: vi.fn(async () => undefined),
     cancelDownload: vi.fn(async () => undefined),
+    removeQueueItem: vi.fn(async () => ({ success: true, message: 'ok' })),
     ...overrides,
   }
 
@@ -300,10 +302,48 @@ describe('ActivityView', () => {
     expect(vm.showRemoveModal).toBe(true)
     expect(vm.clientHasQueueEntry).toBe(true)
 
-    await vm.confirmRemove()
-    expect(apiService.removeFromQueue).toHaveBeenCalledWith('q1', 'qbittorrent')
+    await vm.confirmRemove('clientDeleteData')
+    expect(apiService.removeQueueItem).toHaveBeenCalledWith('q1', 'clientDeleteData', 'qbittorrent')
   })
 
+  it('keeps the dialog open and shows the reason when client removal fails', async () => {
+    mockSignalR()
+    const queueItem = {
+      id: 'q1',
+      title: 'Queue Item',
+      status: 'downloading',
+      progress: 10,
+      size: 100,
+      downloaded: 10,
+      downloadSpeed: 0,
+      eta: null,
+      quality: 'MP3',
+      canPause: false,
+      canRemove: true,
+      downloadClient: 'Deluge',
+      downloadClientId: 'deluge',
+      downloadClientType: 'deluge',
+    }
+    const apiService = mockApi({ getQueue: vi.fn(async () => [queueItem]) })
+    apiService.removeQueueItem = vi.fn(async () => ({
+      success: false,
+      message: 'Client unavailable',
+      errorCode: 'client_unavailable',
+    }))
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+    const vm = wrapper.vm as unknown as ActivityViewVm
+    const item = vm.allActivityItems.find((entry) => entry.id === 'q1')
+
+    await vm.removeFromQueue(item!)
+    await vm.confirmRemove('clientKeepFiles')
+
+    expect(vm.showRemoveModal).toBe(true)
+    expect(vm.removeError).toBe('Client unavailable')
+  })
   it('offers Listenarr-only removal when an external item is no longer in the client queue', async () => {
     mockSignalR()
     const apiService = mockApi({
@@ -336,8 +376,8 @@ describe('ActivityView', () => {
     expect(vm.showRemoveModal).toBe(true)
     expect(vm.clientHasQueueEntry).toBe(false)
 
-    await vm.confirmRemove()
-    expect(apiService.cancelDownload).toHaveBeenCalledWith('ext-1')
+    await vm.confirmRemove('listenarrOnly')
+    expect(apiService.removeQueueItem).toHaveBeenCalledWith('ext-1', 'listenarrOnly', 'SABnzbd')
     expect(downloadsStore.loadDownloads).toHaveBeenCalled()
   })
 

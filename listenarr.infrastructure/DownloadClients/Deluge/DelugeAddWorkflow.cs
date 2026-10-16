@@ -76,7 +76,7 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
                 throw new DownloadClientSubmissionException("Deluge did not return a verified torrent identifier.");
             }
 
-            return new DownloadClientSubmissionResult(id, torrent.InfoHash);
+            return new DownloadClientSubmissionResult(DelugeTorrentId.Normalize(id), torrent.InfoHash);
         }
 
         private static Dictionary<string, object> BuildTorrentOptions(DownloadClientConfiguration client)
@@ -106,7 +106,7 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                logger.LogDebug(ex, "Unable to set Deluge label/category. Is the Label plugin enabled?");
+                logger.LogWarning(ex, "Unable to set Deluge label '{Label}' on torrent {TorrentId}. Is the Label plugin enabled in Deluge? Listenarr will keep tracking this torrent by its hash, but it will not appear in label-filtered queue views.", label, id);
             }
         }
 

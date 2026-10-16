@@ -198,6 +198,50 @@ export interface QueueItem {
   ratio?: number
   remotePath?: string // Path as seen by download client
   localPath?: string // Path translated for Listenarr
+  stallState?: string | null // Stalled | MetadataPending | MissingFromClient
+  stallReason?: string | null
+  stallSince?: string | null
+  lastProgressAt?: string | null
+  replacementAttempts?: number
+  replacementState?: string | null
+  replacementError?: string | null
+  missingFromClient?: boolean
+}
+
+export type DownloadRemovalMode = 'listenarrOnly' | 'clientKeepFiles' | 'clientDeleteData'
+
+export interface DownloadActionResult {
+  success: boolean
+  message: string
+  errorCode?: string | null
+  removedFromClient?: boolean
+  removedFromListenarr?: boolean
+  removedOld?: boolean
+  newDownloadId?: string | null
+}
+
+export interface DownloadEvent {
+  id: number
+  timestamp: string
+  eventType: string
+  downloadId?: string | null
+  audiobookId?: number | null
+  clientId?: string | null
+  externalId?: string | null
+  releaseId?: string | null
+  title?: string | null
+  outcome: 'Success' | 'Failure' | 'Info' | string
+  message?: string | null
+}
+
+export interface ReleaseRejection {
+  id: number
+  audiobookId: number
+  releaseKey: string
+  releaseTitle?: string | null
+  reason: string
+  source: string
+  createdAt: string
 }
 
 export interface QueueClientStatus {
@@ -434,6 +478,16 @@ export interface ApplicationSettings {
   pollingIntervalSeconds?: number
   // How many seconds a download must be observed as complete by the client before finalization begins
   downloadCompletionStabilitySeconds?: number
+  stalledHandlingEnabled?: boolean | null
+  stalledTimeoutMinutes?: number | null
+  stalledMetadataTimeoutMinutes?: number | null
+  stalledMaxReplacementAttempts?: number | null
+  stalledAutoSearchAlternatives?: boolean | null
+  stalledIgnoreManuallyPaused?: boolean | null
+  stalledMinimumProgressBytes?: number | null
+  stalledCleanupBehavior?: 'none' | 'remove' | 'remove_and_delete' | null
+  stalledAutoBlocklist?: boolean | null
+  stalledRetryDelayMinutes?: number | null
   // Retry/backoff settings used by the server when a finalized download's source file is not yet present
   missingSourceRetryInitialDelaySeconds?: number
   missingSourceMaxRetries?: number

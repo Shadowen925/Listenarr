@@ -181,6 +181,7 @@
     <ManualSearchModal
       :is-open="showManualSearchModal"
       :audiobook="selectedAudiobook"
+      :active-download="selectedAudiobook ? (getActiveDownload(selectedAudiobook) ?? null) : null"
       @close="closeManualSearch"
       @downloaded="handleDownloaded"
     />

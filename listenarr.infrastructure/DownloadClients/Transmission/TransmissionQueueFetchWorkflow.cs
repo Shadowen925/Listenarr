@@ -59,7 +59,7 @@ namespace Listenarr.Infrastructure.DownloadClients.Transmission
                     try
                     {
                         var labels = TransmissionResponseMapper.ExtractLabels(torrent);
-                        if (!DownloadClientCategoryFilter.MatchesAny(configuredCategory, labels))
+                        if (ids.Count == 0 && !DownloadClientCategoryFilter.MatchesAny(configuredCategory, labels))
                         {
                             continue;
                         }

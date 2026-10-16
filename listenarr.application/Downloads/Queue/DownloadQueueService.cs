@@ -344,6 +344,12 @@ namespace Listenarr.Application.Downloads.Queue
                 }
             }
 
+            var liveClientIds = clientQueueResults
+                .Where(r => !r.IsUnavailable && !r.UsedCachedSnapshot)
+                .Select(r => r.Client.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            DownloadQueueStallEnricher.Apply(queueItems, listenarrDownloads, enabledClients, liveClientIds);
+
             var orderedItems = queueItems.OrderByDescending(q => q.AddedAt).ToList();
 
             return new QueueSnapshot

@@ -31,6 +31,10 @@ import type {
   History,
   Indexer,
   QueueItem,
+  DownloadActionResult,
+  DownloadRemovalMode,
+  DownloadEvent,
+  ReleaseRejection,
   QueueSnapshot,
   RemotePathMapping,
   // ...existing code...
@@ -706,6 +710,87 @@ class ApiService {
 
   async cancelDownload(id: string): Promise<boolean> {
     return this.request<boolean>(`/downloads/${id}`, { method: 'DELETE' })
+  }
+
+  private async postDownloadAction(
+    endpoint: string,
+    payload: Record<string, unknown>,
+  ): Promise<DownloadActionResult> {
+    try {
+      const result = await this.request<DownloadActionResult>(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      return { ...result, success: true }
+    } catch (err) {
+      const e = err as ErrorWithStatus
+      let parsed: Partial<DownloadActionResult> & { error?: string } = {}
+      try {
+        parsed = e.body ? JSON.parse(e.body) : {}
+      } catch {
+        parsed = {}
+      }
+      return {
+        success: false,
+        message:
+          parsed.message || parsed.error || (e instanceof Error ? e.message : 'Request failed'),
+        errorCode: parsed.errorCode ?? (e.status === 409 ? 'conflict' : null),
+        removedOld: parsed.removedOld,
+        removedFromClient: parsed.removedFromClient,
+        removedFromListenarr: parsed.removedFromListenarr,
+      }
+    }
+  }
+
+  /** Removes a queue item. Failures are returned (not thrown) so callers can show the reason. */
+  async removeQueueItem(
+    downloadId: string,
+    mode: DownloadRemovalMode,
+    downloadClientId?: string,
+  ): Promise<DownloadActionResult> {
+    return this.postDownloadAction(`/download/queue/${encodeURIComponent(downloadId)}/remove`, {
+      mode,
+      downloadClientId,
+    })
+  }
+
+  /** Replaces an active download with another release ("Download This Instead"). */
+  async replaceDownload(
+    downloadId: string,
+    searchResult: SearchResult,
+    mode: DownloadRemovalMode,
+    downloadClientId?: string,
+  ): Promise<DownloadActionResult> {
+    return this.postDownloadAction('/download/replace', {
+      downloadId,
+      downloadReference: searchResult.downloadReference,
+      downloadClientId,
+      mode,
+    })
+  }
+
+  async getDownloadEvents(downloadId?: string, limit = 100): Promise<DownloadEvent[]> {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (downloadId) params.set('downloadId', downloadId)
+    return this.request<DownloadEvent[]>(`/download/events?${params.toString()}`)
+  }
+
+  async getReleaseRejections(audiobookId?: number): Promise<ReleaseRejection[]> {
+    const params =
+      audiobookId === undefined ? '' : `?audiobookId=${encodeURIComponent(audiobookId)}`
+    return this.request<ReleaseRejection[]>(`/download/rejections${params}`)
+  }
+
+  async clearReleaseRejection(id: number): Promise<void> {
+    await this.request<void>(`/download/rejections/${id}`, { method: 'DELETE' })
+  }
+
+  async clearAudiobookReleaseRejections(audiobookId: number): Promise<number> {
+    const result = await this.request<{ removed: number }>(
+      `/download/rejections?audiobookId=${encodeURIComponent(audiobookId)}`,
+      { method: 'DELETE' },
+    )
+    return result.removed
   }
 
   async getCachedAnnounces(

@@ -317,6 +317,116 @@
             </div>
           </FormSection>
 
+          <!-- Per-client stalled-download overrides: empty = inherit the global setting -->
+          <FormSection title="Stalled Download Overrides" :icon="PhWrench">
+            <small class="stalled-override-help">
+              Leave a field empty to inherit the global setting.
+              <template v-if="isUsenet">
+                Usenet clients never use stalled-download replacement or metadata timeouts; repair
+                and unpacking are not stalls.
+              </template>
+            </small>
+            <div class="form-group">
+              <label for="ovTimeout">Stalled timeout (minutes)</label>
+              <input
+                id="ovTimeout"
+                type="number"
+                min="5"
+                max="10080"
+                placeholder="inherit"
+                v-model="stalledOverrides.stalledTimeoutMinutes"
+              />
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovMetadata">Metadata timeout (minutes)</label>
+              <input
+                id="ovMetadata"
+                type="number"
+                min="1"
+                max="1440"
+                placeholder="inherit"
+                v-model="stalledOverrides.stalledMetadataTimeoutMinutes"
+              />
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovAuto">Automatic replacement</label>
+              <select id="ovAuto" v-model="stalledOverrides.stalledAutoSearchAlternatives">
+                <option value="">Inherit global</option>
+                <option value="true">Enabled for this client</option>
+                <option value="false">Disabled for this client</option>
+              </select>
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovAttempts">Maximum replacement attempts</label>
+              <input
+                id="ovAttempts"
+                type="number"
+                min="0"
+                max="10"
+                placeholder="inherit"
+                v-model="stalledOverrides.stalledMaxReplacementAttempts"
+              />
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovProgress">Minimum progress (bytes)</label>
+              <input
+                id="ovProgress"
+                type="number"
+                min="1"
+                max="1000000000"
+                placeholder="inherit"
+                v-model="stalledOverrides.stalledMinimumProgressBytes"
+              />
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovRetry">Replacement retry delay (minutes)</label>
+              <input
+                id="ovRetry"
+                type="number"
+                min="0"
+                max="1440"
+                placeholder="inherit"
+                v-model="stalledOverrides.stalledRetryDelayMinutes"
+              />
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovEnabled">Stall detection</label>
+              <select id="ovEnabled" v-model="stalledOverrides.stalledEnabled">
+                <option value="">Inherit global</option>
+                <option value="true">Enabled for this client</option>
+                <option value="false">Disabled for this client</option>
+              </select>
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovPaused">Ignore manually paused</label>
+              <select id="ovPaused" v-model="stalledOverrides.stalledIgnoreManuallyPaused">
+                <option value="">Inherit global</option>
+                <option value="true">Ignore paused items</option>
+                <option value="false">Count paused time</option>
+              </select>
+            </div>
+            <div class="form-group" v-if="!isUsenet">
+              <label for="ovBlocklist">Failed-release blocklisting</label>
+              <select id="ovBlocklist" v-model="stalledOverrides.stalledAutoBlocklist">
+                <option value="">Inherit global</option>
+                <option value="true">Enabled for this client</option>
+                <option value="false">Disabled for this client</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ovCleanup">Cleanup</label>
+              <select id="ovCleanup" v-model="stalledOverrides.stalledCleanupBehavior">
+                <option value="">Inherit global</option>
+                <option value="none">Leave in client</option>
+                <option value="remove">Remove from client, keep files</option>
+                <option value="remove_and_delete">Remove and delete partial data</option>
+              </select>
+            </div>
+            <small v-if="stalledOverrideError" class="stalled-override-error" role="alert">{{
+              stalledOverrideError
+            }}</small>
+          </FormSection>
+
           <!-- Remote Path Mappings (only for existing clients) -->
           <FormSection title="Remote Path Mappings" :icon="PhFolder" v-if="editingClient?.id">
             <div class="form-group">
@@ -386,6 +496,12 @@ import { useToast } from '@/services/toastService'
 import { useConfigurationStore } from '@/stores/configuration'
 import { getRemotePathMappings, testDownloadClient } from '@/services/api'
 import { logger } from '@/utils/logger'
+import {
+  buildStalledOverrides,
+  readStalledOverrides,
+  validateStalledOverrides,
+  type StalledOverrideValues,
+} from '@/utils/stalledOverrides'
 import type { RemotePathMapping } from '@/types'
 
 interface Props {
@@ -435,6 +551,18 @@ const defaultFormData = {
 }
 
 const formData = ref({ ...defaultFormData })
+
+const stalledOverrides = ref<StalledOverrideValues>({})
+const stalledOverrideError = computed(() => validateStalledOverrides(stalledOverrides.value))
+
+const effectiveStalledOverrides = () => {
+  const built = buildStalledOverrides(stalledOverrides.value)
+  if (isUsenet.value) {
+    delete built.stalledAutoSearchAlternatives
+    delete built.stalledMetadataTimeoutMinutes
+  }
+  return built
+}
 
 const remotePathMappings = ref<RemotePathMapping[]>([])
 
@@ -572,9 +700,11 @@ watch(
           settings && settings.remotePathMappingIds ? settings.remotePathMappingIds : [],
       }
       // Load available mappings when editing a client so the dropdown can show options
+      stalledOverrides.value = readStalledOverrides(settings as Record<string, unknown>)
       void loadRemotePathMappings()
     } else {
       formData.value = { ...defaultFormData }
+      stalledOverrides.value = {}
     }
   },
   { immediate: true },
@@ -624,6 +754,7 @@ const testConnection = async () => {
         ...(formData.value.remotePathMappingIds && formData.value.remotePathMappingIds.length > 0
           ? { remotePathMappingIds: formData.value.remotePathMappingIds }
           : {}),
+        ...effectiveStalledOverrides(),
       },
     }
 
@@ -645,6 +776,10 @@ const testConnection = async () => {
 }
 
 const handleSubmit = async () => {
+  if (stalledOverrideError.value) {
+    toast.error('Invalid stalled override', stalledOverrideError.value)
+    return
+  }
   saving.value = true
   try {
     // Generate a simple UUID fallback
@@ -685,6 +820,7 @@ const handleSubmit = async () => {
         ...(formData.value.remotePathMappingIds && formData.value.remotePathMappingIds.length > 0
           ? { remotePathMappingIds: formData.value.remotePathMappingIds }
           : {}),
+        ...effectiveStalledOverrides(),
       },
     }
 

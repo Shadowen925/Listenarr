@@ -167,11 +167,23 @@ namespace Listenarr.Application.Configuration.Core
                     {
                         settings.AudiobookshelfApiKeyEncrypted = existing.AudiobookshelfApiKeyEncrypted;
                     }
+                    settings.StalledHandlingEnabled ??= existing.StalledHandlingEnabled;
+                    settings.StalledTimeoutMinutes ??= existing.StalledTimeoutMinutes;
+                    settings.StalledMetadataTimeoutMinutes ??= existing.StalledMetadataTimeoutMinutes;
+                    settings.StalledMaxReplacementAttempts ??= existing.StalledMaxReplacementAttempts;
+                    settings.StalledAutoSearchAlternatives ??= existing.StalledAutoSearchAlternatives;
+                    settings.StalledIgnoreManuallyPaused ??= existing.StalledIgnoreManuallyPaused;
+                    settings.StalledMinimumProgressBytes ??= existing.StalledMinimumProgressBytes;
+                    settings.StalledCleanupBehavior ??= existing.StalledCleanupBehavior;
+                    settings.StalledAutoBlocklist ??= existing.StalledAutoBlocklist;
+                    settings.StalledRetryDelayMinutes ??= existing.StalledRetryDelayMinutes;
                     if (settings.EnabledNotificationTriggers == null)
                         settings.EnabledNotificationTriggers = existing.EnabledNotificationTriggers;
                     if (settings.Webhooks == null)
                         settings.Webhooks = existing.Webhooks;
                 }
+
+                StalledSettingsValidator.Validate(settings);
 
                 if (!string.IsNullOrWhiteSpace(settings.OutputPath)
                     && !string.Equals(

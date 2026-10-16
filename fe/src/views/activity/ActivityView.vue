@@ -84,6 +84,11 @@
               item.eta,
               item.downloadSpeed,
               item.downloadClient,
+              item.stallState,
+              item.replacementState,
+              item.lastProgressAt,
+              item.replacementAttempts,
+              item.errorMessage,
             ]"
             class="queue-row"
           >
@@ -96,6 +101,7 @@
                   >{{ getDisplayTitle(item) }}</RouterLink
                 >
                 <span v-else class="title-text">{{ getDisplayTitle(item) }}</span>
+                <div class="queue-details" data-test="queue-details">{{ detailsLine(item) }}</div>
               </div>
             </div>
             <div class="col-quality">
@@ -127,8 +133,8 @@
               <span v-else class="muted">-</span>
             </div>
             <div class="col-status">
-              <span :class="['status-badge', item.status]">
-                {{ formatStatus(item.status) }}
+              <span :class="['status-badge', item.status, statusClass(item)]">
+                {{ displayStatus(item) }}
               </span>
               <span
                 v-if="item.isStaleSnapshot"
@@ -146,6 +152,15 @@
                 title="Remove from Queue"
               >
                 <PhX />
+              </button>
+              <button
+                class="btn-icon"
+                data-testid="download-event-history"
+                @click="openDownloadEvents(item)"
+                title="View download event history"
+                aria-label="View download event history"
+              >
+                <PhClock />
               </button>
             </div>
           </div>
@@ -171,65 +186,58 @@
     <!-- Loading State -->
     <LoadingState v-if="loading && queue.length === 0" message="Loading queue..." />
 
-    <!-- Remove Confirmation Modal -->
-    <div v-if="showRemoveModal" class="modal-overlay" @click="showRemoveModal = false">
-      <div class="modal-content" @click.stop>
-        <div class="modal-header">
-          <h3>
-            <PhWarningCircle />
-            Remove from Queue
-          </h3>
-          <button class="modal-close" @click="showRemoveModal = false">
+    <!-- Remove from Queue dialog -->
+    <DownloadActionDialog
+      variant="remove"
+      :open="showRemoveModal"
+      :audiobook-title="itemToRemove ? getDisplayTitle(itemToRemove) : ''"
+      :current-title="itemToRemove?.title"
+      :client-name="itemToRemove?.downloadClient"
+      :progress="itemToRemove?.progress ?? 0"
+      :data-size="itemToRemove?.size ? formatBytes(itemToRemove.downloaded ?? 0) : ''"
+      :missing-remote="clientHasQueueEntry === false"
+      :busy="removing"
+      :error="removeError"
+      @confirm="confirmRemove"
+      @cancel="closeRemoveDialog"
+    />
+    <div
+      v-if="eventHistoryOpen"
+      class="event-history-backdrop"
+      role="presentation"
+      @click.self="eventHistoryOpen = false"
+    >
+      <section
+        class="event-history-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="event-history-title"
+      >
+        <header>
+          <h2 id="event-history-title">Download Event History</h2>
+          <button
+            class="btn-icon"
+            aria-label="Close event history"
+            @click="eventHistoryOpen = false"
+          >
             <PhX />
           </button>
-        </div>
-        <div class="modal-body">
-          <p v-if="clientHasQueueEntry === null">Are you sure you want to remove this download?</p>
-          <p v-else-if="clientHasQueueEntry === true">
-            Are you sure you want to remove this download?
-          </p>
-          <p v-else>
-            This download was not found in the selected download client's queue. Do you want to
-            remove it from Listenarr only (this will delete the record from Listenarr's downloads)?
-          </p>
-          <div class="remove-item-info">
-            <strong>{{ itemToRemove ? getDisplayTitle(itemToRemove) : '' }}</strong>
-            <div class="item-details">
-              <span v-if="itemToRemove?.downloadClient">
-                <PhDesktop />
-                {{ itemToRemove.downloadClient }}
-              </span>
-              <span>
-                <PhChartBar />
-                {{ itemToRemove?.progress.toFixed(1) }}% complete
-              </span>
-            </div>
-          </div>
-          <p class="warning-text" v-if="clientHasQueueEntry !== false">
-            <PhInfo />
-            This will remove the download from your download client. Files may or may not be deleted
-            depending on your client settings.
-          </p>
-          <p class="warning-text" v-else>
-            <PhInfo />
-            The download was not found in the remote client's queue. Removing it here will only
-            delete the Listenarr record (no action will be taken against the remote client).
-          </p>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showRemoveModal = false">Cancel</button>
-          <button class="btn btn-danger" @click="confirmRemove" :disabled="removing">
-            <component :is="removing ? PhSpinner : PhTrash" />
-            {{
-              removing
-                ? 'Removing...'
-                : clientHasQueueEntry === false
-                  ? 'Remove from Listenarr'
-                  : 'Remove'
-            }}
-          </button>
-        </div>
-      </div>
+        </header>
+        <p v-if="eventHistoryError" class="event-history-error" role="alert">
+          {{ eventHistoryError }}
+        </p>
+        <p v-else-if="eventHistoryLoading">Loading download history...</p>
+        <ol v-else-if="downloadEvents.length" class="event-history-list">
+          <li v-for="event in downloadEvents" :key="event.id" :class="event.outcome.toLowerCase()">
+            <time :datetime="event.timestamp">{{
+              new Date(event.timestamp).toLocaleString()
+            }}</time>
+            <strong>{{ event.eventType }}</strong>
+            <span>{{ event.message || event.outcome }}</span>
+          </li>
+        </ol>
+        <p v-else>No download events have been recorded for this item.</p>
+      </section>
     </div>
   </div>
 </template>
@@ -240,14 +248,11 @@ import {
   PhActivity,
   PhSpinner,
   PhArrowClockwise,
-  PhDesktop,
   PhX,
   PhQueue,
   PhWarningCircle,
-  PhInfo,
-  PhChartBar,
-  PhTrash,
   PhMagnifyingGlass,
+  PhClock,
 } from '@phosphor-icons/vue'
 import { useToast } from '@/services/toastService'
 import { errorTracking } from '@/services/errorTracking'
@@ -258,7 +263,15 @@ import { useLibraryStore } from '@/stores/library'
 import { useMoveJobsStore, type TrackedMoveJob } from '@/stores/moveJobs'
 import { EmptyState, LoadingState, ProgressBar } from '@/components/base'
 import { useConfigurationStore } from '@/stores/configuration'
-import type { QueueClientStatus, QueueItem, QueueUpdatePayload, Download } from '@/types'
+import type {
+  QueueClientStatus,
+  QueueItem,
+  QueueUpdatePayload,
+  Download,
+  DownloadRemovalMode,
+  DownloadEvent,
+} from '@/types'
+import DownloadActionDialog from '@/components/domain/download/DownloadActionDialog.vue'
 import { normalizeQueueSnapshot } from '@/utils/queueSnapshot'
 
 const downloadsStore = useDownloadsStore()
@@ -274,6 +287,11 @@ const showRemoveModal = ref(false)
 const clientHasQueueEntry = ref<boolean | null>(null)
 const itemToRemove = ref<QueueItem | null>(null)
 const removing = ref(false)
+const removeError = ref('')
+const eventHistoryOpen = ref(false)
+const eventHistoryLoading = ref(false)
+const eventHistoryError = ref('')
+const downloadEvents = ref<DownloadEvent[]>([])
 let unsubscribeQueue: (() => void) | null = null
 let queueRefreshInterval: ReturnType<typeof setInterval> | null = null
 
@@ -378,7 +396,7 @@ const queueHealthMessage = computed(() => {
 
 // Virtual scrolling setup
 const scrollContainer = ref<HTMLElement | null>(null)
-const ROW_HEIGHT = 37
+const ROW_HEIGHT = 52
 const BUFFER_ROWS = 5
 const MOBILE_ACTIVITY_BREAKPOINT = 768
 
@@ -648,59 +666,122 @@ const refreshQueue = async () => {
   }
 }
 
+const isDdlItem = (item: QueueItem): boolean =>
+  (item.downloadClientId || '').toString().toUpperCase() === 'DDL' ||
+  (item.downloadClientType || '').toString().toUpperCase() === 'DDL'
+
 const removeFromQueue = async (item: QueueItem) => {
   itemToRemove.value = item
-
-  if (
-    (item.downloadClientId || '').toString().toUpperCase() === 'DDL' ||
-    (item.downloadClientType || '').toString().toUpperCase() === 'DDL'
-  ) {
-    clientHasQueueEntry.value = true
-    showRemoveModal.value = true
-    return
-  }
-
-  const found = queue.value.some((q) => q.id === item.id)
-  clientHasQueueEntry.value = found
+  removeError.value = ''
+  clientHasQueueEntry.value = isDdlItem(item)
+    ? true
+    : !item.missingFromClient && queue.value.some((q) => q.id === item.id)
   showRemoveModal.value = true
 }
 
-const confirmRemove = async () => {
-  if (!itemToRemove.value) return
+const openDownloadEvents = async (item: QueueItem) => {
+  eventHistoryOpen.value = true
+  eventHistoryLoading.value = true
+  eventHistoryError.value = ''
+  downloadEvents.value = []
+  try {
+    downloadEvents.value = await apiService.getDownloadEvents(item.id, 100)
+  } catch (err) {
+    eventHistoryError.value = (err as Error).message || 'Could not load download event history.'
+    useToast().error('History unavailable', eventHistoryError.value)
+  } finally {
+    eventHistoryLoading.value = false
+  }
+}
+
+const closeRemoveDialog = () => {
+  showRemoveModal.value = false
+  itemToRemove.value = null
+  clientHasQueueEntry.value = null
+  removeError.value = ''
+}
+
+const confirmRemove = async (mode: DownloadRemovalMode) => {
+  const item = itemToRemove.value
+  if (!item) return
 
   removing.value = true
+  removeError.value = ''
   try {
-    if (
-      (itemToRemove.value.downloadClientId || '').toString().toUpperCase() === 'DDL' ||
-      (itemToRemove.value.downloadClientType || '').toString().toUpperCase() === 'DDL'
-    ) {
-      await apiService.cancelDownload(itemToRemove.value.id)
-      await downloadsStore.loadDownloads()
+    if (isDdlItem(item)) {
+      await apiService.cancelDownload(item.id)
     } else {
-      if (clientHasQueueEntry.value === false) {
-        await apiService.cancelDownload(itemToRemove.value.id)
-        await downloadsStore.loadDownloads()
-      } else {
-        await apiService.removeFromQueue(itemToRemove.value.id, itemToRemove.value.downloadClientId)
-        await refreshQueue()
+      const result = await apiService.removeQueueItem(item.id, mode, item.downloadClientId)
+      if (!result.success) {
+        removeError.value = result.message || 'The download could not be removed.'
+        if (result.errorCode === 'missing_remote') clientHasQueueEntry.value = false
+        useToast().error('Remove failed', removeError.value)
+        return
       }
     }
-
-    showRemoveModal.value = false
-    itemToRemove.value = null
-    clientHasQueueEntry.value = null
+    await downloadsStore.loadDownloads()
+    await refreshQueue()
+    closeRemoveDialog()
   } catch (err) {
     errorTracking.captureException(err as Error, {
       component: 'ActivityView',
       operation: 'removeFromQueue',
     })
-    const toast = useToast()
-    toast.error('Remove failed', (err as Error).message)
+    removeError.value = (err as Error).message
+    useToast().error('Remove failed', removeError.value)
   } finally {
     removing.value = false
   }
 }
 
+const statusClass = (item: QueueItem): string => {
+  const label = displayStatus(item)
+  return label === 'Stalled' || label === 'Missing from client'
+    ? 'stalled'
+    : label === 'Replacing' || label === 'Retrieving metadata'
+      ? 'queued'
+      : ''
+}
+
+const detailsLine = (item: QueueItem): string => {
+  const parts: string[] = []
+  if (item.size) parts.push(`${formatBytes(item.downloaded ?? 0)} / ${formatBytes(item.size)}`)
+  if (item.downloadSpeed > 0) parts.push(`${formatBytes(item.downloadSpeed)}/s`)
+  if (item.seeders !== undefined && item.seeders !== null) parts.push(`${item.seeders} seeds`)
+  if (item.lastProgressAt) parts.push(`last progress ${formatDuration(item.lastProgressAt)} ago`)
+  if (item.stallSince) parts.push(`stalled ${formatDuration(item.stallSince)}`)
+  if (item.replacementAttempts) parts.push(`replacements ${item.replacementAttempts}`)
+  const err = item.replacementError || item.stallReason || item.errorMessage
+  if (err) parts.push(err)
+  return parts.join(' · ')
+}
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes || bytes < 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+const formatDuration = (from?: string | null): string => {
+  if (!from) return '-'
+  const ms = Date.now() - new Date(from).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '-'
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return '<1m'
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  return h < 24 ? `${h}h ${mins % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`
+}
+
+const displayStatus = (item: QueueItem): string => {
+  if (item.replacementState === 'Removing' || item.replacementState === 'Removed')
+    return 'Replacing'
+  if (item.stallState === 'MissingFromClient') return 'Missing from client'
+  if (item.stallState === 'Stalled') return 'Stalled'
+  if (item.stallState === 'MetadataPending') return 'Retrieving metadata'
+  return formatStatus(item.status)
+}
 const formatStatus = (status: string): string => {
   const labels: Record<string, string> = {
     downloading: 'Downloading',
@@ -1114,6 +1195,19 @@ onUnmounted(() => {
   color: #ffd43b;
 }
 
+.status-badge.stalled {
+  background: rgba(255, 193, 7, 0.15);
+  color: #ffc107;
+}
+
+.queue-details {
+  font-size: 0.7rem;
+  color: #868e96;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-badge.queued {
   background-color: rgba(134, 142, 150, 0.15);
   color: #868e96;
@@ -1220,7 +1314,75 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.modal-header h3 {
+.modal-header .event-history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 65%);
+}
+
+.event-history-dialog {
+  width: min(720px, 95vw);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 1.25rem;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #232323;
+  color: #fff;
+}
+
+.event-history-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.event-history-dialog h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.event-history-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.event-history-list li {
+  display: grid;
+  grid-template-columns: minmax(10rem, auto) minmax(9rem, auto) 1fr;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-left: 3px solid #4dabf7;
+  background: #1a1a1a;
+}
+
+.event-history-list li.failure {
+  border-left-color: #fa5252;
+}
+
+.event-history-list time {
+  color: #adb5bd;
+}
+
+.event-history-error {
+  color: #ff8787;
+}
+
+@media (max-width: 640px) {
+  .event-history-list li {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+}
+
+h3 {
   margin: 0;
   color: white;
   font-size: 1.25rem;

@@ -352,6 +352,18 @@ namespace Listenarr.Domain.Downloads
         public int? Leechers { get; set; }
         public double? Ratio { get; set; }
 
+        /// <summary>Derived display state: Retrieving metadata, Stalled, Replacing, Missing from client, or empty.</summary>
+        public string? StallState { get; set; }
+        public string? StallReason { get; set; }
+        public DateTime? StallSince { get; set; }
+        public DateTime? LastProgressAt { get; set; }
+        public int ReplacementAttempts { get; set; }
+        public string? ReplacementState { get; set; }
+        public string? ReplacementError { get; set; }
+
+        /// <summary>True when Listenarr tracks this download but the client did not report it.</summary>
+        public bool MissingFromClient { get; set; }
+
         /// <summary>
         /// Link to the audiobook record this download is associated with (if any).
         /// </summary>

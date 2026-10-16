@@ -16,6 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+using Listenarr.Application.Downloads.Stalls;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -50,6 +51,18 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
 
             using var scope = scopeFactory.CreateScope();
+            try
+            {
+                var recovered = await scope.ServiceProvider.GetRequiredService<DownloadReplacementService>().RecoverInterruptedAsync(cancellationToken);
+                if (recovered > 0)
+                {
+                    logger.LogWarning("Recovered {Count} download replacement(s) interrupted by a restart", recovered);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not recover interrupted download replacements");
+            }
             var configurationService = scope.ServiceProvider.GetRequiredService<IConfigurationService>();
             var appSettings = await configurationService.GetApplicationSettingsAsync();
             if (appSettings.PollingIntervalSeconds > 0)
@@ -198,11 +211,32 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 try
                 {
                     var previousDownloads = clientDownloads.Select(item => item.Clone()).ToList();
+                    foreach (var tracked in clientDownloads)
+                    {
+                        tracked.Metadata.Remove(StallMetadataKeys.Observed);
+                    }
+
                     var updatedDownloads = await downloadClientGateway.FetchDownloadsAsync(client, clientDownloads, cancellationToken);
+                    var stalledPolicy = StalledDownloadPolicy.Resolve(appSettings, client);
+                    var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+                    var stalledIds = new List<string>();
 
                     foreach (Download download in updatedDownloads)
                     {
+                        // Only reached after a successful poll, so a client outage can never look like a stall.
+                        if (download.Metadata.ContainsKey(StallMetadataKeys.Observed)
+                            && StallTracker.EvaluateObserved(download, client, stalledPolicy, nowUtc) == StallVerdict.Stalled)
+                        {
+                            stalledIds.Add(download.Id);
+                        }
+
                         var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
+                        var priorDownload = previousDownloads.FirstOrDefault(d => d.Id == download.Id);
+                        await DownloadMonitorEventRecorder.RecordTransitionEventsAsync(
+                            scope.ServiceProvider,
+                            download,
+                            priorDownload,
+                            cancellationToken);
                         await downloadService.UpdateAsync(download);
                         var previousDownload = previousDownloads.FirstOrDefault(d => d.Id == download.Id);
                         if (previousDownload == null)
@@ -211,6 +245,25 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                         }
 
                         await TriggerCallbacks(client, download, previousDownload, cancellationToken);
+                    }
+
+                    foreach (var missing in clientDownloads.Where(d => !d.Metadata.ContainsKey(StallMetadataKeys.Observed)))
+                    {
+                        if (StallTracker.EvaluateMissing(missing, client, stalledPolicy, nowUtc) != StallVerdict.None
+                            || missing.Metadata.ContainsKey(StallMetadataKeys.MissingSince))
+                        {
+                            await downloadRepository.UpdateAsync(missing);
+                        }
+                    }
+
+                    if (stalledIds.Count > 0 && stalledPolicy.AutoSearchAlternatives)
+                    {
+                        var replacement = scope.ServiceProvider.GetRequiredService<DownloadReplacementService>();
+                        foreach (var stalledId in stalledIds)
+                        {
+                            var outcome = await replacement.TryAutoReplaceAsync(stalledId, client, stalledPolicy, cancellationToken);
+                            logger.LogInformation("Stalled download {DownloadId} replacement outcome: {Outcome} - {Message}", LogRedaction.SanitizeText(stalledId), outcome.Kind, LogRedaction.SanitizeText(outcome.Message));
+                        }
                     }
 
                     if (ShouldRunOrphanCleanup(client))

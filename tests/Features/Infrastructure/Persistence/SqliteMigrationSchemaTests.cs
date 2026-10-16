@@ -42,6 +42,10 @@ public class SqliteMigrationSchemaTests : BaseTests
         "20260821141235_AddCompatibilityFilePublication";
     private const string WeakStorageVerifiedCleanupMigrationId =
         "20260825021432_AddWeakStorageVerifiedCleanup";
+    private const string StalledDownloadSettingsMigrationId =
+        "20261016005451_AddStalledDownloadSettings";
+    private const string DownloadAuditMigrationId =
+        "20261016035008_AddDownloadAuditAndRejections";
     private const string AudiobookshelfIntegrationMigrationId =
         "20261015190028_AddAudiobookshelfIntegration";
 
@@ -202,7 +206,9 @@ public class SqliteMigrationSchemaTests : BaseTests
                 FileMutationParentGenerationProofsMigrationId,
                 CompatibilityFilePublicationMigrationId,
                 WeakStorageVerifiedCleanupMigrationId,
-                AudiobookshelfIntegrationMigrationId
+                AudiobookshelfIntegrationMigrationId,
+                StalledDownloadSettingsMigrationId,
+                DownloadAuditMigrationId
             ],
             postCanary);
         Assert.Contains("20251124102000_AddMoveJobSourcePath", applied);

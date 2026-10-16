@@ -43,11 +43,30 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
                     return items;
                 }
 
+                var trackedIds = ids.Select(DelugeTorrentId.Normalize).Where(id => id.Length > 0).ToHashSet(StringComparer.Ordinal);
+
                 foreach (var torrent in torrents.EnumerateObject())
                 {
                     var t = torrent.Value;
                     var label = GetString(t, "label");
-                    if (!DownloadClientCategoryFilter.Matches(configuredCategory, label))
+                    var torrentId = DelugeTorrentId.Normalize(torrent.Name);
+
+                    // Torrents Listenarr submitted are owned by their durable hash, not by their label. Only
+                    // untargeted (display/discovery) queries are limited to the configured label so that
+                    // unrelated torrents are never adopted.
+                    if (trackedIds.Count > 0)
+                    {
+                        if (!trackedIds.Contains(torrentId))
+                        {
+                            continue;
+                        }
+
+                        if (!DownloadClientCategoryFilter.Matches(configuredCategory, label))
+                        {
+                            logger.LogDebug("Deluge torrent {TorrentId} is tracked by Listenarr but has label '{Label}' instead of '{Category}'; matching by hash.", torrentId, label, configuredCategory);
+                        }
+                    }
+                    else if (!DownloadClientCategoryFilter.Matches(configuredCategory, label))
                     {
                         continue;
                     }
@@ -106,8 +125,8 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
                 return items;
             }
 
-            var idSet = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return [.. items.Where(item => !string.IsNullOrWhiteSpace(item.Id) && idSet.Contains(item.Id))];
+            var idSet = ids.Select(DelugeTorrentId.Normalize).ToHashSet(StringComparer.Ordinal);
+            return [.. items.Where(item => !string.IsNullOrWhiteSpace(item.Id) && idSet.Contains(DelugeTorrentId.Normalize(item.Id)))];
         }
 
         private static DownloadItemStatus MapStatus(string state, double progress)

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stalled download handling: downloads whose bytes do not increase for the configured timeout (default 60 min; 15 min for torrents stuck on metadata) are marked Stalled, durably across restarts, and can be automatically replaced by the next-best release (never the same release, capped at 3 attempts, never touching library files). Usenet clients are never treated as stalled, and a client poll failure is not a stall. Global settings live under Settings → Download Settings; per-client overrides use `stalledEnabled`, `stalledTimeoutMinutes`, `stalledMetadataTimeoutMinutes`, `stalledMaxReplacementAttempts`, `stalledAutoSearchAlternatives`, `stalledCleanupBehavior` in the client's settings. Additive migration `AddStalledDownloadSettings`.
+- New endpoints `POST /api/v1/download/queue/{id}/remove` (Listenarr only / client keep files / client delete partial data) and `POST /api/v1/download/replace`. Deletion goes through the client API only and is refused for completed items and any path overlapping a root folder. Manual search shows a "Download This Instead" confirmation when the audiobook already has an active download; the Activity remove dialog offers the three modes and Listenarr-only cleanup for items missing from the client. Manual search modal widened to 95% of the viewport.
+- Deluge: a failed label assignment is now logged as a warning. Torrents the client no longer reports (or hides due to label filtering) are shown in Activity as "Missing from client" instead of silently staying Queued.
+
 - Fixed Audiobookshelf imports reporting every book as unmatched: the ABS library list returns minified items without audio file paths, so the client now reads each item's file list from `GET /api/items/{id}` (read-only, 4 concurrent requests).
 
 - Audiobookshelf import safety: the preview no longer pre-selects anything ("0 selected", Import disabled until chosen), adds search/status filters, pagination, separate "Select All Matched" / "Select Visible Matched" / Clear controls, a sticky action toolbar, and an exact-count confirmation before importing.

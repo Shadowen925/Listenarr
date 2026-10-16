@@ -554,8 +554,12 @@
 .modal-lg {
   max-width: 1000px;
 }
+.modal-xl {
+  width: 95vw;
+  max-width: 95vw;
+}
 
-/* Backwards-compatible dialog classes (legacy components) — standardized to the modal look & sizes */
+/* Backwards-compatible dialog classes (legacy components) â€” standardized to the modal look & sizes */
 .dialog-overlay,
 .confirm-overlay,
 .match-overlay {

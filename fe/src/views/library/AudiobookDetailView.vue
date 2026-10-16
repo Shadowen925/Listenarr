@@ -432,8 +432,8 @@
                 <PhFileAudio />
                 <span class="file-name">{{ getFileName(f.path) }}</span>
                 <small class="file-meta"
-                  >• {{ f.format ? f.format.toUpperCase() : '' }}
-                  {{ f.durationSeconds ? '• ' + formatDuration(f.durationSeconds) : '' }}</small
+                  >â€¢ {{ f.format ? f.format.toUpperCase() : '' }}
+                  {{ f.durationSeconds ? 'â€¢ ' + formatDuration(f.durationSeconds) : '' }}</small
                 >
               </div>
               <div class="file-actions">
@@ -660,6 +660,7 @@
   <ManualSearchModal
     :is-open="showManualSearchModal"
     :audiobook="audiobook"
+    :active-download="activeDownload"
     @close="closeManualSearch"
     @downloaded="handleDownloaded"
   />
@@ -678,6 +679,7 @@ import { useToast } from '@/services/toastService'
 import type { Audiobook as AudiobookType } from '@/types'
 import { useRoute, useRouter } from 'vue-router'
 import { useLibraryStore } from '@/stores/library'
+import { useDownloadsStore } from '@/stores/downloads'
 import { useConfigurationStore } from '@/stores/configuration'
 import { useRootFoldersStore } from '@/stores/rootFolders'
 import { useScanNotificationsStore } from '@/stores/scanNotifications'
@@ -748,6 +750,16 @@ import {
 const route = useRoute()
 const router = useRouter()
 const libraryStore = useLibraryStore()
+const downloadsStore = useDownloadsStore()
+const activeDownload = computed(() => {
+  const id = audiobook.value?.id
+  if (!id) return null
+  const terminal = ['Completed', 'Failed', 'Ready', 'Moved', 'ImportBlocked']
+  return (
+    downloadsStore.downloads.find((d) => d.audiobookId === id && !terminal.includes(d.status)) ??
+    null
+  )
+})
 const configStore = useConfigurationStore()
 const rootFoldersStore = useRootFoldersStore()
 const scanNotificationsStore = useScanNotificationsStore()
@@ -1492,7 +1504,7 @@ async function rescanMetadata() {
 
     toast.success(
       'Metadata rescanned',
-      details.length > 0 ? details.join(' • ') : 'Audiobook metadata refreshed successfully.',
+      details.length > 0 ? details.join(' â€¢ ') : 'Audiobook metadata refreshed successfully.',
     )
   } catch (err) {
     errorTracking.captureException(err as Error, {
@@ -1524,6 +1536,7 @@ async function loadHistory() {
 }
 
 function openManualSearch() {
+  void downloadsStore.loadDownloads().catch(() => undefined)
   showManualSearchModal.value = true
 }
 
@@ -1910,7 +1923,7 @@ function getFullPath(relativePath?: string): string {
 
 function formatDate(dateString?: string): string {
   if (!dateString) return 'Unknown'
-  // If the string already includes a timezone (Z or ±HH:MM), parse as-is
+  // If the string already includes a timezone (Z or Â±HH:MM), parse as-is
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(dateString)
   const date = new Date(hasTimezone ? dateString : `${dateString}Z`)
   if (Number.isNaN(date.getTime())) return 'Unknown'

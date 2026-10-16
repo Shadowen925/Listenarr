@@ -23,7 +23,8 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
             bool deleteFiles = false,
             CancellationToken ct = default)
         {
-            var res = await rpcClient.InvokeAsync(client, "core.remove_torrent", [id, deleteFiles], ct);
+            logger.LogInformation("Removing Deluge torrent {TorrentId} (deleteFiles={DeleteFiles})", DelugeTorrentId.Normalize(id), deleteFiles);
+            var res = await rpcClient.InvokeAsync(client, "core.remove_torrent", [DelugeTorrentId.Normalize(id), deleteFiles], ct);
             return res.ValueKind == JsonValueKind.True || res.ValueKind == JsonValueKind.Null || res.ValueKind == JsonValueKind.Undefined;
         }
     }

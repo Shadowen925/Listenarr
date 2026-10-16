@@ -156,6 +156,7 @@ namespace Listenarr.Application.Mapping
 
             download.Metadata ??= new Dictionary<string, object>();
             download.Metadata!["ClientState"] = clientState ?? "Unknown";
+            download.Metadata["Stall.Observed"] = true;
 
             // AmountLeft remains numeric for legacy consumers. Callers must check
             // HasReliableSize before treating AmountLeft == 0 as a completion signal.

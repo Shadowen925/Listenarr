@@ -40,7 +40,7 @@ describe('DownloadSettingsSection', () => {
     })
 
     const inputs = wrapper.findAll('input[type="number"]')
-    expect(inputs).toHaveLength(6)
+    expect(inputs).toHaveLength(11)
 
     // Max concurrent
     await inputs[0].setValue('4')
@@ -77,5 +77,15 @@ describe('DownloadSettingsSection', () => {
     last =
       wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
     expect(last.missingSourceMaxRetries).toBe(5)
+
+    await inputs[6].setValue('90')
+    last =
+      wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
+    expect(last.stalledTimeoutMinutes).toBe(90)
+
+    await inputs[9].setValue('4096')
+    last =
+      wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
+    expect(last.stalledMinimumProgressBytes).toBe(4096)
   })
 })

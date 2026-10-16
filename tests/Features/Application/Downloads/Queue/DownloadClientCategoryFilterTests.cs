@@ -110,13 +110,12 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
               }
             }
             """;
-            using var response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
-            };
             var handler = new DelegatingHandlerMock((_, _) =>
             {
-                return Task.FromResult(response);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                });
             });
 
             using var httpClient = new HttpClient(handler);
@@ -137,7 +136,13 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 }
             };
 
-            var queue = await adapter.GetQueueAsync(client, ["HASH1", "HASH2"], CancellationToken.None);
+            var tracked = await adapter.GetQueueAsync(client, ["HASH1", "HASH2"], CancellationToken.None);
+            Assert.Equal(2, tracked.Count);
+
+            var partial = await adapter.GetQueueAsync(client, ["HASH1"], CancellationToken.None);
+            Assert.Single(partial);
+
+            var queue = await adapter.GetQueueAsync(client, CancellationToken.None);
 
             Assert.Single(queue);
             Assert.Equal("Book One", queue[0].Title);
