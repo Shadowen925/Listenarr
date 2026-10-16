@@ -1050,12 +1050,14 @@ const filteredAndSortedAudiobooks = computed(() => {
     if (!q) return true
     const title = (b.title || '').toString().toLowerCase()
     const authors = (b.authors || []).map((a) => (a || '').toString().toLowerCase()).join(' ')
+    const series = getBookSeriesNames(b).join(' ').toLowerCase()
     const narrators = (b.narrators || []).map((n) => (n || '').toString().toLowerCase()).join(' ')
     const publisher = (b.publisher || '').toString().toLowerCase()
     const year = (b.publishYear || '').toString().toLowerCase()
     return (
       title.includes(q) ||
       authors.includes(q) ||
+      series.includes(q) ||
       narrators.includes(q) ||
       publisher.includes(q) ||
       year.includes(q)
@@ -1353,11 +1355,19 @@ try {
   }
   // No need to set sortKey/order here; handled per-group below
   if (!initialGroup) {
-    router.replace({ path: '/audiobooks', query: { group: groupBy.value } })
+    router.replace({ path: '/audiobooks', query: { ...(route.query || {}), group: groupBy.value } })
   } else if (route.query.group !== initialGroup) {
     router.replace({ path: '/audiobooks', query: { ...(route.query || {}), group: initialGroup } })
   }
 } catch {}
+
+watch(
+  () => route.query.q,
+  (query) => {
+    if (typeof query === 'string') searchQuery.value = query
+  },
+  { immediate: true },
+)
 
 watch(groupBy, (v) => {
   try {

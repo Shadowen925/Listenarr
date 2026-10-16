@@ -301,12 +301,14 @@
                   class="detail-series-membership"
                 >
                   <button
+                    v-if="membership.seriesAsin"
                     type="button"
                     class="tag-badge detail-link-tag"
-                    @click="goToSeriesCollection(membership.seriesName)"
+                    @click="goToSeriesCollection(membership.seriesAsin)"
                   >
                     {{ safeText(membership.seriesName) }}
                   </button>
+                  <span v-else class="tag-badge">{{ safeText(membership.seriesName) }}</span>
                   <span v-if="membership.seriesNumber" class="detail-series-number">
                     #{{ membership.seriesNumber }}
                   </span>
@@ -1072,6 +1074,7 @@ const displaySeriesMemberships = computed<AudiobookSeriesMembership[]>(() => {
       ...membership,
       seriesName: (membership.seriesName || '').trim(),
       seriesNumber: membership.seriesNumber?.trim(),
+      seriesAsin: membership.seriesAsin?.trim(),
       isPrimary: Boolean(membership.isPrimary),
       sortOrder: typeof membership.sortOrder === 'number' ? membership.sortOrder : index,
     }))
@@ -1467,11 +1470,11 @@ function goToPublisherCollection(publisher: string | undefined | null) {
   router.push(`/collection/publisher/${encodeURIComponent(normalizedPublisher)}`)
 }
 
-function goToSeriesCollection(series: string | undefined | null) {
-  const normalizedSeries = series?.trim()
-  if (!normalizedSeries) return
+function goToSeriesCollection(seriesId: string | undefined | null) {
+  const normalizedSeriesId = seriesId?.trim()
+  if (!normalizedSeriesId) return
 
-  router.push(`/collection/series/${encodeURIComponent(normalizedSeries)}`)
+  router.push(`/collection/series/${encodeURIComponent(normalizedSeriesId)}`)
 }
 
 function goToGenreCollection(genre: string | undefined | null) {

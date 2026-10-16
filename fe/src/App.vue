@@ -55,6 +55,15 @@
       class="top-nav"
       :class="{ 'auth-warning-visible': showSecurityWarningBanner }"
     >
+      <button
+        class="nav-btn desktop-sidebar-btn"
+        type="button"
+        :aria-label="desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar'"
+        :aria-pressed="desktopSidebarVisible"
+        @click="toggleDesktopSidebar"
+      >
+        <PhList />
+      </button>
       <!-- Mobile menu button -->
       <button
         class="nav-btn mobile-menu-btn"
@@ -74,11 +83,15 @@
         <!-- Mobile backdrop (real DOM element so clicks reliably close the search) -->
         <div v-if="searchOpen" class="mobile-search-backdrop" @click="closeSearch" />
 
-        <div class="nav-search-inline" ref="navSearchRef" :class="{ open: searchOpen }">
+        <div
+          class="nav-search-inline"
+          ref="navSearchRef"
+          :class="{ open: searchOpen, 'desktop-search-visible': desktopSearchVisible }"
+        >
           <input
             v-model="searchQuery"
             @input="onSearchInput"
-            @keydown.enter="applyFirstResult"
+            @keydown.enter.prevent="applyLibrarySearch"
             @keydown.escape.prevent="closeSearch"
             ref="searchInputRef"
             class="search-input-inline"
@@ -88,11 +101,11 @@
           />
           <button
             class="nav-btn"
-            aria-hidden="true"
-            role="button"
-            tabindex="0"
+            type="button"
             @click="toggleSearch"
             @keydown.enter.prevent="toggleSearch"
+            aria-label="Toggle search bar visibility"
+            title="Toggle search bar"
           >
             <PhMagnifyingGlass class="search-inline-icon" />
           </button>
@@ -105,7 +118,7 @@
             <ul v-if="suggestions.length > 0" class="search-list">
               <li
                 v-for="s in suggestions"
-                :key="s.id"
+                :key="`${s.type}:${s.id}`"
                 class="search-result"
                 @click="selectSuggestion(s)"
               >
@@ -123,6 +136,9 @@
                   <div>
                     <div class="result-title">{{ s.title }}</div>
                     <div class="result-sub">{{ s.author }}</div>
+                    <div class="result-type">
+                      {{ s.type === 'series' ? 'Series' : 'Audiobook' }}
+                    </div>
                   </div>
                 </div>
               </li>
@@ -240,7 +256,11 @@
       <aside
         v-if="!hideLayout"
         class="sidebar"
-        :class="{ open: mobileMenuOpen, 'auth-warning-visible': showSecurityWarningBanner }"
+        :class="{
+          open: mobileMenuOpen,
+          'desktop-collapsed': !desktopSidebarVisible,
+          'auth-warning-visible': showSecurityWarningBanner,
+        }"
         ref="sidebarRef"
       >
         <nav class="sidebar-nav" @click.capture="onNavCapture">
@@ -506,7 +526,12 @@
       ></div>
 
       <!-- Main Content Area -->
-      <main :class="['main-content', { 'full-page': hideLayout }]">
+      <main
+        :class="[
+          'main-content',
+          { 'full-page': hideLayout, 'desktop-sidebar-hidden': !desktopSidebarVisible },
+        ]"
+      >
         <div v-if="hideLayout" class="fullpage-wrapper">
           <RouterView />
         </div>
@@ -589,6 +614,12 @@ import { logSessionState, clearAllAuthData } from '@/utils/sessionDebug'
 import { signalRService } from '@/services/signalr'
 import { normalizeQueueSnapshot } from '@/utils/queueSnapshot'
 import type { QueueItem } from '@/types'
+import {
+  getHeaderSearchDestination,
+  getHeaderSearchSuggestions,
+  getLibrarySearchDestination,
+  type HeaderSearchSuggestion,
+} from '@/utils/globalSearch'
 import { ref as vueRef, ref as vueRef2, reactive } from 'vue'
 import GlobalToast from '@/components/ui/GlobalToast.vue'
 import { useToast } from '@/services/toastService'
@@ -599,6 +630,12 @@ import {
   SECURITY_WARNING_BANNER_PREF_KEY,
   getSecurityWarningBannerHiddenPreference,
 } from '@/utils/securityWarningBannerPreference'
+import {
+  getDesktopSearchVisible,
+  getDesktopSidebarVisible,
+  setDesktopSearchVisible,
+  setDesktopSidebarVisible,
+} from '@/utils/desktopLayoutPreferences'
 
 const STARTUP_CONFIG_UPDATED_EVENT = 'listenarr-startup-config-updated'
 
@@ -615,6 +652,8 @@ const authEnabled = ref(false)
 const startupConfigLoaded = ref(false)
 const securityWarningDismissed = ref(false)
 const securityWarningPermanentlyHidden = ref(getSecurityWarningBannerHiddenPreference())
+const desktopSidebarVisible = ref(getDesktopSidebarVisible())
+const desktopSearchVisible = ref(getDesktopSearchVisible())
 // Hover and persistence state for sidebar subnavs
 const hoverNav = ref<string | null>(null)
 const persistentNav = ref<string | null>(null)
@@ -814,6 +853,10 @@ const toggleMobileMenu = () => {
 }
 const closeMobileMenu = () => {
   mobileMenuOpen.value = false
+}
+const toggleDesktopSidebar = () => {
+  desktopSidebarVisible.value = !desktopSidebarVisible.value
+  setDesktopSidebarVisible(desktopSidebarVisible.value)
 }
 
 // Reactive state for badges and counters
@@ -1194,9 +1237,7 @@ router.afterEach(() => {
   pendingNavPath.value = null
 })
 const searchQuery = vueRef('')
-const suggestions = vueRef<
-  Array<{ id: number; title: string; author?: string; imageUrl?: string }>
->([])
+const suggestions = vueRef<HeaderSearchSuggestion[]>([])
 const searching = vueRef(false)
 const searchInputRef = vueRef<HTMLInputElement | null>(null)
 
@@ -1205,6 +1246,20 @@ const navSearchRef = vueRef<HTMLElement | null>(null)
 const searchOpen = vueRef(false)
 
 const toggleSearch = () => {
+  const isDesktop = window.matchMedia('(min-width: 769px)').matches
+  if (isDesktop) {
+    desktopSearchVisible.value = !desktopSearchVisible.value
+    setDesktopSearchVisible(desktopSearchVisible.value)
+    if (!desktopSearchVisible.value) {
+      searchOpen.value = false
+      suggestions.value = []
+      return
+    }
+    searchOpen.value = true
+    nextTick(() => searchInputRef.value?.focus())
+    return
+  }
+
   searchOpen.value = !searchOpen.value
   if (searchOpen.value) {
     // Wait for DOM update then focus input
@@ -1242,25 +1297,7 @@ const onSearchInput = async () => {
       if (libraryStore.audiobooks.length === 0) {
         await libraryStore.fetchLibrary()
       }
-      const lib = libraryStore.audiobooks
-      const lower = q.toLowerCase()
-      const localMatches = lib.filter(
-        (b) =>
-          (b.title || '').toLowerCase().includes(lower) ||
-          (Array.isArray(b.authors) ? b.authors.join(' ').toLowerCase() : '').includes(lower),
-      )
-      if (localMatches.length > 0) {
-        // Only show local library matches in the header search
-        suggestions.value = localMatches.slice(0, 8).map((b) => ({
-          id: b.id!,
-          title: b.title || 'Unknown',
-          author: Array.isArray(b.authors) ? b.authors[0] || '' : '',
-          imageUrl: b.imageUrl || '',
-        }))
-      } else {
-        // No fallback to indexers from header search; leave suggestions empty
-        suggestions.value = []
-      }
+      suggestions.value = getHeaderSearchSuggestions(libraryStore.audiobooks, q)
     } catch (err) {
       logger.error('Header search failed', err)
       suggestions.value = []
@@ -1270,22 +1307,19 @@ const onSearchInput = async () => {
   }, 250)
 }
 
-const selectSuggestion = (s: { id: number; title: string; author?: string }) => {
-  // Navigate to audiobook detail if local (id > 0), else open search view
+const selectSuggestion = (s: HeaderSearchSuggestion) => {
   if (!s) return
   searchQuery.value = ''
   suggestions.value = []
-  if (s.id && s.id > 0) {
-    // Navigate to audiobook detail page (router name: 'audiobook-detail')
-    void router.push({ name: 'audiobook-detail', params: { id: String(s.id) } })
-  } else {
-    // Use the general search page for indexer results
-    void router.push({ name: 'search', query: { q: s.title } })
-  }
+  void router.push(getHeaderSearchDestination(s))
 }
 
-const applyFirstResult = () => {
-  if (suggestions.value.length > 0) selectSuggestion(suggestions.value[0]!)
+const applyLibrarySearch = () => {
+  const query = searchQuery.value.trim()
+  if (!query) return
+  suggestions.value = []
+  closeSearch()
+  void router.push(getLibrarySearchDestination(query))
 }
 
 watch(
@@ -2026,6 +2060,17 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
   top: var(--app-top-offset);
 }
 
+@media (min-width: 769px) {
+  .sidebar.desktop-collapsed {
+    display: none;
+  }
+
+  .main-content.desktop-sidebar-hidden {
+    margin-left: 0;
+    width: 100vw;
+  }
+}
+
 .sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -2348,6 +2393,17 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
   pointer-events: auto;
 }
 
+@media (min-width: 769px) {
+  .nav-search-inline.desktop-search-visible .search-input-inline {
+    position: static;
+    transform: none;
+    width: min(340px, 30vw);
+    max-width: 30vw;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 /* Keep the results dropdown aligned to the input when open */
 .search-results-inline {
   position: absolute;
@@ -2410,6 +2466,18 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
 /* Mobile menu button should be hidden on desktop and only shown via media query on small screens */
 .top-nav .nav-btn.mobile-menu-btn {
   display: none;
+}
+
+.top-nav .nav-btn.desktop-sidebar-btn {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .top-nav .nav-btn.desktop-sidebar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .top-nav .nav-user-btn .ph,

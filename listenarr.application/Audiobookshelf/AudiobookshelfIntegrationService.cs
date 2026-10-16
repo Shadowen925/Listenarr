@@ -7,7 +7,7 @@ using static Listenarr.Application.Audiobookshelf.AudiobookshelfImportRecords;
 
 namespace Listenarr.Application.Audiobookshelf;
 
-public sealed class AudiobookshelfIntegrationService(
+public sealed partial class AudiobookshelfIntegrationService(
     IAudiobookshelfClient client,
     IConfigurationService configurationService,
     IRootFolderRepository rootFolderRepository,

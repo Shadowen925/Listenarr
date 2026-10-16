@@ -717,7 +717,7 @@ describe('CollectionView', () => {
       ],
     })
 
-    await router.push('/collection/series/Mistborn')
+    await router.push('/collection/series/SERIES123')
     await router.isReady().catch(() => {})
 
     const store = useLibraryStore()
@@ -727,6 +727,7 @@ describe('CollectionView', () => {
         title: 'The Final Empire',
         authors: ['Brandon Sanderson'],
         series: 'Mistborn',
+        seriesMemberships: [{ seriesName: 'Mistborn', seriesNumber: '1', seriesAsin: 'SERIES123' }],
         asin: 'BOOK1',
         imageUrl: 'book1.jpg',
         files: [],

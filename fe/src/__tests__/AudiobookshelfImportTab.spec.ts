@@ -17,6 +17,8 @@ vi.mock('@/services/api', () => ({
     getAudiobookshelfLibraries: vi.fn(),
     previewAudiobookshelfImport: vi.fn(),
     importAudiobookshelfItems: vi.fn(),
+    previewAudiobookshelfSeriesSync: vi.fn(),
+    synchronizeAudiobookshelfSeries: vi.fn(),
   },
 }))
 
@@ -110,6 +112,44 @@ describe('Audiobookshelf import preview selection', () => {
   it('disables Export Unmatched when nothing is unmatched', async () => {
     const wrapper = await mountWithPreview([item(1)])
     expect(wrapper.get('[data-testid="export-unmatched"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('previews and bulk-updates only selected series records', async () => {
+    const wrapper = await mountWithPreview([item(1)])
+    vi.mocked(apiService.previewAudiobookshelfSeriesSync).mockResolvedValue({
+      libraryId: 'lib',
+      items: [
+        {
+          itemId: 'item-1',
+          audiobookId: 1,
+          title: 'Book 1',
+          status: 'NeedsUpdate',
+          currentSeries: [{ name: 'Old series', position: '1' }],
+          audiobookshelfSeries: [
+            { name: 'New series', position: '2' },
+            { name: 'Shared universe', position: '4' },
+          ],
+        },
+      ],
+    })
+    vi.mocked(apiService.synchronizeAudiobookshelfSeries).mockResolvedValue({
+      updatedCount: 1,
+      skippedCount: 0,
+      failedCount: 0,
+      items: [{ itemId: 'item-1', title: 'Book 1', outcome: 'Updated' }],
+    })
+    await wrapper.get('[data-testid="preview-series-sync"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Old series #1')
+    expect(wrapper.text()).toContain('New series #2, Shared universe #4')
+
+    await wrapper.get('[data-testid="select-series-updates"]').trigger('click')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-testid="sync-selected-series"]').trigger('click')
+    await flushPromises()
+
+    expect(apiService.synchronizeAudiobookshelfSeries).toHaveBeenCalledWith('lib', ['item-1'])
+    expect(wrapper.text()).toContain('Updated 1; skipped 0; failed 0')
   })
 })
 

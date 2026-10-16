@@ -863,9 +863,32 @@ const toast = useToast()
 const { getProtectedImageSrc } = useProtectedImages()
 
 const type = computed(() => route.params.type as string)
-const name = computed(() => decodeURIComponent(route.params.name as string))
 const isAuthorCollection = computed(() => type.value === 'author')
 const isSeriesCollection = computed(() => type.value === 'series')
+const routeCollectionValue = computed(() => decodeURIComponent(route.params.name as string))
+const routeSeriesId = computed(() => {
+  if (!isSeriesCollection.value) return ''
+  const candidate = routeCollectionValue.value.toLocaleUpperCase()
+  for (const audiobook of libraryStore.audiobooks) {
+    const membership = audiobook.seriesMemberships?.find(
+      (item) => item.seriesAsin?.trim().toLocaleUpperCase() === candidate,
+    )
+    if (membership?.seriesAsin?.trim()) return membership.seriesAsin.trim()
+  }
+  return ''
+})
+const name = computed(() => {
+  if (isSeriesCollection.value && routeSeriesId.value) {
+    const id = routeSeriesId.value.toLocaleUpperCase()
+    for (const audiobook of libraryStore.audiobooks) {
+      const membership = audiobook.seriesMemberships?.find(
+        (item) => item.seriesAsin?.trim().toLocaleUpperCase() === id,
+      )
+      if (membership?.seriesName?.trim()) return membership.seriesName.trim()
+    }
+  }
+  return routeCollectionValue.value
+})
 const isGenreCollection = computed(() => type.value === 'genre')
 const isNarratorCollection = computed(() => type.value === 'narrator')
 const isPublisherCollection = computed(() => type.value === 'publisher')
@@ -989,8 +1012,16 @@ function matchesCurrentCollection(book: Audiobook): boolean {
   }
 
   if (type.value === 'series') {
-    const target = normalizeCollectionText(name.value)
     const memberships = book.seriesMemberships
+    if (routeSeriesId.value) {
+      const targetId = routeSeriesId.value.toLocaleUpperCase()
+      return Boolean(
+        memberships?.some(
+          (membership) => membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
+        ),
+      )
+    }
+    const target = normalizeCollectionText(name.value)
     if (memberships && memberships.length > 0) {
       return memberships.some(
         (membership) => normalizeCollectionText(membership.seriesName) === target,
@@ -1036,8 +1067,16 @@ function mapLibraryItem(book: Audiobook): CollectionDisplayItem {
 function resolveSeriesForCollection(
   book: Audiobook,
 ): { seriesName: string; seriesNumber?: string } | null {
-  const target = normalizeCollectionText(name.value)
   const memberships = book.seriesMemberships
+  if (routeSeriesId.value) {
+    const targetId = routeSeriesId.value.toLocaleUpperCase()
+    const match = memberships?.find(
+      (membership) => membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
+    )
+    if (match)
+      return { seriesName: match.seriesName || name.value, seriesNumber: match.seriesNumber }
+  }
+  const target = normalizeCollectionText(name.value)
   if (memberships && memberships.length > 0) {
     const match = memberships.find(
       (membership) => normalizeCollectionText(membership.seriesName) === target,
@@ -1837,7 +1876,7 @@ async function loadCollectionData(forceLibrary = false, forceAuthorMetadataRefre
     const refreshedCatalog = await loadSeriesCatalog(forceAuthorMetadataRefresh)
     await loadSeriesMonitoringStatus()
     await loadSeriesLookup(
-      refreshedCatalog?.series?.asin || seriesCatalog.value?.series?.asin,
+      routeSeriesId.value || refreshedCatalog?.series?.asin || seriesCatalog.value?.series?.asin,
       forceAuthorMetadataRefresh,
     )
   } else {

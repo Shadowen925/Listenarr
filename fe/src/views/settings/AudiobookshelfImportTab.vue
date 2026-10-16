@@ -243,6 +243,94 @@
         </button>
       </div>
     </div>
+
+    <div v-if="libraries.length > 0" class="form-section">
+      <h2>Synchronize series metadata</h2>
+      <p>
+        Preview series memberships for audiobooks already imported from Audiobookshelf, then update
+        only their series names and positions.
+      </p>
+      <div class="actions">
+        <button
+          class="btn btn-secondary"
+          data-testid="preview-series-sync"
+          :disabled="!selectedLibraryId || seriesSyncPreviewing"
+          @click="loadSeriesSyncPreview()"
+        >
+          {{ seriesSyncPreviewing ? 'Building preview…' : 'Preview series sync' }}
+        </button>
+        <button
+          class="btn btn-primary"
+          data-testid="sync-selected-series"
+          :disabled="selectedSeriesItemIds.size === 0 || seriesSyncing"
+          @click="synchronizeSelectedSeries"
+        >
+          {{ seriesSyncing ? 'Synchronizing…' : `Update ${selectedSeriesItemIds.size} selected` }}
+        </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="select-series-updates"
+          :disabled="seriesNeedsUpdateCount === 0"
+          @click="selectAllSeriesUpdates"
+        >
+          Select all needing updates ({{ seriesNeedsUpdateCount }})
+        </button>
+        <button
+          class="btn btn-secondary"
+          :disabled="selectedSeriesItemIds.size === 0"
+          @click="selectedSeriesItemIds = new Set()"
+        >
+          Clear selection
+        </button>
+      </div>
+      <div v-if="seriesSyncPreview" class="preview-summary" aria-live="polite">
+        <span>Needs update: {{ seriesNeedsUpdateCount }}</span>
+        <span>Up to date: {{ seriesUpToDateCount }}</span>
+        <span>Missing in Audiobookshelf: {{ seriesMissingCount }}</span>
+      </div>
+      <div v-if="seriesSyncPreview?.items.length" class="preview-table-wrap">
+        <table class="preview-table">
+          <thead>
+            <tr>
+              <th scope="col">Update</th>
+              <th scope="col">Title</th>
+              <th scope="col">Status</th>
+              <th scope="col">Listenarr series</th>
+              <th scope="col">Audiobookshelf series</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in seriesSyncPreview.items" :key="item.itemId">
+              <td>
+                <input
+                  v-if="item.status === 'NeedsUpdate'"
+                  type="checkbox"
+                  :checked="selectedSeriesItemIds.has(item.itemId)"
+                  :aria-label="`Update series for ${item.title}`"
+                  @change="toggleSeriesSelection(item.itemId)"
+                />
+              </td>
+              <td>{{ item.title }}</td>
+              <td>{{ item.status }}</td>
+              <td>{{ formatSeries(item.currentSeries) }}</td>
+              <td>{{ formatSeries(item.audiobookshelfSeries) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-if="seriesSyncResult" class="result-message" role="status">
+        <strong>
+          Updated {{ seriesSyncResult.updatedCount }}; skipped {{ seriesSyncResult.skippedCount }};
+          failed {{ seriesSyncResult.failedCount }}
+        </strong>
+        <ul v-if="seriesSyncResult.items.length">
+          <li v-for="item in seriesSyncResult.items" :key="item.itemId">
+            {{ item.outcome }} — {{ item.title
+            }}<template v-if="item.reason">: {{ item.reason }}</template>
+          </li>
+        </ul>
+      </div>
+    </div>
     <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     <p v-if="notice" class="success-message" role="status">{{ notice }}</p>
   </section>
@@ -263,6 +351,9 @@ import type {
   AudiobookshelfImportPreview,
   AudiobookshelfImportResult,
   AudiobookshelfLibrary,
+  AudiobookSeriesMembershipPreview,
+  AudiobookshelfSeriesSyncPreview,
+  AudiobookshelfSeriesSyncResult,
   RootFolder,
 } from '@/types'
 
@@ -278,6 +369,9 @@ const selectedLibraryId = ref('')
 const preview = ref<AudiobookshelfImportPreview | null>(null)
 const selectedItemIds = ref(new Set<string>())
 const importResult = ref<AudiobookshelfImportResult | null>(null)
+const seriesSyncPreview = ref<AudiobookshelfSeriesSyncPreview | null>(null)
+const selectedSeriesItemIds = ref(new Set<string>())
+const seriesSyncResult = ref<AudiobookshelfSeriesSyncResult | null>(null)
 const searchText = ref('')
 const statusFilter = ref('All')
 const exportFilteredOnly = ref(false)
@@ -290,6 +384,8 @@ const mappingRootId = ref<number | null>(null)
 const previewing = ref(false)
 const importing = ref(false)
 const scanning = ref(false)
+const seriesSyncPreviewing = ref(false)
+const seriesSyncing = ref(false)
 const error = ref('')
 const notice = ref('')
 
@@ -304,6 +400,17 @@ const duplicateCount = computed(
 )
 const missingIdentifierCount = computed(
   () => preview.value?.items.filter((item) => item.missingIdentifiers).length ?? 0,
+)
+const seriesNeedsUpdateCount = computed(
+  () => seriesSyncPreview.value?.items.filter((item) => item.status === 'NeedsUpdate').length ?? 0,
+)
+const seriesUpToDateCount = computed(
+  () => seriesSyncPreview.value?.items.filter((item) => item.status === 'UpToDate').length ?? 0,
+)
+const seriesMissingCount = computed(
+  () =>
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'MissingInAudiobookshelf')
+      .length ?? 0,
 )
 
 const filteredItems = computed(() => {
@@ -335,6 +442,11 @@ const exportUnmatchedCount = computed(() => {
 // Filters change what is listed, never what is selected.
 watch([searchText, statusFilter], () => {
   page.value = 1
+})
+watch(selectedLibraryId, () => {
+  seriesSyncPreview.value = null
+  selectedSeriesItemIds.value = new Set()
+  seriesSyncResult.value = null
 })
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : 'Audiobookshelf request failed.'
@@ -438,6 +550,49 @@ async function loadPreview() {
   }
 }
 
+async function loadSeriesSyncPreview(preserveResult = false) {
+  if (!selectedLibraryId.value) return
+  seriesSyncPreviewing.value = true
+  error.value = ''
+  if (!preserveResult) seriesSyncResult.value = null
+  try {
+    seriesSyncPreview.value = await apiService.previewAudiobookshelfSeriesSync(
+      selectedLibraryId.value,
+    )
+    selectedSeriesItemIds.value = new Set()
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    seriesSyncPreviewing.value = false
+  }
+}
+
+function toggleSeriesSelection(itemId: string) {
+  const next = new Set(selectedSeriesItemIds.value)
+  if (next.has(itemId)) next.delete(itemId)
+  else next.add(itemId)
+  selectedSeriesItemIds.value = next
+}
+
+function selectAllSeriesUpdates() {
+  selectedSeriesItemIds.value = new Set(
+    (seriesSyncPreview.value?.items ?? [])
+      .filter((item) => item.status === 'NeedsUpdate')
+      .map((item) => item.itemId),
+  )
+}
+
+function formatSeries(series: AudiobookSeriesMembershipPreview[]) {
+  return series.length
+    ? series
+        .map(
+          (membership) =>
+            `${membership.name}${membership.position ? ` #${membership.position}` : ''}`,
+        )
+        .join(', ')
+    : '—'
+}
+
 function toggleSelection(itemId: string) {
   const next = new Set(selectedItemIds.value)
   if (next.has(itemId)) next.delete(itemId)
@@ -516,6 +671,28 @@ async function importSelected() {
     error.value = errorMessage(reason)
   } finally {
     importing.value = false
+  }
+}
+
+async function synchronizeSelectedSeries() {
+  const count = selectedSeriesItemIds.value.size
+  if (!selectedLibraryId.value || count === 0) return
+  const confirmed = window.confirm(
+    `Update series metadata for ${count} selected audiobook${count === 1 ? '' : 's'}? No other audiobook metadata or files will be changed.`,
+  )
+  if (!confirmed) return
+  seriesSyncing.value = true
+  error.value = ''
+  try {
+    seriesSyncResult.value = await apiService.synchronizeAudiobookshelfSeries(
+      selectedLibraryId.value,
+      [...selectedSeriesItemIds.value],
+    )
+    await loadSeriesSyncPreview(true)
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    seriesSyncing.value = false
   }
 }
 

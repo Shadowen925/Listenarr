@@ -99,6 +99,20 @@ describe('AudiobookDetailView image recache behavior', () => {
         narrators: ['Michael Kramer'],
         publisher: 'Tor Audio',
         series: 'Mistborn',
+        seriesMemberships: [
+          {
+            seriesName: 'Mistborn',
+            seriesNumber: '1',
+            seriesAsin: 'MISTBORN-SERIES',
+            isPrimary: true,
+          },
+          {
+            seriesName: 'Cosmere',
+            seriesNumber: '3',
+            seriesAsin: 'COSMERE-SERIES',
+            isPrimary: false,
+          },
+        ],
         genres: ['Fantasy'],
         files: [],
       },
@@ -130,6 +144,13 @@ describe('AudiobookDetailView image recache behavior', () => {
     expect(publisherTag).toBeTruthy()
     expect(seriesTag).toBeTruthy()
     expect(genreTag).toBeTruthy()
+    expect(wrapper.findAll('.detail-series-membership')).toHaveLength(2)
+    expect(
+      wrapper
+        .findAll('.detail-series-membership')
+        .find((membership) => membership.text().includes('Cosmere'))
+        ?.text(),
+    ).toContain('#3')
 
     await authorTag!.trigger('click')
 
@@ -145,11 +166,42 @@ describe('AudiobookDetailView image recache behavior', () => {
 
     await seriesTag!.trigger('click')
 
-    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/Mistborn')
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/MISTBORN-SERIES')
+
+    const cosmereTag = wrapper
+      .findAll('.detail-link-tag')
+      .find((tag) => tag.text().includes('Cosmere'))
+    expect(cosmereTag).toBeTruthy()
+    await cosmereTag!.trigger('click')
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/COSMERE-SERIES')
 
     await genreTag!.trigger('click')
 
     expect(routerPushMock).toHaveBeenCalledWith('/collection/genre/Fantasy')
+  })
+
+  it('does not render a series name without an identifier as a broken link', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 5,
+        title: 'Detail Book',
+        series: 'Unlinked Series',
+        seriesNumber: '4',
+        files: [],
+      },
+    ] as unknown as ReturnType<typeof useLibraryStore>['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const membership = wrapper.find('.detail-series-membership')
+    expect(membership.text()).toContain('Unlinked Series')
+    expect(membership.text()).toContain('#4')
+    expect(membership.find('button.detail-link-tag').exists()).toBe(false)
   })
 
   it('opens the edit metadata modal from the detail view action', async () => {

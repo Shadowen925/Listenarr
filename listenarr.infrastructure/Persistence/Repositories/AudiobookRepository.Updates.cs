@@ -144,6 +144,16 @@ public partial class AudiobookRepository
         return true;
     }
 
+    public Task<List<Audiobook>> GetAudiobookshelfBooksAsync(
+        string libraryId,
+        CancellationToken ct = default) =>
+        _db.Audiobooks
+            .Where(audiobook => audiobook.AudiobookshelfLibraryId == libraryId
+                && audiobook.AudiobookshelfItemId != null)
+            .Include(audiobook => audiobook.SeriesMemberships)
+            .OrderBy(audiobook => audiobook.Title)
+            .ToListAsync(ct);
+
     private void SynchronizeTrackedImageUrl(
         int audiobookId,
         string? newImageUrl)

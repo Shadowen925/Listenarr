@@ -602,6 +602,41 @@ export interface AudiobookshelfImportResult {
   items?: AudiobookshelfImportItemResult[] | null
 }
 
+export interface AudiobookSeriesMembershipPreview {
+  name: string
+  position?: string | null
+}
+
+export type AudiobookshelfSeriesSyncStatus = 'NeedsUpdate' | 'UpToDate' | 'MissingInAudiobookshelf'
+
+export interface AudiobookshelfSeriesSyncPreviewItem {
+  itemId: string
+  audiobookId: number
+  title: string
+  status: AudiobookshelfSeriesSyncStatus
+  currentSeries: AudiobookSeriesMembershipPreview[]
+  audiobookshelfSeries: AudiobookSeriesMembershipPreview[]
+}
+
+export interface AudiobookshelfSeriesSyncPreview {
+  libraryId: string
+  items: AudiobookshelfSeriesSyncPreviewItem[]
+}
+
+export interface AudiobookshelfSeriesSyncItemResult {
+  itemId: string
+  title: string
+  outcome: 'Updated' | 'Skipped' | 'Failed'
+  reason?: string | null
+}
+
+export interface AudiobookshelfSeriesSyncResult {
+  updatedCount: number
+  skippedCount: number
+  failedCount: number
+  items: AudiobookshelfSeriesSyncItemResult[]
+}
+
 export interface StartupConfig {
   logLevel?: string
   enableSsl?: boolean

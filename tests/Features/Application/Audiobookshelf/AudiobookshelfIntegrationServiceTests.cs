@@ -49,6 +49,9 @@ public sealed class AudiobookshelfIntegrationServiceTests : BaseTests
         Assert.Equal("ABS corrected description", addedAudiobook.Description);
         Assert.Equal("Series", addedAudiobook.Series);
         Assert.Equal("2", addedAudiobook.SeriesNumber);
+        Assert.Equal(
+            "Series",
+            Assert.Single(addedAudiobook.SeriesMemberships!).SeriesName);
         Assert.Equal("OL123W", addedAudiobook.OpenLibraryId);
         Assert.True(addedAudiobook.AudiobookshelfMetadataAuthoritative);
         Assert.Equal(fixture.MappedBookPath, addedAudiobook.BasePath);
@@ -61,6 +64,141 @@ public sealed class AudiobookshelfIntegrationServiceTests : BaseTests
         fixture.FileSystem.Verify(fileSystem => fileSystem.DeleteFile(It.IsAny<string>()), Times.Never);
         fixture.FileSystem.Verify(fileSystem => fileSystem.DeleteDirectory(It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
         fixture.FileSystem.Verify(fileSystem => fileSystem.WriteAllText(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ImportAsync_PreservesMultipleAudiobookshelfSeriesMembershipsAndPositions()
+    {
+        var fixture = new ImportFixture();
+        var source = fixture.Item with
+        {
+            Metadata = fixture.Item.Metadata with
+            {
+                SeriesMemberships =
+                [
+                    new AudiobookshelfSeriesMembership("Series", "2"),
+                    new AudiobookshelfSeriesMembership("Shared Universe", "4")
+                ]
+            }
+        };
+        fixture.Client.Setup(client => client.GetLibraryItemsAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                fixture.Library.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([source]);
+        fixture.AudiobookRepository
+            .Setup(repository => repository.AddAsync(It.IsAny<Audiobook>()))
+            .Callback<Audiobook>(audiobook => audiobook.Id = 41)
+            .ReturnsAsync((Audiobook audiobook) => audiobook);
+        fixture.ScanService
+            .Setup(service => service.RegisterExistingFileAsync(
+                41,
+                It.IsAny<string>(),
+                fixture.MappedAudioPath,
+                "audiobookshelf-import",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await fixture.Service.ImportAsync(new AudiobookshelfImportRequest(
+            fixture.Library.Id,
+            [fixture.Item.Id]));
+
+        var imported = Assert.Single(
+            fixture.AudiobookRepository.Invocations
+                .Where(invocation => invocation.Method.Name == nameof(IAudiobookRepository.AddAsync))
+                .Select(invocation => (Audiobook)invocation.Arguments[0]));
+        Assert.Equal(
+            [("Series", "2"), ("Shared Universe", "4")],
+            imported.SeriesMemberships!
+                .OrderBy(membership => membership.SortOrder)
+                .Select(membership => (membership.SeriesName, membership.SeriesNumber))
+                .ToArray());
+    }
+
+    [Fact]
+    public async Task SynchronizeSeriesAsync_UpdatesOnlySeriesMembershipsForSelectedImportedBooks()
+    {
+        var fixture = new ImportFixture();
+        var source = fixture.Item with
+        {
+            Metadata = fixture.Item.Metadata with
+            {
+                SeriesMemberships =
+                [
+                    new AudiobookshelfSeriesMembership("Series", "2"),
+                    new AudiobookshelfSeriesMembership("Shared Universe", "4")
+                ]
+            }
+        };
+        fixture.Client.Setup(client => client.GetLibraryItemsAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                fixture.Library.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([source]);
+        var audiobook = new Audiobook
+        {
+            Id = 41,
+            Title = "Imported title",
+            Subtitle = "Keep this subtitle",
+            Authors = ["Existing author"],
+            Asin = "B012345678",
+            BasePath = fixture.MappedBookPath,
+            FilePath = fixture.MappedAudioPath,
+            AudiobookshelfLibraryId = fixture.Library.Id,
+            AudiobookshelfItemId = fixture.Item.Id,
+            Series = "Series",
+            SeriesNumber = "1",
+            SeriesMemberships =
+            [
+                new AudiobookSeriesMembership
+                {
+                    SeriesName = "Series",
+                    SeriesNumber = "1",
+                    SeriesAsin = "B098765432",
+                    IsPrimary = true
+                }
+            ]
+        };
+        fixture.AudiobookRepository
+            .Setup(repository => repository.GetAudiobookshelfBooksAsync(
+                fixture.Library.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([audiobook]);
+        fixture.AudiobookRepository
+            .Setup(repository => repository.UpdateAsync(audiobook))
+            .ReturnsAsync(true);
+
+        var preview = await fixture.Service.PreviewSeriesSyncAsync(fixture.Library.Id);
+        var previewItem = Assert.Single(preview.Items);
+        Assert.Equal(AudiobookshelfSeriesSyncStatus.NeedsUpdate, previewItem.Status);
+        Assert.Equal(2, previewItem.AudiobookshelfSeries.Count);
+
+        var result = await fixture.Service.SynchronizeSeriesAsync(
+            new AudiobookshelfSeriesSyncRequest(fixture.Library.Id, [fixture.Item.Id]));
+
+        Assert.Equal(1, result.UpdatedCount);
+        Assert.Equal(
+            [("Series", "2", "B098765432"), ("Shared Universe", "4", null)],
+            audiobook.SeriesMemberships!
+                .OrderBy(membership => membership.SortOrder)
+                .Select(membership => (
+                    membership.SeriesName,
+                    membership.SeriesNumber,
+                    membership.SeriesAsin))
+                .ToArray());
+        Assert.Equal("Series", audiobook.Series);
+        Assert.Equal("2", audiobook.SeriesNumber);
+        Assert.Equal("Imported title", audiobook.Title);
+        Assert.Equal("Keep this subtitle", audiobook.Subtitle);
+        Assert.Equal(["Existing author"], audiobook.Authors);
+        Assert.Equal("B012345678", audiobook.Asin);
+        Assert.Equal(fixture.MappedBookPath, audiobook.BasePath);
+        Assert.Equal(fixture.MappedAudioPath, audiobook.FilePath);
+        fixture.AudiobookRepository.Verify(
+            repository => repository.UpdateAsync(audiobook),
+            Times.Once);
     }
 
     [Fact]

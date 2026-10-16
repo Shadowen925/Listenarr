@@ -22,6 +22,14 @@ public interface IAudiobookshelfIntegrationService
         AudiobookshelfImportRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<AudiobookshelfSeriesSyncPreview> PreviewSeriesSyncAsync(
+        string libraryId,
+        CancellationToken cancellationToken = default);
+
+    Task<AudiobookshelfSeriesSyncResult> SynchronizeSeriesAsync(
+        AudiobookshelfSeriesSyncRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<bool> TriggerLibraryScanAsync(
         string libraryId,
         CancellationToken cancellationToken = default);

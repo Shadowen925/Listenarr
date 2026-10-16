@@ -151,6 +151,70 @@ public sealed class AudiobookshelfController(
         }
     }
 
+    [HttpPost("series-sync/preview")]
+    public async Task<ActionResult<AudiobookshelfSeriesSyncPreview>> PreviewSeriesSync(
+        [FromBody] AudiobookshelfPreviewRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await integrationService.PreviewSeriesSyncAsync(
+                request.LibraryId,
+                cancellationToken));
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(new { message = exception.Message });
+        }
+        catch (HttpRequestException exception)
+        {
+            logger.LogWarning(exception, "Audiobookshelf series synchronization preview failed");
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = "Audiobookshelf series synchronization preview failed."
+            });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPost("series-sync")]
+    public async Task<ActionResult<AudiobookshelfSeriesSyncResult>> SynchronizeSeries(
+        [FromBody] AudiobookshelfSeriesSyncRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await integrationService.SynchronizeSeriesAsync(request, cancellationToken));
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(new { message = exception.Message });
+        }
+        catch (HttpRequestException exception)
+        {
+            logger.LogWarning(exception, "Audiobookshelf series synchronization failed");
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = "Audiobookshelf series synchronization failed."
+            });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
     [HttpPost("libraries/{libraryId}/scan")]
     public async Task<IActionResult> TriggerLibraryScan(
         string libraryId,

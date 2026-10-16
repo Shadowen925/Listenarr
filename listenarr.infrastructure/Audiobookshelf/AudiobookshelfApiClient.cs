@@ -212,8 +212,8 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
     {
         var media = GetProperty(element, "media");
         var metadata = GetProperty(media, "metadata");
-        var seriesElement = GetProperty(metadata, "series");
-        var series = ParseSeries(seriesElement);
+        var seriesMemberships = ParseSeries(GetProperty(metadata, "series"));
+        var primarySeries = seriesMemberships.FirstOrDefault();
         var audioFiles = GetArray(media, "audioFiles")
             .Select(file =>
             {
@@ -233,8 +233,8 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
                 GetString(metadata, "subtitle"),
                 GetStringList(metadata, "authors", "authorName"),
                 GetStringList(metadata, "narrators", "narratorName"),
-                series.Name,
-                series.Number,
+                primarySeries?.Name,
+                primarySeries?.Position,
                 GetString(metadata, "description"),
                 GetString(media, "coverPath"),
                 GetString(metadata, "asin"),
@@ -243,32 +243,49 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
                 GetString(metadata, "publisher"),
                 GetString(metadata, "language"),
                 GetString(metadata, "publishedYear"),
-                GetStringList(metadata, "genres")));
+                GetStringList(metadata, "genres"),
+                seriesMemberships));
     }
 
-    private static (string? Name, string? Number) ParseSeries(JsonElement series)
+    private static IReadOnlyList<AudiobookshelfSeriesMembership> ParseSeries(JsonElement series)
     {
         if (series.ValueKind == JsonValueKind.String)
         {
-            return (series.GetString(), null);
+            var name = series.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(name)
+                ? []
+                : [new AudiobookshelfSeriesMembership(name, null)];
         }
 
-        if (series.ValueKind == JsonValueKind.Array)
+        IEnumerable<JsonElement> entries = series.ValueKind switch
         {
-            var first = series.EnumerateArray().FirstOrDefault();
-            return (
-                GetString(first, "name"),
-                GetString(first, "sequence") ?? GetString(first, "position"));
-        }
+            JsonValueKind.Array => series.EnumerateArray(),
+            JsonValueKind.Object => [series],
+            _ => []
+        };
 
-        if (series.ValueKind == JsonValueKind.Object)
-        {
-            return (
-                GetString(series, "name"),
-                GetString(series, "sequence") ?? GetString(series, "position"));
-        }
+        return entries
+            .Select(entry =>
+            {
+                if (entry.ValueKind == JsonValueKind.String)
+                {
+                    return new AudiobookshelfSeriesMembership(
+                        entry.GetString()?.Trim() ?? string.Empty,
+                        null);
+                }
 
-        return (GetString(series, "name"), GetString(series, "sequence"));
+                var name = GetString(entry, "name") ?? GetString(entry, "title");
+                return new AudiobookshelfSeriesMembership(
+                    name?.Trim() ?? string.Empty,
+                    GetString(entry, "sequence")
+                        ?? GetString(entry, "position")
+                        ?? GetString(entry, "bookNumber"));
+            })
+            .Where(membership => !string.IsNullOrWhiteSpace(membership.Name))
+            .DistinctBy(
+                membership => $"{membership.Name}\u001f{membership.Position}",
+                StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static IReadOnlyList<string> GetStringList(

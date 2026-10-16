@@ -26,6 +26,8 @@ import type {
   AudiobookshelfLibrary,
   AudiobookshelfImportPreview,
   AudiobookshelfImportResult,
+  AudiobookshelfSeriesSyncPreview,
+  AudiobookshelfSeriesSyncResult,
   Audiobook,
   AudiobookUpdateRequest,
   History,
@@ -1004,6 +1006,25 @@ class ApiService {
     itemIds: string[],
   ): Promise<AudiobookshelfImportResult> {
     return this.request<AudiobookshelfImportResult>('/audiobookshelf/import', {
+      method: 'POST',
+      body: JSON.stringify({ libraryId, itemIds }),
+    })
+  }
+
+  async previewAudiobookshelfSeriesSync(
+    libraryId: string,
+  ): Promise<AudiobookshelfSeriesSyncPreview> {
+    return this.request<AudiobookshelfSeriesSyncPreview>('/audiobookshelf/series-sync/preview', {
+      method: 'POST',
+      body: JSON.stringify({ libraryId }),
+    })
+  }
+
+  async synchronizeAudiobookshelfSeries(
+    libraryId: string,
+    itemIds: string[],
+  ): Promise<AudiobookshelfSeriesSyncResult> {
+    return this.request<AudiobookshelfSeriesSyncResult>('/audiobookshelf/series-sync', {
       method: 'POST',
       body: JSON.stringify({ libraryId, itemIds }),
     })

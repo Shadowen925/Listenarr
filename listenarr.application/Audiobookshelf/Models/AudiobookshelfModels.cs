@@ -21,7 +21,10 @@ public sealed record AudiobookshelfMetadata(
     string? Publisher,
     string? Language,
     string? PublishedYear,
-    IReadOnlyList<string> Genres);
+    IReadOnlyList<string> Genres,
+    IReadOnlyList<AudiobookshelfSeriesMembership>? SeriesMemberships = null);
+
+public sealed record AudiobookshelfSeriesMembership(string Name, string? Position);
 
 public sealed record AudiobookshelfLibraryItem(
     string Id,
@@ -94,5 +97,47 @@ public sealed record AudiobookshelfImportResult(
     DateTimeOffset ImportedAt = default,
     int SelectedCount = 0,
     IReadOnlyList<AudiobookshelfImportItemResult>? Items = null);
+
+public enum AudiobookshelfSeriesSyncStatus
+{
+    NeedsUpdate,
+    UpToDate,
+    MissingInAudiobookshelf
+}
+
+public sealed record AudiobookshelfSeriesSyncPreviewItem(
+    string ItemId,
+    int AudiobookId,
+    string Title,
+    AudiobookshelfSeriesSyncStatus Status,
+    IReadOnlyList<AudiobookSeriesMembershipPreview> CurrentSeries,
+    IReadOnlyList<AudiobookSeriesMembershipPreview> AudiobookshelfSeries);
+
+public sealed record AudiobookSeriesMembershipPreview(string Name, string? Position);
+
+public sealed record AudiobookshelfSeriesSyncPreview(
+    string LibraryId,
+    IReadOnlyList<AudiobookshelfSeriesSyncPreviewItem> Items);
+
+public sealed record AudiobookshelfSeriesSyncRequest(string LibraryId, IReadOnlyList<string> ItemIds);
+
+public enum AudiobookshelfSeriesSyncOutcome
+{
+    Updated,
+    Skipped,
+    Failed
+}
+
+public sealed record AudiobookshelfSeriesSyncItemResult(
+    string ItemId,
+    string Title,
+    AudiobookshelfSeriesSyncOutcome Outcome,
+    string? Reason);
+
+public sealed record AudiobookshelfSeriesSyncResult(
+    int UpdatedCount,
+    int SkippedCount,
+    int FailedCount,
+    IReadOnlyList<AudiobookshelfSeriesSyncItemResult> Items);
 
 public sealed record AudiobookshelfImage(byte[] Content, string ContentType);

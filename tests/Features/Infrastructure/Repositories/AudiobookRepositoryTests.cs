@@ -123,6 +123,78 @@ namespace Listenarr.Tests.Features.Infrastructure.Repositories
         }
 
         [Fact]
+        public async Task AudiobookshelfSeriesSync_UpdatesLegacyRecordWithoutLosingExistingMetadata()
+        {
+            await using var connection = new SqliteConnection("DataSource=:memory:");
+            await connection.OpenAsync();
+            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+                .UseSqlite(connection)
+                .Options;
+            await using var db = new ListenArrDbContext(options);
+            await db.Database.EnsureCreatedAsync();
+
+            var legacyBook = new Audiobook
+            {
+                Title = "Existing title",
+                Authors = ["Existing author"],
+                Asin = "B012345678",
+                Series = "Legacy series",
+                SeriesNumber = "1",
+                BasePath = "/library/existing",
+                FilePath = "/library/existing/book.m4b",
+                AudiobookshelfLibraryId = "abs-library",
+                AudiobookshelfItemId = "abs-item",
+                AudiobookshelfMetadataAuthoritative = true
+            };
+            db.Audiobooks.Add(legacyBook);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            var repository = new AudiobookRepository(db);
+            var imported = Assert.Single(
+                await repository.GetAudiobookshelfBooksAsync("abs-library"));
+            Assert.Empty(imported.SeriesMemberships!);
+            Assert.Equal("Legacy series", imported.Series);
+
+            AudiobookSeriesMembershipHelper.ApplyToAudiobook(
+                imported,
+                [
+                    new AudiobookSeriesMembership
+                    {
+                        SeriesName = "Updated series",
+                        SeriesNumber = "2",
+                        IsPrimary = true
+                    },
+                    new AudiobookSeriesMembership
+                    {
+                        SeriesName = "Shared series",
+                        SeriesNumber = "4"
+                    }
+                ]);
+            Assert.True(await repository.UpdateAsync(imported));
+            db.ChangeTracker.Clear();
+
+            var persisted = Assert.IsType<Audiobook>(
+                await repository.GetByIdAsync(legacyBook.Id));
+            Assert.Equal("Existing title", persisted.Title);
+            Assert.Equal(["Existing author"], persisted.Authors);
+            Assert.Equal("B012345678", persisted.Asin);
+            Assert.Equal("/library/existing", persisted.BasePath);
+            Assert.Equal("/library/existing/book.m4b", persisted.FilePath);
+            Assert.Equal("abs-library", persisted.AudiobookshelfLibraryId);
+            Assert.Equal("abs-item", persisted.AudiobookshelfItemId);
+            Assert.True(persisted.AudiobookshelfMetadataAuthoritative);
+            Assert.Equal("Updated series", persisted.Series);
+            Assert.Equal("2", persisted.SeriesNumber);
+            Assert.Equal(
+                [("Updated series", "2"), ("Shared series", "4")],
+                persisted.SeriesMemberships!
+                    .OrderBy(membership => membership.SortOrder)
+                    .Select(membership => (membership.SeriesName, membership.SeriesNumber))
+                    .ToArray());
+        }
+
+        [Fact]
         public async Task GetByIdsWithFilesAsync_ReturnsDetachedPreviewSnapshots()
         {
             var options = new DbContextOptionsBuilder<ListenArrDbContext>()
@@ -425,4 +497,3 @@ namespace Listenarr.Tests.Features.Infrastructure.Repositories
         }
     }
 }
-

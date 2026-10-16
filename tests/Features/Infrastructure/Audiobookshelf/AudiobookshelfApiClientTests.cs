@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Listenarr.Application.Audiobookshelf.Models;
 using Listenarr.Infrastructure.Audiobookshelf;
 using Listenarr.Tests.Common;
 
@@ -63,7 +64,10 @@ public sealed class AudiobookshelfApiClientTests : BaseTests
                     "metadata": {
                       "title": "Corrected title",
                       "authors": [{ "name": "Corrected author" }],
-                      "series": [{ "name": "Series", "sequence": "2" }],
+                      "series": [
+                        { "name": "Series", "sequence": "2" },
+                        { "title": "Shared Universe", "position": 4 }
+                      ],
                       "description": "ABS description",
                       "asin": "B012345678",
                       "isbn": ["9780306406157"],
@@ -90,6 +94,12 @@ public sealed class AudiobookshelfApiClientTests : BaseTests
         Assert.Equal(["Corrected author"], item.Metadata.Authors);
         Assert.Equal("Series", item.Metadata.Series);
         Assert.Equal("2", item.Metadata.SeriesNumber);
+        Assert.Equal(
+            [
+                new AudiobookshelfSeriesMembership("Series", "2"),
+                new AudiobookshelfSeriesMembership("Shared Universe", "4")
+            ],
+            item.Metadata.SeriesMemberships);
         Assert.Equal("ABS description", item.Metadata.Description);
         Assert.Equal("OL123W", item.Metadata.OpenLibraryId);
         Assert.Equal(["/audiobooks/Author/Book/part01.m4b"], item.AudioFilePaths);

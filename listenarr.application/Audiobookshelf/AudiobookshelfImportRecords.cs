@@ -119,6 +119,16 @@ internal static class AudiobookshelfImportRecords
             BasePath = basePath,
             FilePath = filePaths.Count == 1 ? filePaths[0] : null
         };
+        AudiobookSeriesMembershipHelper.ApplyToAudiobook(
+            audiobook,
+            metadata.SeriesMemberships?.Select((membership, index) => new AudiobookSeriesMembership
+            {
+                SeriesName = membership.Name,
+                SeriesNumber = membership.Position,
+                IsPrimary = index == 0
+            }),
+            metadata.Series,
+            metadata.SeriesNumber);
 
         foreach (var (type, value) in metadata.Isbn
             .Select(value => (Type: AudiobookExternalIdentifierType.Isbn, Value: (string?)value))

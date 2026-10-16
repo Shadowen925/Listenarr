@@ -35,6 +35,9 @@ namespace Listenarr.Application.Audiobooks.Contracts.Repositories
             int audiobookId,
             CancellationToken ct = default);
         Task<List<Audiobook>> GetLibraryAsync();
+        Task<List<Audiobook>> GetAudiobookshelfBooksAsync(
+            string libraryId,
+            CancellationToken ct = default);
         Task<Dictionary<int, List<AudiobookSeriesMembership>>> GetAllSeriesMembershipsGroupedByAudiobookIdAsync(CancellationToken ct = default);
         Task<List<Audiobook>> GetByIdsWithFilesAsync(IEnumerable<int> ids, CancellationToken ct = default);
         Task<List<Audiobook>> GetMonitoredAudiobooksForSearchAsync(DateTime cutoff, CancellationToken ct = default);

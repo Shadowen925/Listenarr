@@ -50,6 +50,8 @@ type AudiobooksVm = {
   showItemDetails?: boolean
   groupBy?: string
   visibleRange?: { start: number; end: number }
+  searchQuery?: string
+  filteredAndSortedAudiobooks?: import('@/types').Audiobook[]
   confirmDelete?: (audiobook: import('@/types').Audiobook) => Promise<void>
   deleteTarget?: import('@/types').Audiobook | null
   deleteCapabilities?: import('@/types').AudiobookDeleteCapabilities | null
@@ -678,6 +680,82 @@ describe('AudiobooksView Grouping', () => {
 
     // Expect the component to use the route query 'books' despite stored 'series'
     expect((wrapper.vm as unknown as { groupBy: string }).groupBy).toBe('books')
+  })
+
+  it('applies a route search query to audiobook series memberships', async () => {
+    if (
+      typeof (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver === 'undefined'
+    ) {
+      ;(globalThis as unknown as Record<string, unknown>).ResizeObserver = class {
+        observe() {}
+        disconnect() {}
+      }
+    }
+    if (typeof (globalThis as unknown as { WebSocket?: unknown }).WebSocket === 'undefined') {
+      ;(globalThis as unknown as Record<string, unknown>).WebSocket = function () {
+        /* noop */
+      }
+    }
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/audiobooks', name: 'audiobooks', component: AudiobooksView },
+      ],
+    })
+    localStorage.setItem('listenarr.groupBy', 'series')
+    await router.push({
+      path: '/audiobooks',
+      query: { q: 'Dungeon Crawler Carl', group: 'books' },
+    })
+    await router.isReady().catch(() => {})
+
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 1,
+        title: 'A Parade of Horribles',
+        authors: ['Matt Dinniman'],
+        seriesMemberships: [
+          { seriesName: 'Dungeon Crawler Carl', seriesNumber: '8', seriesAsin: 'SERIES123' },
+        ],
+        files: [],
+      },
+      {
+        id: 2,
+        title: 'Unrelated Book',
+        authors: ['Another Author'],
+        files: [],
+      },
+    ] as unknown as import('@/types').Audiobook[]
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobooksView, {
+      global: {
+        plugins: [pinia, router],
+        stubs: [
+          'BulkEditModal',
+          'EditAudiobookModal',
+          'CustomFilterModal',
+          'FiltersDropdown',
+          'CustomSelect',
+        ],
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    const vm = getVm(wrapper)
+    expect(vm.searchQuery).toBe('Dungeon Crawler Carl')
+    expect(vm.filteredAndSortedAudiobooks?.map((book) => book.title)).toEqual([
+      'A Parade of Horribles',
+    ])
+    expect(router.currentRoute.value.query.q).toBe('Dungeon Crawler Carl')
+    wrapper.unmount()
+    localStorage.removeItem('listenarr.searchQuery')
+    localStorage.removeItem('listenarr.groupBy')
   })
 
   it('resets the virtual range when returning to books grouping', async () => {
