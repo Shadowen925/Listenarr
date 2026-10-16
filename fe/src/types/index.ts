@@ -605,9 +605,19 @@ export interface AudiobookshelfImportResult {
 export interface AudiobookSeriesMembershipPreview {
   name: string
   position?: string | null
+  seriesId?: string | null
+  seriesAsin?: string | null
+  audiobookshelfSeriesId?: string | null
 }
 
-export type AudiobookshelfSeriesSyncStatus = 'NeedsUpdate' | 'UpToDate' | 'MissingInAudiobookshelf'
+export type AudiobookshelfSeriesSyncStatus =
+  | 'NeedsUpdate'
+  | 'UpToDate'
+  | 'NoSeries'
+  | 'SourceUnavailable'
+  | 'ParseError'
+  | 'Conflict'
+  | 'MissingInAudiobookshelf'
 
 export interface AudiobookshelfSeriesSyncPreviewItem {
   itemId: string
@@ -616,11 +626,28 @@ export interface AudiobookshelfSeriesSyncPreviewItem {
   status: AudiobookshelfSeriesSyncStatus
   currentSeries: AudiobookSeriesMembershipPreview[]
   audiobookshelfSeries: AudiobookSeriesMembershipPreview[]
+  sourceSeriesCount?: number
+  parsedSeriesCount?: number
+  listenarrSeriesCount?: number
+  proposedSeries?: AudiobookSeriesMembershipPreview[] | null
+  failureReason?: string | null
+  author?: string | null
+}
+
+export interface AudiobookshelfSeriesSyncSummary {
+  needsUpdate: number
+  upToDate: number
+  noSeries: number
+  sourceUnavailable: number
+  parseError: number
+  conflict: number
+  missingInAudiobookshelf: number
 }
 
 export interface AudiobookshelfSeriesSyncPreview {
   libraryId: string
   items: AudiobookshelfSeriesSyncPreviewItem[]
+  summary?: AudiobookshelfSeriesSyncSummary | null
 }
 
 export interface AudiobookshelfSeriesSyncItemResult {
@@ -847,6 +874,8 @@ export interface AudiobookSeriesMembership {
   seriesName: string
   seriesNumber?: string
   seriesAsin?: string
+  audiobookshelfSeriesId?: string
+  seriesId?: string
   isPrimary?: boolean
   sortOrder?: number
 }

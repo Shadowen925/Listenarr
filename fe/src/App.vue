@@ -91,7 +91,9 @@
           <input
             v-model="searchQuery"
             @input="onSearchInput"
-            @keydown.enter.prevent="applyLibrarySearch"
+            @keydown.enter.prevent="handleSearchEnter"
+            @keydown.down.prevent="moveSuggestionSelection(1)"
+            @keydown.up.prevent="moveSuggestionSelection(-1)"
             @keydown.escape.prevent="closeSearch"
             ref="searchInputRef"
             class="search-input-inline"
@@ -99,6 +101,16 @@
             placeholder="Search your library..."
             aria-label="Search your audiobooks"
           />
+          <button
+            v-if="searchQuery && (desktopSearchVisible || searchOpen)"
+            class="nav-btn search-clear-btn"
+            type="button"
+            aria-label="Clear library search"
+            title="Clear search"
+            @click="resetGlobalSearch()"
+          >
+            <PhX />
+          </button>
           <button
             class="nav-btn"
             type="button"
@@ -113,13 +125,18 @@
           <!-- Results overlay: shows suggestions, or a searching/no-results state with spinner -->
           <div
             class="search-results-inline"
-            v-if="searching || suggestions.length > 0 || searchQuery.length > 0"
+            v-if="
+              searchResultsOpen && (searching || suggestions.length > 0 || searchQuery.length > 0)
+            "
           >
-            <ul v-if="suggestions.length > 0" class="search-list">
+            <ul v-if="suggestions.length > 0" class="search-list" role="listbox">
               <li
-                v-for="s in suggestions"
+                v-for="(s, index) in suggestions"
                 :key="`${s.type}:${s.id}`"
                 class="search-result"
+                :class="{ active: index === activeSuggestionIndex }"
+                role="option"
+                :aria-selected="index === activeSuggestionIndex"
                 @click="selectSuggestion(s)"
               >
                 <div style="display: flex; align-items: center; gap: 10px">
@@ -280,7 +297,7 @@
               @focus="onPrimaryNavFocus('home', 'audiobooks')"
               @blur="onNavBlur('audiobooks')"
               @touchstart.passive="preload('home')"
-              @click="onPrimaryNavClick('audiobooks')"
+              @click="onAudiobooksPrimaryNavClick"
             >
               <PhBooks />
               <span>Audiobooks</span>
@@ -304,7 +321,7 @@
               <RouterLink
                 :to="{ path: '/audiobooks', query: { group: 'books' } }"
                 class="nav-subitem"
-                @click="closeMobileMenu"
+                @click="resetGlobalSearchAndCloseMobileMenu"
                 :class="{ active: route.query.group === 'books' }"
               >
                 <span>Books</span>
@@ -312,7 +329,7 @@
               <RouterLink
                 :to="{ path: '/audiobooks', query: { group: 'authors' } }"
                 class="nav-subitem"
-                @click="closeMobileMenu"
+                @click="resetGlobalSearchAndCloseMobileMenu"
                 :class="{ active: route.query.group === 'authors' }"
               >
                 <span>Authors</span>
@@ -320,7 +337,7 @@
               <RouterLink
                 :to="{ path: '/audiobooks', query: { group: 'series' } }"
                 class="nav-subitem"
-                @click="closeMobileMenu"
+                @click="resetGlobalSearchAndCloseMobileMenu"
                 :class="{ active: route.query.group === 'series' }"
               >
                 <span>Series</span>
@@ -618,6 +635,7 @@ import {
   getHeaderSearchDestination,
   getHeaderSearchSuggestions,
   getLibrarySearchDestination,
+  LIBRARY_SEARCH_RESET_EVENT,
   type HeaderSearchSuggestion,
 } from '@/utils/globalSearch'
 import { ref as vueRef, ref as vueRef2, reactive } from 'vue'
@@ -1239,6 +1257,10 @@ router.afterEach(() => {
 const searchQuery = vueRef('')
 const suggestions = vueRef<HeaderSearchSuggestion[]>([])
 const searching = vueRef(false)
+const searchResultsOpen = vueRef(false)
+const activeSuggestionIndex = vueRef(-1)
+let searchDebounceTimer: number | undefined
+let searchRequestId = 0
 const searchInputRef = vueRef<HTMLInputElement | null>(null)
 
 // Slide-out search state and refs
@@ -1268,6 +1290,7 @@ const toggleSearch = () => {
 }
 
 const closeSearch = () => {
+  searchResultsOpen.value = false
   if (searchOpen.value) {
     searchOpen.value = false
   }
@@ -1280,44 +1303,113 @@ const handleSearchDocumentClick = (e: MouseEvent) => {
   // Close search if clicking outside the search container (on mobile overlay)
   if (!el.contains(target)) {
     searchOpen.value = false
+    searchResultsOpen.value = false
   }
 }
 
-let searchDebounceTimer: number | undefined
+const resetGlobalSearch = (clearRoute = true) => {
+  searchRequestId += 1
+  searchQuery.value = ''
+  suggestions.value = []
+  searching.value = false
+  searchResultsOpen.value = false
+  activeSuggestionIndex.value = -1
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  try {
+    window.localStorage.removeItem('listenarr.searchQuery')
+  } catch {
+    logger.warn('Could not clear the persisted library search query')
+  }
+  window.dispatchEvent(new CustomEvent(LIBRARY_SEARCH_RESET_EVENT))
+  if (clearRoute && route.name === 'audiobooks' && route.query.q) {
+    void router.replace({
+      name: 'audiobooks',
+      query: { ...route.query, q: undefined },
+    })
+  }
+}
+
+const resetGlobalSearchAndCloseMobileMenu = () => {
+  resetGlobalSearch(false)
+  closeMobileMenu()
+}
+
+const onAudiobooksPrimaryNavClick = () => {
+  resetGlobalSearch(false)
+  onPrimaryNavClick('audiobooks')
+}
+
 const onSearchInput = async () => {
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  const requestId = ++searchRequestId
   const q = searchQuery.value.trim()
   if (q.length === 0) {
     suggestions.value = []
+    searching.value = false
+    activeSuggestionIndex.value = -1
+    searchResultsOpen.value = false
+    if (route.name === 'audiobooks' && route.query.q) {
+      resetGlobalSearch()
+    }
     return
   }
+  searchResultsOpen.value = true
+  activeSuggestionIndex.value = -1
   searchDebounceTimer = window.setTimeout(async () => {
     searching.value = true
     try {
       if (libraryStore.audiobooks.length === 0) {
         await libraryStore.fetchLibrary()
       }
-      suggestions.value = getHeaderSearchSuggestions(libraryStore.audiobooks, q)
+      if (requestId === searchRequestId && searchQuery.value.trim() === q) {
+        suggestions.value = getHeaderSearchSuggestions(libraryStore.audiobooks, q)
+        activeSuggestionIndex.value = -1
+      }
     } catch (err) {
       logger.error('Header search failed', err)
-      suggestions.value = []
+      if (requestId === searchRequestId) suggestions.value = []
     } finally {
-      searching.value = false
+      if (requestId === searchRequestId) searching.value = false
     }
   }, 250)
 }
 
 const selectSuggestion = (s: HeaderSearchSuggestion) => {
   if (!s) return
+  searchRequestId += 1
   searchQuery.value = ''
   suggestions.value = []
+  searchResultsOpen.value = false
+  activeSuggestionIndex.value = -1
   void router.push(getHeaderSearchDestination(s))
+}
+
+const moveSuggestionSelection = (direction: 1 | -1) => {
+  if (suggestions.value.length === 0) return
+  searchResultsOpen.value = true
+  const next = activeSuggestionIndex.value + direction
+  activeSuggestionIndex.value =
+    next < 0 ? suggestions.value.length - 1 : next >= suggestions.value.length ? 0 : next
+}
+
+const handleSearchEnter = () => {
+  if (activeSuggestionIndex.value >= 0) {
+    const suggestion = suggestions.value[activeSuggestionIndex.value]
+    if (suggestion) {
+      selectSuggestion(suggestion)
+      return
+    }
+  }
+  applyLibrarySearch()
 }
 
 const applyLibrarySearch = () => {
   const query = searchQuery.value.trim()
   if (!query) return
+  searchRequestId += 1
   suggestions.value = []
+  searchResultsOpen.value = false
+  activeSuggestionIndex.value = -1
   closeSearch()
   void router.push(getLibrarySearchDestination(query))
 }
@@ -2715,6 +2807,10 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
   background: rgba(255, 255, 255, 0.03);
 }
 
+.search-result.active {
+  background: rgba(33, 150, 243, 0.18);
+}
+
 .result-title {
   font-weight: 500;
   color: #fff;
@@ -2979,6 +3075,10 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
 .dismiss-btn:hover {
   background-color: #3a3a3a;
   color: #ccc;
+}
+
+.nav-search-inline .search-clear-btn {
+  right: 3rem;
 }
 
 .notif-time {

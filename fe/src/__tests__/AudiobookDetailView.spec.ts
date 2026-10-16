@@ -104,12 +104,14 @@ describe('AudiobookDetailView image recache behavior', () => {
             seriesName: 'Mistborn',
             seriesNumber: '1',
             seriesAsin: 'MISTBORN-SERIES',
+            seriesId: 'abs:mistborn-series',
             isPrimary: true,
           },
           {
             seriesName: 'Cosmere',
             seriesNumber: '3',
             seriesAsin: 'COSMERE-SERIES',
+            seriesId: 'local:cosmere-series',
             isPrimary: false,
           },
         ],
@@ -166,14 +168,14 @@ describe('AudiobookDetailView image recache behavior', () => {
 
     await seriesTag!.trigger('click')
 
-    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/MISTBORN-SERIES')
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/abs%3Amistborn-series')
 
     const cosmereTag = wrapper
       .findAll('.detail-link-tag')
       .find((tag) => tag.text().includes('Cosmere'))
     expect(cosmereTag).toBeTruthy()
     await cosmereTag!.trigger('click')
-    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/COSMERE-SERIES')
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/local%3Acosmere-series')
 
     await genreTag!.trigger('click')
 

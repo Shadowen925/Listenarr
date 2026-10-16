@@ -125,6 +125,8 @@ internal static class AudiobookshelfImportRecords
             {
                 SeriesName = membership.Name,
                 SeriesNumber = membership.Position,
+                AudiobookshelfSeriesId = membership.SourceId,
+                SeriesAsin = membership.Asin,
                 IsPrimary = index == 0
             }),
             metadata.Series,

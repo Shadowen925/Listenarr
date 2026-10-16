@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import AudiobookshelfImportTab from '@/views/settings/AudiobookshelfImportTab.vue'
 import { apiService } from '@/services/api'
 import {
   buildFullPreviewCsv,
+  buildSeriesSyncCsv,
   buildUnmatchedCsv,
   escapeCsvField,
   exportFileName,
@@ -12,6 +14,7 @@ import type { AudiobookshelfImportPreviewItem } from '@/types'
 
 vi.mock('@/services/api', () => ({
   apiService: {
+    getLibrary: vi.fn(async () => []),
     getAudiobookshelfImportSettings: vi.fn(),
     getRootFolders: vi.fn(),
     getAudiobookshelfLibraries: vi.fn(),
@@ -47,7 +50,7 @@ async function mountWithPreview(items: AudiobookshelfImportPreviewItem[]) {
     { id: 'lib', name: 'Books', folderPaths: [] },
   ])
   vi.mocked(apiService.previewAudiobookshelfImport).mockResolvedValue({ libraryId: 'lib', items })
-  const wrapper = mount(AudiobookshelfImportTab)
+  const wrapper = mount(AudiobookshelfImportTab, { global: { plugins: [createPinia()] } })
   await flushPromises()
   const find = (label: string) => wrapper.findAll('button').find((b) => b.text() === label)!
   await find('Discover libraries')!.trigger('click')
@@ -123,14 +126,31 @@ describe('Audiobookshelf import preview selection', () => {
           itemId: 'item-1',
           audiobookId: 1,
           title: 'Book 1',
+          author: 'Author',
           status: 'NeedsUpdate',
           currentSeries: [{ name: 'Old series', position: '1' }],
           audiobookshelfSeries: [
             { name: 'New series', position: '2' },
             { name: 'Shared universe', position: '4' },
           ],
+          proposedSeries: [
+            { name: 'New series', position: '2' },
+            { name: 'Shared universe', position: '4' },
+          ],
+          sourceSeriesCount: 2,
+          parsedSeriesCount: 2,
+          listenarrSeriesCount: 1,
         },
       ],
+      summary: {
+        needsUpdate: 1,
+        upToDate: 0,
+        noSeries: 0,
+        sourceUnavailable: 0,
+        parseError: 0,
+        conflict: 0,
+        missingInAudiobookshelf: 0,
+      },
     })
     vi.mocked(apiService.synchronizeAudiobookshelfSeries).mockResolvedValue({
       updatedCount: 1,
@@ -150,6 +170,55 @@ describe('Audiobookshelf import preview selection', () => {
 
     expect(apiService.synchronizeAudiobookshelfSeries).toHaveBeenCalledWith('lib', ['item-1'])
     expect(wrapper.text()).toContain('Updated 1; skipped 0; failed 0')
+  })
+
+  it('filters diagnostics by status and synchronizes one audiobook with confirmation', async () => {
+    const wrapper = await mountWithPreview([item(1)])
+    vi.mocked(apiService.previewAudiobookshelfSeriesSync).mockResolvedValue({
+      libraryId: 'lib',
+      items: [
+        {
+          itemId: 'item-1',
+          audiobookId: 1,
+          title: 'Needs repair',
+          author: 'Author One',
+          status: 'NeedsUpdate',
+          currentSeries: [],
+          audiobookshelfSeries: [{ name: 'Series One', position: '1' }],
+        },
+        {
+          itemId: 'item-2',
+          audiobookId: 2,
+          title: 'Conflicted book',
+          author: 'Author Two',
+          status: 'Conflict',
+          currentSeries: [{ name: 'Old series' }],
+          audiobookshelfSeries: [{ name: 'Different series' }],
+          failureReason: 'The series identity is ambiguous.',
+        },
+      ],
+    })
+    vi.mocked(apiService.synchronizeAudiobookshelfSeries).mockResolvedValue({
+      updatedCount: 1,
+      skippedCount: 0,
+      failedCount: 0,
+      items: [{ itemId: 'item-1', title: 'Needs repair', outcome: 'Updated' }],
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await wrapper.get('[data-testid="preview-series-sync"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="series-sync-status-filter"]').setValue('Conflict')
+    expect(wrapper.text()).toContain('Conflicted book')
+    expect(wrapper.text()).not.toContain('Needs repair')
+    expect(wrapper.text()).toContain('The series identity is ambiguous.')
+
+    await wrapper.get('[data-testid="series-sync-status-filter"]').setValue('All')
+    await wrapper.get('[data-testid="sync-series-item-1"]').trigger('click')
+    await flushPromises()
+
+    expect(apiService.synchronizeAudiobookshelfSeries).toHaveBeenCalledWith('lib', ['item-1'])
+    expect(apiService.getLibrary).toHaveBeenCalled()
   })
 })
 
@@ -182,5 +251,27 @@ describe('Audiobookshelf CSV export', () => {
     expect(exportFileName('unmatched', new Date(2026, 0, 5))).toBe(
       'listenarr-audiobookshelf-unmatched-2026-01-05.csv',
     )
+  })
+
+  it('exports all series synchronization diagnostics with proposed values and failure reasons', () => {
+    const csv = buildSeriesSyncCsv([
+      {
+        itemId: 'item-1',
+        audiobookId: 1,
+        title: '=Book',
+        author: 'Author',
+        status: 'Conflict',
+        currentSeries: [{ name: 'Existing', position: '1' }],
+        audiobookshelfSeries: [{ name: 'Source', position: '2' }],
+        proposedSeries: [{ name: 'Proposed', position: '3' }],
+        sourceSeriesCount: 1,
+        parsedSeriesCount: 1,
+        listenarrSeriesCount: 1,
+        failureReason: 'Ambiguous match',
+      },
+    ])
+    expect(csv).toContain("'=Book")
+    expect(csv).toContain('Proposed #3')
+    expect(csv).toContain('Ambiguous match')
   })
 })

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Listenarr.Application.Audiobookshelf.Models;
 using Microsoft.Extensions.Logging;
 
@@ -29,22 +30,32 @@ public sealed partial class AudiobookshelfIntegrationService
                     audiobook.Title ?? string.Empty,
                     AudiobookshelfSeriesSyncStatus.MissingInAudiobookshelf,
                     currentSeries,
-                    []);
+                    [],
+                    ListenarrSeriesCount: currentSeries.Count,
+                    ProposedSeries: currentSeries,
+                    FailureReason: "The Audiobookshelf library item no longer exists.",
+                    Author: string.Join(", ", audiobook.Authors ?? []));
             }
 
-            var sourceSeries = GetSourceSeries(source.Metadata);
+            var sourceSeries = GetSourceSeries(audiobook, source.Metadata);
+            var proposedSeries = BuildProposedSeries(audiobook, sourceSeries, out var conflict);
+            var status = GetStatus(source, currentSeries, proposedSeries, conflict);
             return new AudiobookshelfSeriesSyncPreviewItem(
                 itemId,
                 audiobook.Id,
                 audiobook.Title ?? string.Empty,
-                AreSeriesEquivalent(currentSeries, sourceSeries)
-                    ? AudiobookshelfSeriesSyncStatus.UpToDate
-                    : AudiobookshelfSeriesSyncStatus.NeedsUpdate,
+                status,
                 currentSeries,
-                sourceSeries);
+                sourceSeries,
+                Math.Max(source.Metadata.SourceSeriesCount, sourceSeries.Count),
+                sourceSeries.Count,
+                currentSeries.Count,
+                proposedSeries,
+                GetFailureReason(source, status, conflict),
+                string.Join(", ", audiobook.Authors ?? []));
         }).ToList();
 
-        return new AudiobookshelfSeriesSyncPreview(library.Id, previews);
+        return new AudiobookshelfSeriesSyncPreview(library.Id, previews, Summarize(previews));
     }
 
     public async Task<AudiobookshelfSeriesSyncResult> SynchronizeSeriesAsync(
@@ -59,7 +70,8 @@ public sealed partial class AudiobookshelfIntegrationService
             .Where(itemId => !string.IsNullOrWhiteSpace(itemId))
             .ToHashSet(StringComparer.Ordinal);
         var preview = await PreviewSeriesSyncAsync(request.LibraryId, cancellationToken);
-        if (preview.Items.Count(item => selectedIds.Contains(item.ItemId)) != selectedIds.Count)
+        if (preview.Items.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal)
+            .Count(itemId => selectedIds.Contains(itemId)) != selectedIds.Count)
         {
             throw new ArgumentException(
                 "One or more selected Audiobookshelf items are not imported from this library.",
@@ -93,40 +105,46 @@ public sealed partial class AudiobookshelfIntegrationService
                     previewItem.ItemId,
                     previewItem.Title,
                     AudiobookshelfSeriesSyncOutcome.Skipped,
-                    previewItem.Status == AudiobookshelfSeriesSyncStatus.MissingInAudiobookshelf
-                        ? "The source item is no longer present in Audiobookshelf."
-                        : "Series metadata is already up to date."));
+                    previewItem.FailureReason ?? "This item is not eligible for series synchronization."));
                 continue;
             }
 
-            var sourceSeries = GetSourceSeries(source.Metadata);
-            if (AreSeriesEquivalent(GetCurrentSeries(audiobook), sourceSeries))
+            var sourceSeries = GetSourceSeries(audiobook, source.Metadata);
+            var proposedSeries = BuildProposedSeries(audiobook, sourceSeries, out var conflict);
+            if (conflict
+                || GetMetadataState(source.Metadata) != AudiobookshelfSeriesMetadataState.Parsed
+                || !AreSeriesEquivalent(previewItem.ProposedSeries ?? [], proposedSeries))
             {
                 skipped++;
                 results.Add(new AudiobookshelfSeriesSyncItemResult(
                     previewItem.ItemId,
                     previewItem.Title,
                     AudiobookshelfSeriesSyncOutcome.Skipped,
-                    "Series metadata changed after the preview was created."));
+                    "Series metadata changed or became ambiguous after the preview was created."));
                 continue;
             }
 
-            var memberships = sourceSeries.Select((membership, index) =>
+            if (AreSeriesEquivalent(GetCurrentSeries(audiobook), proposedSeries))
             {
-                var existing = audiobook.SeriesMemberships?.FirstOrDefault(current =>
-                    string.Equals(
-                        current.SeriesName?.Trim(),
-                        membership.Name,
-                        StringComparison.OrdinalIgnoreCase));
-                return new AudiobookSeriesMembership
+                skipped++;
+                results.Add(new AudiobookshelfSeriesSyncItemResult(
+                    previewItem.ItemId,
+                    previewItem.Title,
+                    AudiobookshelfSeriesSyncOutcome.Skipped,
+                    "Series metadata is already up to date."));
+                continue;
+            }
+
+            var memberships = proposedSeries.Select((membership, index) =>
+                new AudiobookSeriesMembership
                 {
                     SeriesName = membership.Name,
                     SeriesNumber = membership.Position,
-                    SeriesAsin = existing?.SeriesAsin,
+                    SeriesAsin = membership.SeriesAsin,
+                    AudiobookshelfSeriesId = membership.AudiobookshelfSeriesId,
                     IsPrimary = index == 0,
                     SortOrder = index
-                };
-            });
+                });
             AudiobookSeriesMembershipHelper.ApplyToAudiobook(audiobook, memberships);
 
             try
@@ -203,7 +221,14 @@ public sealed partial class AudiobookshelfIntegrationService
             .OrderBy(membership => membership.SortOrder)
             .Select(membership => new AudiobookSeriesMembershipPreview(
                 membership.SeriesName!.Trim(),
-                NormalizePosition(membership.SeriesNumber)))
+                NormalizePosition(membership.SeriesNumber),
+                AudiobookSeriesIdentity.GetId(
+                    audiobook,
+                    membership.SeriesName,
+                    membership.SeriesAsin,
+                    membership.AudiobookshelfSeriesId),
+                membership.SeriesAsin,
+                membership.AudiobookshelfSeriesId))
             .ToList();
         if (memberships is { Count: > 0 })
         {
@@ -214,17 +239,26 @@ public sealed partial class AudiobookshelfIntegrationService
             ? []
             : [new AudiobookSeriesMembershipPreview(
                 audiobook.Series.Trim(),
-                NormalizePosition(audiobook.SeriesNumber))];
+                NormalizePosition(audiobook.SeriesNumber),
+                AudiobookSeriesIdentity.GetId(audiobook, audiobook.Series, null, null))];
     }
 
     private static IReadOnlyList<AudiobookSeriesMembershipPreview> GetSourceSeries(
+        Audiobook audiobook,
         AudiobookshelfMetadata metadata)
     {
         var memberships = metadata.SeriesMemberships?
             .Where(membership => !string.IsNullOrWhiteSpace(membership.Name))
             .Select(membership => new AudiobookSeriesMembershipPreview(
                 membership.Name.Trim(),
-                NormalizePosition(membership.Position)))
+                NormalizePosition(membership.Position),
+                AudiobookSeriesIdentity.GetId(
+                    audiobook,
+                    membership.Name,
+                    membership.Asin,
+                    membership.SourceId),
+                membership.Asin,
+                membership.SourceId))
             .ToList();
         if (memberships is { Count: > 0 })
         {
@@ -235,8 +269,133 @@ public sealed partial class AudiobookshelfIntegrationService
             ? []
             : [new AudiobookSeriesMembershipPreview(
                 metadata.Series.Trim(),
-                NormalizePosition(metadata.SeriesNumber))];
+                NormalizePosition(metadata.SeriesNumber),
+                AudiobookSeriesIdentity.GetId(audiobook, metadata.Series, null, null))];
     }
+
+    private static IReadOnlyList<AudiobookSeriesMembershipPreview> BuildProposedSeries(
+        Audiobook audiobook,
+        IReadOnlyList<AudiobookSeriesMembershipPreview> sourceSeries,
+        out bool conflict)
+    {
+        conflict = false;
+        var current = GetCurrentSeries(audiobook);
+        var result = new List<AudiobookSeriesMembershipPreview>(sourceSeries.Count);
+        foreach (var source in sourceSeries)
+        {
+            var existing = current
+                .Where(membership =>
+                    AudiobookSeriesIdentity.NormalizeName(membership.Name)
+                    == AudiobookSeriesIdentity.NormalizeName(source.Name))
+                .ToList();
+            var existingAsins = existing
+                .Select(membership => membership.SeriesAsin?.Trim().ToUpperInvariant())
+                .Where(asin => !string.IsNullOrWhiteSpace(asin))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var existingSourceIds = existing
+                .Select(membership => membership.AudiobookshelfSeriesId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (existingAsins.Count > 1
+                || existingSourceIds.Count > 1
+                || (source.SeriesAsin != null
+                    && existingAsins.Count == 1
+                    && !string.Equals(
+                        source.SeriesAsin.Trim(),
+                        existingAsins[0],
+                        StringComparison.OrdinalIgnoreCase))
+                || (source.AudiobookshelfSeriesId != null
+                    && existingSourceIds.Count == 1
+                    && !string.Equals(
+                        source.AudiobookshelfSeriesId,
+                        existingSourceIds[0],
+                        StringComparison.Ordinal)))
+            {
+                conflict = true;
+                result.Add(source);
+                continue;
+            }
+
+            var asin = source.SeriesAsin ?? existingAsins.FirstOrDefault();
+            var sourceId = source.AudiobookshelfSeriesId ?? existingSourceIds.FirstOrDefault();
+            result.Add(source with
+            {
+                SeriesAsin = asin,
+                AudiobookshelfSeriesId = sourceId,
+                SeriesId = AudiobookSeriesIdentity.GetId(audiobook, source.Name, asin, sourceId)
+            });
+        }
+
+        return result;
+    }
+
+    private static AudiobookshelfSeriesSyncStatus GetStatus(
+        AudiobookshelfLibraryItem source,
+        IReadOnlyList<AudiobookSeriesMembershipPreview> current,
+        IReadOnlyList<AudiobookSeriesMembershipPreview> proposed,
+        bool conflict)
+    {
+        var state = GetMetadataState(source.Metadata);
+        if (source.SourceUnavailableReason != null
+            && state == AudiobookshelfSeriesMetadataState.NotProvided)
+        {
+            return AudiobookshelfSeriesSyncStatus.SourceUnavailable;
+        }
+
+        if (state == AudiobookshelfSeriesMetadataState.ParseError)
+        {
+            return AudiobookshelfSeriesSyncStatus.ParseError;
+        }
+
+        if (state is AudiobookshelfSeriesMetadataState.NoSeries or AudiobookshelfSeriesMetadataState.NotProvided)
+        {
+            return current.Count == 0
+                ? AudiobookshelfSeriesSyncStatus.NoSeries
+                : AudiobookshelfSeriesSyncStatus.Conflict;
+        }
+
+        if (conflict)
+        {
+            return AudiobookshelfSeriesSyncStatus.Conflict;
+        }
+
+        return AreSeriesEquivalent(current, proposed)
+            ? AudiobookshelfSeriesSyncStatus.UpToDate
+            : AudiobookshelfSeriesSyncStatus.NeedsUpdate;
+    }
+
+    private static AudiobookshelfSeriesMetadataState GetMetadataState(AudiobookshelfMetadata metadata)
+    {
+        if (metadata.SeriesMetadataState != AudiobookshelfSeriesMetadataState.NotProvided)
+        {
+            return metadata.SeriesMetadataState;
+        }
+
+        return metadata.SeriesMemberships?.Count > 0 || !string.IsNullOrWhiteSpace(metadata.Series)
+            ? AudiobookshelfSeriesMetadataState.Parsed
+            : AudiobookshelfSeriesMetadataState.NotProvided;
+    }
+
+    private static string? GetFailureReason(
+        AudiobookshelfLibraryItem source,
+        AudiobookshelfSeriesSyncStatus status,
+        bool conflict) =>
+        status switch
+        {
+            AudiobookshelfSeriesSyncStatus.SourceUnavailable =>
+                source.SourceUnavailableReason ?? "Series metadata could not be retrieved from Audiobookshelf.",
+            AudiobookshelfSeriesSyncStatus.ParseError =>
+                source.Metadata.SeriesMetadataFailureReason
+                ?? "Audiobookshelf series metadata could not be interpreted.",
+            AudiobookshelfSeriesSyncStatus.Conflict when conflict =>
+                "The existing Listenarr series identity is ambiguous or incompatible with Audiobookshelf.",
+            AudiobookshelfSeriesSyncStatus.Conflict =>
+                "Audiobookshelf reports no series, but Listenarr currently has series memberships.",
+            _ => null
+        };
 
     private static bool AreSeriesEquivalent(
         IReadOnlyList<AudiobookSeriesMembershipPreview> current,
@@ -244,8 +403,42 @@ public sealed partial class AudiobookshelfIntegrationService
         current.Count == source.Count
         && current.Zip(source).All(pair =>
             string.Equals(pair.First.Name, pair.Second.Name, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(pair.First.Position, pair.Second.Position, StringComparison.OrdinalIgnoreCase));
+            && string.Equals(pair.First.Position, pair.Second.Position, StringComparison.OrdinalIgnoreCase)
+            && (pair.Second.SeriesId == null
+                || string.Equals(pair.First.SeriesId, pair.Second.SeriesId, StringComparison.Ordinal))
+            && (pair.Second.SeriesAsin == null
+                || string.Equals(pair.First.SeriesAsin, pair.Second.SeriesAsin, StringComparison.OrdinalIgnoreCase))
+            && (pair.Second.AudiobookshelfSeriesId == null
+                || string.Equals(
+                    pair.First.AudiobookshelfSeriesId,
+                    pair.Second.AudiobookshelfSeriesId,
+                    StringComparison.Ordinal)));
 
-    private static string? NormalizePosition(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string? NormalizePosition(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return decimal.TryParse(
+            trimmed,
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture,
+            out var number)
+            ? number.ToString("0.############################", CultureInfo.InvariantCulture)
+            : trimmed;
+    }
+
+    private static AudiobookshelfSeriesSyncSummary Summarize(
+        IReadOnlyList<AudiobookshelfSeriesSyncPreviewItem> items) =>
+        new(
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.NeedsUpdate),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.UpToDate),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.NoSeries),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.SourceUnavailable),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.ParseError),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.Conflict),
+            items.Count(item => item.Status == AudiobookshelfSeriesSyncStatus.MissingInAudiobookshelf));
 }

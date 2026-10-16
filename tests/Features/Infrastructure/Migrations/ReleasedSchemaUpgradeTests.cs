@@ -168,4 +168,51 @@ public sealed class ReleasedSchemaUpgradeTests
             }
         }
     }
+
+    [Fact]
+    public async Task ExistingSeriesMemberships_SurviveNullableAudiobookshelfIdentityColumnMigration()
+    {
+        var databasePath = Path.Join(
+            Path.GetTempPath(),
+            "listenarr-tests",
+            $"series-identity-upgrade-{Guid.NewGuid():N}.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+        var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+            .UseSqlite($"Data Source={databasePath};Pooling=False")
+            .Options;
+
+        try
+        {
+            await using (var db = new ListenArrDbContext(options))
+            {
+                var migrator = db.GetService<IMigrator>();
+                await migrator.MigrateAsync("20261016035008_AddDownloadAuditAndRejections");
+                await db.Database.ExecuteSqlRawAsync("""
+                    INSERT INTO "Audiobooks" ("Id", "Title", "Explicit", "Abridged", "Monitored")
+                    VALUES (91001, 'Existing series book', 0, 0, 1);
+                    INSERT INTO "AudiobookSeriesMemberships"
+                        ("AudiobookId", "SeriesName", "SeriesNumber", "SeriesAsin", "IsPrimary", "SortOrder")
+                    VALUES (91001, 'Existing series', '2', NULL, 1, 0);
+                    """);
+                await migrator.MigrateAsync();
+            }
+
+            await using var verified = new ListenArrDbContext(options);
+            var audiobook = await verified.Audiobooks
+                .Include(candidate => candidate.SeriesMemberships)
+                .SingleAsync(candidate => candidate.Id == 91001);
+            var membership = Assert.Single(audiobook.SeriesMemberships!);
+            Assert.Equal("Existing series", membership.SeriesName);
+            Assert.Equal("2", membership.SeriesNumber);
+            Assert.Null(membership.AudiobookshelfSeriesId);
+            Assert.Empty(await verified.Database.GetPendingMigrationsAsync());
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
 }

@@ -563,6 +563,10 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<int>("AudiobookId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AudiobookshelfSeriesId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsPrimary")
                         .HasColumnType("INTEGER");
 

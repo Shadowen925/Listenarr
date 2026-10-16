@@ -22,15 +22,31 @@ public sealed record AudiobookshelfMetadata(
     string? Language,
     string? PublishedYear,
     IReadOnlyList<string> Genres,
-    IReadOnlyList<AudiobookshelfSeriesMembership>? SeriesMemberships = null);
+    IReadOnlyList<AudiobookshelfSeriesMembership>? SeriesMemberships = null,
+    AudiobookshelfSeriesMetadataState SeriesMetadataState = AudiobookshelfSeriesMetadataState.NotProvided,
+    int SourceSeriesCount = 0,
+    string? SeriesMetadataFailureReason = null);
 
-public sealed record AudiobookshelfSeriesMembership(string Name, string? Position);
+public enum AudiobookshelfSeriesMetadataState
+{
+    NotProvided,
+    NoSeries,
+    Parsed,
+    ParseError
+}
+
+public sealed record AudiobookshelfSeriesMembership(
+    string Name,
+    string? Position,
+    string? SourceId = null,
+    string? Asin = null);
 
 public sealed record AudiobookshelfLibraryItem(
     string Id,
     string Path,
     IReadOnlyList<string> AudioFilePaths,
-    AudiobookshelfMetadata Metadata);
+    AudiobookshelfMetadata Metadata,
+    string? SourceUnavailableReason = null);
 
 public enum AudiobookshelfImportMatchStatus
 {
@@ -102,6 +118,10 @@ public enum AudiobookshelfSeriesSyncStatus
 {
     NeedsUpdate,
     UpToDate,
+    NoSeries,
+    SourceUnavailable,
+    ParseError,
+    Conflict,
     MissingInAudiobookshelf
 }
 
@@ -111,13 +131,34 @@ public sealed record AudiobookshelfSeriesSyncPreviewItem(
     string Title,
     AudiobookshelfSeriesSyncStatus Status,
     IReadOnlyList<AudiobookSeriesMembershipPreview> CurrentSeries,
-    IReadOnlyList<AudiobookSeriesMembershipPreview> AudiobookshelfSeries);
+    IReadOnlyList<AudiobookSeriesMembershipPreview> AudiobookshelfSeries,
+    int SourceSeriesCount = 0,
+    int ParsedSeriesCount = 0,
+    int ListenarrSeriesCount = 0,
+    IReadOnlyList<AudiobookSeriesMembershipPreview>? ProposedSeries = null,
+    string? FailureReason = null,
+    string? Author = null);
 
-public sealed record AudiobookSeriesMembershipPreview(string Name, string? Position);
+public sealed record AudiobookSeriesMembershipPreview(
+    string Name,
+    string? Position,
+    string? SeriesId = null,
+    string? SeriesAsin = null,
+    string? AudiobookshelfSeriesId = null);
+
+public sealed record AudiobookshelfSeriesSyncSummary(
+    int NeedsUpdate,
+    int UpToDate,
+    int NoSeries,
+    int SourceUnavailable,
+    int ParseError,
+    int Conflict,
+    int MissingInAudiobookshelf);
 
 public sealed record AudiobookshelfSeriesSyncPreview(
     string LibraryId,
-    IReadOnlyList<AudiobookshelfSeriesSyncPreviewItem> Items);
+    IReadOnlyList<AudiobookshelfSeriesSyncPreviewItem> Items,
+    AudiobookshelfSeriesSyncSummary? Summary = null);
 
 public sealed record AudiobookshelfSeriesSyncRequest(string LibraryId, IReadOnlyList<string> ItemIds);
 

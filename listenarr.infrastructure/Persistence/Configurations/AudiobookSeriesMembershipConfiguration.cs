@@ -35,6 +35,9 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
             builder.Property(m => m.SeriesAsin)
                 .HasMaxLength(64);
 
+            builder.Property(m => m.AudiobookshelfSeriesId)
+                .HasMaxLength(128);
+
             builder.HasIndex(m => m.AudiobookId);
             builder.HasIndex(m => new { m.AudiobookId, m.SortOrder });
             builder.HasIndex(m => new { m.AudiobookId, m.IsPrimary });

@@ -286,7 +286,10 @@
             </button>
           </div>
         </div>
-        <div v-else-if="isSeriesCollection" class="author-monitoring-controls">
+        <div
+          v-else-if="isSeriesCollection && !isLocalOnlySeries"
+          class="author-monitoring-controls"
+        >
           <div class="author-monitoring-actions">
             <button
               class="toolbar-btn author-refresh-btn"
@@ -871,18 +874,26 @@ const routeSeriesId = computed(() => {
   const candidate = routeCollectionValue.value.toLocaleUpperCase()
   for (const audiobook of libraryStore.audiobooks) {
     const membership = audiobook.seriesMemberships?.find(
-      (item) => item.seriesAsin?.trim().toLocaleUpperCase() === candidate,
+      (item) =>
+        item.seriesId?.trim().toLocaleUpperCase() === candidate ||
+        item.seriesAsin?.trim().toLocaleUpperCase() === candidate,
     )
+    if (membership?.seriesId?.trim()) return membership.seriesId.trim()
     if (membership?.seriesAsin?.trim()) return membership.seriesAsin.trim()
   }
   return ''
 })
+const isLocalOnlySeries = computed(
+  () => isSeriesCollection.value && /^(?:abs|local):/i.test(routeCollectionValue.value),
+)
 const name = computed(() => {
   if (isSeriesCollection.value && routeSeriesId.value) {
     const id = routeSeriesId.value.toLocaleUpperCase()
     for (const audiobook of libraryStore.audiobooks) {
       const membership = audiobook.seriesMemberships?.find(
-        (item) => item.seriesAsin?.trim().toLocaleUpperCase() === id,
+        (item) =>
+          item.seriesId?.trim().toLocaleUpperCase() === id ||
+          item.seriesAsin?.trim().toLocaleUpperCase() === id,
       )
       if (membership?.seriesName?.trim()) return membership.seriesName.trim()
     }
@@ -1017,7 +1028,9 @@ function matchesCurrentCollection(book: Audiobook): boolean {
       const targetId = routeSeriesId.value.toLocaleUpperCase()
       return Boolean(
         memberships?.some(
-          (membership) => membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
+          (membership) =>
+            membership.seriesId?.trim().toLocaleUpperCase() === targetId ||
+            membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
         ),
       )
     }
@@ -1071,7 +1084,9 @@ function resolveSeriesForCollection(
   if (routeSeriesId.value) {
     const targetId = routeSeriesId.value.toLocaleUpperCase()
     const match = memberships?.find(
-      (membership) => membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
+      (membership) =>
+        membership.seriesId?.trim().toLocaleUpperCase() === targetId ||
+        membership.seriesAsin?.trim().toLocaleUpperCase() === targetId,
     )
     if (match)
       return { seriesName: match.seriesName || name.value, seriesNumber: match.seriesNumber }
@@ -1872,6 +1887,12 @@ async function loadCollectionData(forceLibrary = false, forceAuthorMetadataRefre
       refreshedCatalog?.author?.asin || authorCatalog.value?.author?.asin,
       forceAuthorMetadataRefresh,
     )
+  } else if (isSeriesCollection.value && isLocalOnlySeries.value) {
+    seriesCatalog.value = null
+    seriesCatalogError.value = null
+    seriesLookup.value = null
+    seriesLookupLoading.value = false
+    seriesMonitoringStatus.value = null
   } else if (isSeriesCollection.value) {
     const refreshedCatalog = await loadSeriesCatalog(forceAuthorMetadataRefresh)
     await loadSeriesMonitoringStatus()

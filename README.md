@@ -493,7 +493,7 @@ Bumped versions are persisted via PR to maintain branch protection.
 - [x] Notification system (email, webhooks, Discord)
 - [ ] Smart Collections and Reading Lists
 - [ ] Progress Scrobbling and Syncing
-- [ ] Audiobookshelf integration
+- [x] Audiobookshelf integration (library import and series metadata synchronization)
 - [ ] Multi-language support
 - [ ] Backup and restore functionality
 - [ ] Plugin system for extensibility

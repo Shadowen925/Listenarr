@@ -103,6 +103,40 @@ namespace Listenarr.Application.Audiobooks.Catalog
                     qualityProfilesById.TryGetValue(a.QualityProfileId.Value, out qualityProfile);
                 }
 
+                AudiobookSeriesMembershipDto[]? seriesMembershipDtos = null;
+                if (membershipsByAudiobookId.TryGetValue(a.Id, out var memberships) && memberships.Count > 0)
+                {
+                    seriesMembershipDtos = memberships.Select(m => new AudiobookSeriesMembershipDto
+                    {
+                        Id = m.Id,
+                        SeriesName = m.SeriesName,
+                        SeriesNumber = m.SeriesNumber,
+                        SeriesAsin = m.SeriesAsin,
+                        AudiobookshelfSeriesId = m.AudiobookshelfSeriesId,
+                        SeriesId = AudiobookSeriesIdentity.GetId(
+                            a,
+                            m.SeriesName ?? string.Empty,
+                            m.SeriesAsin,
+                            m.AudiobookshelfSeriesId),
+                        IsPrimary = m.IsPrimary,
+                        SortOrder = m.SortOrder,
+                    }).ToArray();
+                }
+                else if (!string.IsNullOrWhiteSpace(a.Series))
+                {
+                    seriesMembershipDtos =
+                    [
+                        new AudiobookSeriesMembershipDto
+                        {
+                            SeriesName = a.Series,
+                            SeriesNumber = a.SeriesNumber,
+                            SeriesId = AudiobookSeriesIdentity.GetId(a, a.Series),
+                            IsPrimary = true,
+                            SortOrder = 0
+                        }
+                    ];
+                }
+
                 return new LibraryAudiobookListItem
                 {
                     Id = a.Id,
@@ -113,17 +147,7 @@ namespace Listenarr.Application.Audiobooks.Catalog
                     PublishedDate = a.PublishedDate,
                     Series = a.Series,
                     SeriesNumber = a.SeriesNumber,
-                    SeriesMemberships = membershipsByAudiobookId.TryGetValue(a.Id, out var memberships) && memberships.Count > 0
-                        ? memberships.Select(m => new AudiobookSeriesMembershipDto
-                        {
-                            Id = m.Id,
-                            SeriesName = m.SeriesName,
-                            SeriesNumber = m.SeriesNumber,
-                            SeriesAsin = m.SeriesAsin,
-                            IsPrimary = m.IsPrimary,
-                            SortOrder = m.SortOrder,
-                        }).ToArray()
-                        : null,
+                    SeriesMemberships = seriesMembershipDtos,
                     Genres = a.Genres?.ToArray(),
                     Asin = a.Asin,
                     OpenLibraryId = a.OpenLibraryId,

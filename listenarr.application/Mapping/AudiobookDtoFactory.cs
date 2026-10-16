@@ -24,6 +24,40 @@ namespace Listenarr.Application.Mapping
         {
             if (audiobook == null) return null!;
 
+            var seriesMemberships = audiobook.SeriesMemberships?
+                .OrderByDescending(m => m.IsPrimary)
+                .ThenBy(m => m.SortOrder)
+                .Select(m => new AudiobookSeriesMembershipDto
+                {
+                    Id = m.Id,
+                    SeriesName = m.SeriesName,
+                    SeriesNumber = m.SeriesNumber,
+                    SeriesAsin = m.SeriesAsin,
+                    AudiobookshelfSeriesId = m.AudiobookshelfSeriesId,
+                    SeriesId = AudiobookSeriesIdentity.GetId(
+                        audiobook,
+                        m.SeriesName ?? string.Empty,
+                        m.SeriesAsin,
+                        m.AudiobookshelfSeriesId),
+                    IsPrimary = m.IsPrimary,
+                    SortOrder = m.SortOrder
+                })
+                .ToArray();
+            if (seriesMemberships is not { Length: > 0 } && !string.IsNullOrWhiteSpace(audiobook.Series))
+            {
+                seriesMemberships =
+                [
+                    new AudiobookSeriesMembershipDto
+                    {
+                        SeriesName = audiobook.Series,
+                        SeriesNumber = audiobook.SeriesNumber,
+                        SeriesId = AudiobookSeriesIdentity.GetId(audiobook, audiobook.Series),
+                        IsPrimary = true,
+                        SortOrder = 0
+                    }
+                ];
+            }
+
             var files = audiobook.Files?.Select(f => new AudiobookFileDto
             {
                 Id = f.Id,
@@ -57,19 +91,7 @@ namespace Listenarr.Application.Mapping
                 PublishedDate = audiobook.PublishedDate,
                 Series = audiobook.Series,
                 SeriesNumber = audiobook.SeriesNumber,
-                SeriesMemberships = audiobook.SeriesMemberships?
-                    .OrderByDescending(m => m.IsPrimary)
-                    .ThenBy(m => m.SortOrder)
-                    .Select(m => new AudiobookSeriesMembershipDto
-                    {
-                        Id = m.Id,
-                        SeriesName = m.SeriesName,
-                        SeriesNumber = m.SeriesNumber,
-                        SeriesAsin = m.SeriesAsin,
-                        IsPrimary = m.IsPrimary,
-                        SortOrder = m.SortOrder
-                    })
-                    .ToArray(),
+                SeriesMemberships = seriesMemberships,
                 Monitored = audiobook.Monitored,
                 FilePath = audiobook.FilePath,
                 FileSize = audiobook.FileSize,

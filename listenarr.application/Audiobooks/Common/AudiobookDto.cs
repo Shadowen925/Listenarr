@@ -73,6 +73,8 @@ namespace Listenarr.Application.Audiobooks.Common
         public string? SeriesName { get; set; }
         public string? SeriesNumber { get; set; }
         public string? SeriesAsin { get; set; }
+        public string? AudiobookshelfSeriesId { get; set; }
+        public string? SeriesId { get; set; }
         public bool IsPrimary { get; set; }
         public int SortOrder { get; set; }
     }

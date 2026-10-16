@@ -301,10 +301,10 @@
                   class="detail-series-membership"
                 >
                   <button
-                    v-if="membership.seriesAsin"
+                    v-if="membership.seriesId || membership.seriesAsin"
                     type="button"
                     class="tag-badge detail-link-tag"
-                    @click="goToSeriesCollection(membership.seriesAsin)"
+                    @click="goToSeriesCollection(membership.seriesId || membership.seriesAsin)"
                   >
                     {{ safeText(membership.seriesName) }}
                   </button>

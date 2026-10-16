@@ -822,6 +822,7 @@ import {
   PhFolderOpen,
 } from '@phosphor-icons/vue'
 import { useRouter, useRoute } from 'vue-router'
+import { LIBRARY_SEARCH_RESET_EVENT } from '@/utils/globalSearch'
 import { useLibraryStore } from '@/stores/library'
 import { useConfigurationStore } from '@/stores/configuration'
 import { useRootFoldersStore } from '@/stores/rootFolders'
@@ -1049,15 +1050,27 @@ const filteredAndSortedAudiobooks = computed(() => {
   let filtered = list.filter((b) => {
     if (!q) return true
     const title = (b.title || '').toString().toLowerCase()
+    const subtitle = (b.subtitle || '').toString().toLowerCase()
     const authors = (b.authors || []).map((a) => (a || '').toString().toLowerCase()).join(' ')
     const series = getBookSeriesNames(b).join(' ').toLowerCase()
+    const seriesIdentifiers = (b.seriesMemberships || [])
+      .flatMap((membership) => [
+        membership.seriesId,
+        membership.seriesAsin,
+        membership.audiobookshelfSeriesId,
+      ])
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
     const narrators = (b.narrators || []).map((n) => (n || '').toString().toLowerCase()).join(' ')
     const publisher = (b.publisher || '').toString().toLowerCase()
     const year = (b.publishYear || '').toString().toLowerCase()
     return (
       title.includes(q) ||
+      subtitle.includes(q) ||
       authors.includes(q) ||
       series.includes(q) ||
+      seriesIdentifiers.includes(q) ||
       narrators.includes(q) ||
       publisher.includes(q) ||
       year.includes(q)
@@ -1388,23 +1401,31 @@ watch(groupBy, (v) => {
 
 // All series a book belongs to (deduped), so a multi-series book is grouped under each
 // of its series rather than only its primary. Falls back to the legacy single series.
-function getBookSeriesNames(book: Audiobook): string[] {
+function getBookSeriesMemberships(book: Audiobook): Array<{
+  seriesName: string
+  seriesId?: string
+}> {
   const memberships = book.seriesMemberships
   if (memberships && memberships.length > 0) {
-    const names: string[] = []
+    const values: Array<{ seriesName: string; seriesId?: string }> = []
     const seen = new Set<string>()
     for (const membership of memberships) {
       const name = (membership.seriesName || '').trim()
       if (!name) continue
-      const dedupeKey = name.toLowerCase()
+      const seriesId = membership.seriesId?.trim() || membership.seriesAsin?.trim()
+      const dedupeKey = seriesId?.toLocaleUpperCase() || name.toLocaleLowerCase()
       if (seen.has(dedupeKey)) continue
       seen.add(dedupeKey)
-      names.push(name)
+      values.push({ seriesName: name, seriesId })
     }
-    if (names.length > 0) return names
+    if (values.length > 0) return values
   }
   const legacy = (book.series || '').trim()
-  return legacy ? [legacy] : []
+  return legacy ? [{ seriesName: legacy }] : []
+}
+
+function getBookSeriesNames(book: Audiobook): string[] {
+  return getBookSeriesMemberships(book).map((membership) => membership.seriesName)
 }
 
 const groupedCollections = computed(() => {
@@ -1413,17 +1434,22 @@ const groupedCollections = computed(() => {
   const books = filteredAndSortedAudiobooks.value
   const groups = new Map<
     string,
-    { name: string; count: number; coverUrl?: string; coverUrls?: string[] }
+    { name: string; seriesId?: string; count: number; coverUrl?: string; coverUrls?: string[] }
   >()
 
   books.forEach((book) => {
-    const keys =
+    const values: Array<{ key: string; name: string; seriesId?: string }> =
       groupBy.value === 'authors'
         ? book.authors?.[0]
-          ? [book.authors[0]]
+          ? [{ key: book.authors[0], name: book.authors[0] }]
           : []
-        : getBookSeriesNames(book)
-    for (const key of keys) {
+        : getBookSeriesMemberships(book).map((membership) => ({
+            key: membership.seriesId || membership.seriesName,
+            name: membership.seriesName,
+            seriesId: membership.seriesId,
+          }))
+    for (const value of values) {
+      const { key } = value
       if (!key) continue
       if (!groups.has(key)) {
         if (groupBy.value === 'authors') {
@@ -1450,9 +1476,11 @@ const groupedCollections = computed(() => {
             } catch {}
           }
 
-          groups.set(key, { name: key, count: 0, coverUrl: cover })
+          groups.set(key, { name: value.name, count: 0, coverUrl: cover })
         } else {
-          groups.set(key, { name: key, count: 0, coverUrls: [] })
+          const group = { name: value.name, count: 0, coverUrls: [] as string[] }
+          if (value.seriesId) Object.assign(group, { seriesId: value.seriesId })
+          groups.set(key, group)
         }
       }
       const group = groups.get(key)!
@@ -1619,6 +1647,14 @@ const sortKeyProxy = computed<string>({
 
 // Raw library length (unfiltered) so we can show appropriate empty-state vs no-results
 const rawAudiobooksLength = computed(() => (libraryStore.audiobooks || []).length)
+
+function resetSearchFromGlobalNavigation() {
+  searchQuery.value = ''
+  selectedFilterId.value = null
+  try {
+    localStorage.removeItem(SEARCH_QUERY_KEY)
+  } catch {}
+}
 
 function clearFilters() {
   // Reset toolbar sort for current group
@@ -1937,6 +1973,7 @@ async function initializeVirtualScroller() {
 
 onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener(LIBRARY_SEARCH_RESET_EVENT, resetSearchFromGlobalNavigation)
   await Promise.all([
     libraryStore.fetchLibrary(),
     configStore.loadApplicationSettings(),
@@ -1988,6 +2025,7 @@ onUnmounted(() => {
     authorCardObserver?.disconnect()
   } catch {}
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener(LIBRARY_SEARCH_RESET_EVENT, resetSearchFromGlobalNavigation)
 })
 
 async function loadQualityProfiles() {
@@ -2109,9 +2147,10 @@ async function setGroupBy(mode: GroupByMode) {
   }
 }
 
-function navigateToCollection(collection: { name: string }) {
+function navigateToCollection(collection: { name: string; seriesId?: string }) {
   const type = groupBy.value === 'authors' ? 'author' : 'series'
-  router.push(`/collection/${type}/${encodeURIComponent(collection.name)}`)
+  const destination = type === 'series' ? collection.seriesId || collection.name : collection.name
+  router.push(`/collection/${type}/${encodeURIComponent(destination)}`)
 }
 
 async function waitForImagesToLoad(timeoutMs = 5000) {

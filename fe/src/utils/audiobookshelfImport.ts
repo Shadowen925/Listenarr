@@ -2,6 +2,7 @@ import type {
   AudiobookshelfImportItemResult,
   AudiobookshelfImportPreviewItem,
   AudiobookshelfImportResult,
+  AudiobookshelfSeriesSyncPreviewItem,
 } from '@/types'
 
 const FORMULA_PREFIX = /^[=+\-@\t\r]/
@@ -79,15 +80,84 @@ export function buildImportResultCsv(result: AudiobookshelfImportResult): string
   return toCsv(['Import timestamp', 'Library ID', 'Item ID', 'Title', 'Outcome', 'Reason'], rows)
 }
 
-export function exportFileName(kind: 'unmatched' | 'preview' | 'import-results', now = new Date()) {
+export function buildSeriesSyncCsv(items: AudiobookshelfSeriesSyncPreviewItem[]): string {
+  return toCsv(
+    [
+      'Audiobookshelf item ID',
+      'Listenarr audiobook ID',
+      'Title',
+      'Author',
+      'Status',
+      'Listenarr series',
+      'Source series',
+      'Proposed series',
+      'Source series count',
+      'Parsed series count',
+      'Listenarr series count',
+      'Failure reason',
+    ],
+    items.map((item) => [
+      item.itemId,
+      item.audiobookId,
+      item.title,
+      item.author,
+      item.status,
+      (item.currentSeries ?? [])
+        .map(
+          (membership) =>
+            `${membership.name}${membership.position ? ` #${membership.position}` : ''}`,
+        )
+        .join('; '),
+      (item.audiobookshelfSeries ?? [])
+        .map(
+          (membership) =>
+            `${membership.name}${membership.position ? ` #${membership.position}` : ''}`,
+        )
+        .join('; '),
+      (item.proposedSeries ?? [])
+        .map(
+          (membership) =>
+            `${membership.name}${membership.position ? ` #${membership.position}` : ''}`,
+        )
+        .join('; '),
+      item.sourceSeriesCount,
+      item.parsedSeriesCount,
+      item.listenarrSeriesCount,
+      item.failureReason,
+    ]),
+  )
+}
+
+export function exportFileName(
+  kind: 'unmatched' | 'preview' | 'import-results' | 'series-diagnostics',
+  extensionOrNow: 'csv' | 'json' | Date = 'csv',
+  now = new Date(),
+) {
+  const extension = extensionOrNow instanceof Date ? 'csv' : extensionOrNow
+  if (extensionOrNow instanceof Date) now = extensionOrNow
   const pad = (value: number) => String(value).padStart(2, '0')
   const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-  return `listenarr-audiobookshelf-${kind}-${date}.csv`
+  return `listenarr-audiobookshelf-${kind}-${date}.${extension}`
 }
 
 /** Downloads CSV text with a UTF-8 BOM so spreadsheet apps preserve Unicode. */
 export function downloadCsv(fileName: string, csv: string) {
   const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  try {
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+export function downloadJson(fileName: string, json: string) {
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   try {
     const link = document.createElement('a')

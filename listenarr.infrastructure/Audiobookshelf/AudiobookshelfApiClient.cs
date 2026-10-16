@@ -39,8 +39,8 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
         using var document = await JsonDocument.ParseAsync(
             await response.Content.ReadAsStreamAsync(cancellationToken),
             cancellationToken: cancellationToken);
-        var libraries = GetArray(document.RootElement, "libraries");
-        return libraries.Select(ParseLibrary).ToList();
+        var libraries = AudiobookshelfPayloadParser.GetArray(document.RootElement, "libraries");
+        return libraries.Select(AudiobookshelfPayloadParser.ParseLibrary).ToList();
     }
 
     public async Task<IReadOnlyList<AudiobookshelfLibraryItem>> GetLibraryItemsAsync(
@@ -59,15 +59,20 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
         using var document = await JsonDocument.ParseAsync(
             await response.Content.ReadAsStreamAsync(cancellationToken),
             cancellationToken: cancellationToken);
-        var items = GetArray(document.RootElement, "results", "libraryItems", "items");
-        var parsed = items.Select(ParseLibraryItem).ToList();
+        var items = AudiobookshelfPayloadParser.GetArray(
+            document.RootElement,
+            "results",
+            "libraryItems",
+            "items");
+        var parsed = items.Select(AudiobookshelfPayloadParser.ParseLibraryItem).ToList();
 
         // The Audiobookshelf list endpoint returns minified media (counts only, no audioFiles),
         // so file paths must be read from each item's detail record. Bounded and read-only.
         using var gate = new SemaphoreSlim(MaxDetailRequests);
         var enriched = await Task.WhenAll(parsed.Select(async item =>
         {
-            if (item.AudioFilePaths.Count > 0)
+            if (item.AudioFilePaths.Count > 0
+                && item.Metadata.SeriesMetadataState != AudiobookshelfSeriesMetadataState.NotProvided)
             {
                 return item;
             }
@@ -76,6 +81,20 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
             try
             {
                 return await GetItemWithFilesAsync(url, apiKey, item, cancellationToken);
+            }
+            catch (HttpRequestException)
+            {
+                return item with
+                {
+                    SourceUnavailableReason = "Audiobookshelf could not retrieve this item's detail record."
+                };
+            }
+            catch (JsonException)
+            {
+                return item with
+                {
+                    SourceUnavailableReason = "Audiobookshelf returned an unreadable detail record."
+                };
             }
             finally
             {
@@ -101,11 +120,15 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
         using var document = await JsonDocument.ParseAsync(
             await response.Content.ReadAsStreamAsync(cancellationToken),
             cancellationToken: cancellationToken);
-        var detailed = ParseLibraryItem(document.RootElement);
+        var detailed = AudiobookshelfPayloadParser.ParseLibraryItem(document.RootElement);
         return item with
         {
             Path = string.IsNullOrWhiteSpace(item.Path) ? detailed.Path : item.Path,
-            AudioFilePaths = detailed.AudioFilePaths
+            AudioFilePaths = detailed.AudioFilePaths.Count > 0
+                ? detailed.AudioFilePaths
+                : item.AudioFilePaths,
+            Metadata = AudiobookshelfMetadataMerger.Merge(item.Metadata, detailed.Metadata),
+            SourceUnavailableReason = null
         };
     }
 
@@ -193,157 +216,4 @@ public sealed class AudiobookshelfApiClient(HttpClient httpClient) : IAudiobooks
         return request;
     }
 
-    private static AudiobookshelfLibrary ParseLibrary(JsonElement element)
-    {
-        var folderPaths = GetArray(element, "folders")
-            .Select(folder => GetString(folder, "fullPath") ?? GetString(folder, "path"))
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => path!)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        return new AudiobookshelfLibrary(
-            GetString(element, "id") ?? throw new JsonException("Audiobookshelf library has no id."),
-            GetString(element, "name") ?? "Audiobookshelf Library",
-            GetString(element, "mediaType"),
-            folderPaths);
-    }
-
-    private static AudiobookshelfLibraryItem ParseLibraryItem(JsonElement element)
-    {
-        var media = GetProperty(element, "media");
-        var metadata = GetProperty(media, "metadata");
-        var seriesMemberships = ParseSeries(GetProperty(metadata, "series"));
-        var primarySeries = seriesMemberships.FirstOrDefault();
-        var audioFiles = GetArray(media, "audioFiles")
-            .Select(file =>
-            {
-                var fileMetadata = GetProperty(file, "metadata");
-                return GetString(fileMetadata, "path") ?? GetString(file, "path");
-            })
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => path!)
-            .ToList();
-
-        return new AudiobookshelfLibraryItem(
-            GetString(element, "id") ?? throw new JsonException("Audiobookshelf item has no id."),
-            GetString(element, "path") ?? string.Empty,
-            audioFiles,
-            new AudiobookshelfMetadata(
-                GetString(metadata, "title"),
-                GetString(metadata, "subtitle"),
-                GetStringList(metadata, "authors", "authorName"),
-                GetStringList(metadata, "narrators", "narratorName"),
-                primarySeries?.Name,
-                primarySeries?.Position,
-                GetString(metadata, "description"),
-                GetString(media, "coverPath"),
-                GetString(metadata, "asin"),
-                GetStringList(metadata, "isbn"),
-                GetString(metadata, "openlibraryId") ?? GetString(metadata, "openLibraryId"),
-                GetString(metadata, "publisher"),
-                GetString(metadata, "language"),
-                GetString(metadata, "publishedYear"),
-                GetStringList(metadata, "genres"),
-                seriesMemberships));
-    }
-
-    private static IReadOnlyList<AudiobookshelfSeriesMembership> ParseSeries(JsonElement series)
-    {
-        if (series.ValueKind == JsonValueKind.String)
-        {
-            var name = series.GetString()?.Trim();
-            return string.IsNullOrWhiteSpace(name)
-                ? []
-                : [new AudiobookshelfSeriesMembership(name, null)];
-        }
-
-        IEnumerable<JsonElement> entries = series.ValueKind switch
-        {
-            JsonValueKind.Array => series.EnumerateArray(),
-            JsonValueKind.Object => [series],
-            _ => []
-        };
-
-        return entries
-            .Select(entry =>
-            {
-                if (entry.ValueKind == JsonValueKind.String)
-                {
-                    return new AudiobookshelfSeriesMembership(
-                        entry.GetString()?.Trim() ?? string.Empty,
-                        null);
-                }
-
-                var name = GetString(entry, "name") ?? GetString(entry, "title");
-                return new AudiobookshelfSeriesMembership(
-                    name?.Trim() ?? string.Empty,
-                    GetString(entry, "sequence")
-                        ?? GetString(entry, "position")
-                        ?? GetString(entry, "bookNumber"));
-            })
-            .Where(membership => !string.IsNullOrWhiteSpace(membership.Name))
-            .DistinctBy(
-                membership => $"{membership.Name}\u001f{membership.Position}",
-                StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static IReadOnlyList<string> GetStringList(
-        JsonElement element,
-        string propertyName,
-        string? fallbackPropertyName = null)
-    {
-        var value = GetProperty(element, propertyName);
-        if (value.ValueKind == JsonValueKind.Array)
-        {
-            return value.EnumerateArray()
-                .Select(entry => entry.ValueKind == JsonValueKind.String
-                    ? entry.GetString()
-                    : GetString(entry, "name"))
-                .Where(entry => !string.IsNullOrWhiteSpace(entry))
-                .Select(entry => entry!)
-                .ToList();
-        }
-
-        if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
-        {
-            return [value.GetString()!];
-        }
-
-        var fallback = fallbackPropertyName == null
-            ? null
-            : GetString(element, fallbackPropertyName);
-        return string.IsNullOrWhiteSpace(fallback) ? [] : [fallback];
-    }
-
-    private static IEnumerable<JsonElement> GetArray(JsonElement element, params string[] propertyNames)
-    {
-        foreach (var propertyName in propertyNames)
-        {
-            var property = GetProperty(element, propertyName);
-            if (property.ValueKind == JsonValueKind.Array)
-            {
-                return property.EnumerateArray().ToList();
-            }
-        }
-
-        return [];
-    }
-
-    private static JsonElement GetProperty(JsonElement element, string propertyName) =>
-        element.ValueKind == JsonValueKind.Object
-        && element.TryGetProperty(propertyName, out var property)
-            ? property
-            : default;
-
-    private static string? GetString(JsonElement element, string propertyName)
-    {
-        var value = GetProperty(element, propertyName);
-        return value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString(),
-            JsonValueKind.Number => value.GetRawText(),
-            _ => null
-        };
-    }
 }

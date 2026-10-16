@@ -277,15 +277,67 @@
         </button>
         <button
           class="btn btn-secondary"
+          data-testid="select-visible-series-updates"
+          :disabled="visibleSeriesNeedsUpdateCount === 0"
+          @click="selectVisibleSeriesUpdates"
+        >
+          Select visible updates ({{ visibleSeriesNeedsUpdateCount }})
+        </button>
+        <button
+          class="btn btn-secondary"
           :disabled="selectedSeriesItemIds.size === 0"
           @click="selectedSeriesItemIds = new Set()"
         >
           Clear selection
         </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="export-series-csv"
+          :disabled="!seriesSyncPreview?.items.length"
+          @click="exportSeriesDiagnostics('csv')"
+        >
+          Export diagnostics CSV
+        </button>
+        <button
+          class="btn btn-secondary"
+          data-testid="export-series-json"
+          :disabled="!seriesSyncPreview?.items.length"
+          @click="exportSeriesDiagnostics('json')"
+        >
+          Export diagnostics JSON
+        </button>
+      </div>
+      <div v-if="seriesSyncPreview" class="series-sync-filters">
+        <label>
+          Search books, authors, series, or item IDs
+          <input
+            v-model="seriesSearchText"
+            type="search"
+            data-testid="series-sync-search"
+            placeholder="Search diagnostics"
+          />
+        </label>
+        <label>
+          Status
+          <select v-model="seriesStatusFilter" data-testid="series-sync-status-filter">
+            <option value="All">All statuses</option>
+            <option value="NeedsUpdate">Needs update</option>
+            <option value="UpToDate">Up to date</option>
+            <option value="NoSeries">No series</option>
+            <option value="SourceUnavailable">Source unavailable</option>
+            <option value="ParseError">Parse error</option>
+            <option value="Conflict">Conflict</option>
+            <option value="MissingInAudiobookshelf">Missing in Audiobookshelf</option>
+          </select>
+        </label>
       </div>
       <div v-if="seriesSyncPreview" class="preview-summary" aria-live="polite">
         <span>Needs update: {{ seriesNeedsUpdateCount }}</span>
         <span>Up to date: {{ seriesUpToDateCount }}</span>
+        <span>No series: {{ seriesNoSeriesCount }}</span>
+        <span>Source unavailable: {{ seriesSourceUnavailableCount }}</span>
+        <span>Parse errors: {{ seriesParseErrorCount }}</span>
+        <span>Conflicts: {{ seriesConflictCount }}</span>
         <span>Missing in Audiobookshelf: {{ seriesMissingCount }}</span>
       </div>
       <div v-if="seriesSyncPreview?.items.length" class="preview-table-wrap">
@@ -294,13 +346,16 @@
             <tr>
               <th scope="col">Update</th>
               <th scope="col">Title</th>
+              <th scope="col">Author</th>
               <th scope="col">Status</th>
               <th scope="col">Listenarr series</th>
-              <th scope="col">Audiobookshelf series</th>
+              <th scope="col">Source series</th>
+              <th scope="col">Proposed series</th>
+              <th scope="col">Diagnostics</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in seriesSyncPreview.items" :key="item.itemId">
+            <tr v-for="item in filteredSeriesSyncItems" :key="item.itemId">
               <td>
                 <input
                   v-if="item.status === 'NeedsUpdate'"
@@ -311,9 +366,32 @@
                 />
               </td>
               <td>{{ item.title }}</td>
+              <td>{{ item.author || '—' }}</td>
               <td>{{ item.status }}</td>
               <td>{{ formatSeries(item.currentSeries) }}</td>
               <td>{{ formatSeries(item.audiobookshelfSeries) }}</td>
+              <td>{{ formatSeries(item.proposedSeries ?? item.audiobookshelfSeries) }}</td>
+              <td class="series-sync-diagnostics">
+                <span>
+                  Source {{ item.sourceSeriesCount ?? item.audiobookshelfSeries.length }}; parsed
+                  {{ item.parsedSeriesCount ?? item.audiobookshelfSeries.length }}; current
+                  {{ item.listenarrSeriesCount ?? item.currentSeries.length }}
+                </span>
+                <span v-if="item.failureReason">{{ item.failureReason }}</span>
+                <button
+                  v-if="item.status === 'NeedsUpdate'"
+                  type="button"
+                  class="btn btn-small btn-secondary"
+                  :disabled="seriesSyncing"
+                  :data-testid="`sync-series-${item.itemId}`"
+                  @click="synchronizeOneSeries(item.itemId, item.title)"
+                >
+                  Update this book
+                </button>
+              </td>
+            </tr>
+            <tr v-if="filteredSeriesSyncItems.length === 0">
+              <td colspan="8">No series diagnostics match the current filters.</td>
             </tr>
           </tbody>
         </table>
@@ -342,10 +420,13 @@ import { apiService } from '@/services/api'
 import {
   buildFullPreviewCsv,
   buildImportResultCsv,
+  buildSeriesSyncCsv,
   buildUnmatchedCsv,
   downloadCsv,
+  downloadJson,
   exportFileName,
 } from '@/utils/audiobookshelfImport'
+import { useLibraryStore } from '@/stores/library'
 import type {
   AudiobookshelfImportConnectionSettings,
   AudiobookshelfImportPreview,
@@ -362,6 +443,7 @@ const connection = reactive<AudiobookshelfImportConnectionSettings>({
   apiKey: '',
   hasSavedApiKey: false,
 })
+const libraryStore = useLibraryStore()
 const libraries = ref<AudiobookshelfLibrary[]>([])
 const rootFolders = ref<RootFolder[]>([])
 const mappingDrafts = reactive<Record<number, string>>({})
@@ -372,6 +454,8 @@ const importResult = ref<AudiobookshelfImportResult | null>(null)
 const seriesSyncPreview = ref<AudiobookshelfSeriesSyncPreview | null>(null)
 const selectedSeriesItemIds = ref(new Set<string>())
 const seriesSyncResult = ref<AudiobookshelfSeriesSyncResult | null>(null)
+const seriesSearchText = ref('')
+const seriesStatusFilter = ref('All')
 const searchText = ref('')
 const statusFilter = ref('All')
 const exportFilteredOnly = ref(false)
@@ -402,15 +486,68 @@ const missingIdentifierCount = computed(
   () => preview.value?.items.filter((item) => item.missingIdentifiers).length ?? 0,
 )
 const seriesNeedsUpdateCount = computed(
-  () => seriesSyncPreview.value?.items.filter((item) => item.status === 'NeedsUpdate').length ?? 0,
+  () =>
+    seriesSyncPreview.value?.summary?.needsUpdate ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'NeedsUpdate').length ??
+    0,
 )
 const seriesUpToDateCount = computed(
-  () => seriesSyncPreview.value?.items.filter((item) => item.status === 'UpToDate').length ?? 0,
+  () =>
+    seriesSyncPreview.value?.summary?.upToDate ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'UpToDate').length ??
+    0,
+)
+const seriesNoSeriesCount = computed(
+  () =>
+    seriesSyncPreview.value?.summary?.noSeries ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'NoSeries').length ??
+    0,
+)
+const seriesSourceUnavailableCount = computed(
+  () =>
+    seriesSyncPreview.value?.summary?.sourceUnavailable ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'SourceUnavailable').length ??
+    0,
+)
+const seriesParseErrorCount = computed(
+  () =>
+    seriesSyncPreview.value?.summary?.parseError ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'ParseError').length ??
+    0,
+)
+const seriesConflictCount = computed(
+  () =>
+    seriesSyncPreview.value?.summary?.conflict ??
+    seriesSyncPreview.value?.items.filter((item) => item.status === 'Conflict').length ??
+    0,
 )
 const seriesMissingCount = computed(
   () =>
+    seriesSyncPreview.value?.summary?.missingInAudiobookshelf ??
     seriesSyncPreview.value?.items.filter((item) => item.status === 'MissingInAudiobookshelf')
-      .length ?? 0,
+      .length ??
+    0,
+)
+const filteredSeriesSyncItems = computed(() => {
+  const needle = seriesSearchText.value.trim().toLocaleLowerCase()
+  return (seriesSyncPreview.value?.items ?? []).filter((item) => {
+    if (seriesStatusFilter.value !== 'All' && item.status !== seriesStatusFilter.value) {
+      return false
+    }
+    if (!needle) return true
+    const values = [
+      item.itemId,
+      item.title,
+      item.author,
+      ...item.currentSeries.map((series) => series.name),
+      ...item.audiobookshelfSeries.map((series) => series.name),
+      ...(item.proposedSeries ?? []).map((series) => series.name),
+    ]
+    return values.some((value) => value?.toLocaleLowerCase().includes(needle))
+  })
+})
+const visibleSeriesNeedsUpdateCount = computed(
+  () => filteredSeriesSyncItems.value.filter((item) => item.status === 'NeedsUpdate').length,
 )
 
 const filteredItems = computed(() => {
@@ -582,6 +719,14 @@ function selectAllSeriesUpdates() {
   )
 }
 
+function selectVisibleSeriesUpdates() {
+  const next = new Set(selectedSeriesItemIds.value)
+  for (const item of filteredSeriesSyncItems.value) {
+    if (item.status === 'NeedsUpdate') next.add(item.itemId)
+  }
+  selectedSeriesItemIds.value = next
+}
+
 function formatSeries(series: AudiobookSeriesMembershipPreview[]) {
   return series.length
     ? series
@@ -681,19 +826,57 @@ async function synchronizeSelectedSeries() {
     `Update series metadata for ${count} selected audiobook${count === 1 ? '' : 's'}? No other audiobook metadata or files will be changed.`,
   )
   if (!confirmed) return
+  await synchronizeSeries([...selectedSeriesItemIds.value])
+}
+
+async function synchronizeOneSeries(itemId: string, title: string) {
+  if (!selectedLibraryId.value) return
+  if (
+    !window.confirm(
+      `Update series metadata for "${title}"? No other audiobook metadata or files will be changed.`,
+    )
+  ) {
+    return
+  }
+  await synchronizeSeries([itemId])
+}
+
+async function synchronizeSeries(itemIds: string[]) {
   seriesSyncing.value = true
   error.value = ''
   try {
     seriesSyncResult.value = await apiService.synchronizeAudiobookshelfSeries(
       selectedLibraryId.value,
-      [...selectedSeriesItemIds.value],
+      itemIds,
     )
+    await libraryStore.fetchLibrary()
     await loadSeriesSyncPreview(true)
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
     seriesSyncing.value = false
   }
+}
+
+function exportSeriesDiagnostics(format: 'csv' | 'json') {
+  const items = seriesSyncPreview.value?.items ?? []
+  if (format === 'csv') {
+    downloadCsv(exportFileName('series-diagnostics'), buildSeriesSyncCsv(items))
+    return
+  }
+  downloadJson(
+    exportFileName('series-diagnostics', 'json'),
+    JSON.stringify(
+      {
+        libraryId: seriesSyncPreview.value?.libraryId,
+        exportedAt: new Date().toISOString(),
+        summary: seriesSyncPreview.value?.summary,
+        items,
+      },
+      null,
+      2,
+    ),
+  )
 }
 
 async function scanLibrary() {

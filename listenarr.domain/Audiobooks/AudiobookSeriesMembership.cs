@@ -36,6 +36,8 @@ namespace Listenarr.Domain.Audiobooks
 
         public string? SeriesAsin { get; set; }
 
+        public string? AudiobookshelfSeriesId { get; set; }
+
         public bool IsPrimary { get; set; }
 
         public int SortOrder { get; set; }

@@ -34,6 +34,8 @@ export type HeaderSearchSuggestion =
       imageUrl: string
     }
 
+export const LIBRARY_SEARCH_RESET_EVENT = 'listenarr-library-search-reset'
+
 export function getHeaderSearchSuggestions(
   audiobooks: Audiobook[],
   query: string,
@@ -56,10 +58,13 @@ export function getHeaderSearchSuggestions(
 
     for (const membership of memberships) {
       const name = membership.seriesName?.trim()
-      const id = membership.seriesAsin?.trim()
+      const id = membership.seriesId?.trim() || membership.seriesAsin?.trim()
       if (!name) continue
 
-      if (id && name.toLowerCase().includes(normalizedQuery)) {
+      if (
+        id &&
+        (name.toLowerCase().includes(normalizedQuery) || id.toLowerCase().includes(normalizedQuery))
+      ) {
         const normalizedId = id.toUpperCase()
         if (!seriesById.has(normalizedId)) {
           seriesById.set(normalizedId, {
@@ -75,8 +80,17 @@ export function getHeaderSearchSuggestions(
 
     const matchesAudiobook =
       (audiobook.title || '').toLowerCase().includes(normalizedQuery) ||
+      (audiobook.subtitle || '').toLowerCase().includes(normalizedQuery) ||
       (audiobook.authors || []).some((author) =>
         (author || '').toLowerCase().includes(normalizedQuery),
+      ) ||
+      (audiobook.narrators || []).some((narrator) =>
+        (narrator || '').toLowerCase().includes(normalizedQuery),
+      ) ||
+      memberships.some((membership) =>
+        [membership.seriesId, membership.seriesAsin, membership.audiobookshelfSeriesId]
+          .filter(Boolean)
+          .some((id) => id!.toLowerCase().includes(normalizedQuery)),
       ) ||
       memberships.some((membership) =>
         (membership.seriesName || '').toLowerCase().includes(normalizedQuery),

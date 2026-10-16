@@ -1396,6 +1396,55 @@ describe('CollectionView', () => {
     expect(mockToastSuccess).toHaveBeenCalled()
   })
 
+  it('opens a local Audiobookshelf series by stable ID without querying Audible', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const seriesId = 'abs:series-123'
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 42,
+        title: 'Local Audiobook',
+        authors: ['Local Author'],
+        seriesMemberships: [
+          {
+            seriesName: 'Local Series',
+            seriesNumber: '2',
+            seriesId,
+            audiobookshelfSeriesId: 'series-123',
+            isPrimary: true,
+          },
+        ],
+      },
+    ] as unknown as typeof store.audiobooks
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/collection/:type/:name', name: 'collection', component: CollectionView },
+      ],
+    })
+    await router.push(`/collection/series/${encodeURIComponent(seriesId)}`)
+    await router.isReady()
+
+    const wrapper = mount(CollectionView, {
+      global: {
+        plugins: [pinia, router],
+        stubs: ['EditAudiobookModal', 'CustomSelect', 'AddLibraryModal'],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Local Series')
+    expect(wrapper.text()).toContain('Local Audiobook')
+    expect(wrapper.text()).toContain('#2')
+    expect(wrapper.find('.author-monitoring-controls').exists()).toBe(false)
+    expect(mockGetSeriesCatalog).not.toHaveBeenCalled()
+    expect(mockGetSeriesLookup).not.toHaveBeenCalled()
+  })
+
   it('monitors a series using the configured region and language defaults', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

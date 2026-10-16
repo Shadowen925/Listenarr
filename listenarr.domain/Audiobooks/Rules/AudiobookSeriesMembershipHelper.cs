@@ -36,13 +36,14 @@ namespace Listenarr.Domain.Audiobooks.Rules
                     var seriesName = NormalizeText(membership.SeriesName);
                     var seriesNumber = NormalizeText(membership.SeriesNumber);
                     var seriesAsin = NormalizeText(membership.SeriesAsin);
+                    var audiobookshelfSeriesId = NormalizeText(membership.AudiobookshelfSeriesId);
 
                     if (string.IsNullOrWhiteSpace(seriesName))
                     {
                         continue;
                     }
 
-                    var dedupeKey = $"{seriesName}|{seriesNumber}|{seriesAsin}";
+                    var dedupeKey = $"{seriesName}|{seriesNumber}|{seriesAsin}|{audiobookshelfSeriesId}";
                     if (!seen.Add(dedupeKey))
                     {
                         continue;
@@ -53,6 +54,7 @@ namespace Listenarr.Domain.Audiobooks.Rules
                         SeriesName = seriesName,
                         SeriesNumber = seriesNumber,
                         SeriesAsin = seriesAsin,
+                        AudiobookshelfSeriesId = audiobookshelfSeriesId,
                         IsPrimary = membership.IsPrimary
                     });
                 }
