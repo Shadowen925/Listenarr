@@ -25,6 +25,11 @@ namespace Listenarr.Application.Audiobooks.Contracts.Repositories
         string? BasePath,
         string? FilePath);
 
+    public sealed record SeriesMembershipMergeOutcome(
+        int TransferredMembershipCount,
+        int DeduplicatedMembershipCount,
+        int MergedBookCount);
+
     public interface IAudiobookRepository
     {
         Task<List<Audiobook>> GetAllAsync();
@@ -39,6 +44,10 @@ namespace Listenarr.Application.Audiobooks.Contracts.Repositories
             string libraryId,
             CancellationToken ct = default);
         Task<Dictionary<int, List<AudiobookSeriesMembership>>> GetAllSeriesMembershipsGroupedByAudiobookIdAsync(CancellationToken ct = default);
+        Task<SeriesMembershipMergeOutcome> MergeSeriesMembershipsAsync(
+            IReadOnlyCollection<int> membershipIds,
+            string canonicalSeriesAsin,
+            CancellationToken ct = default);
         Task<List<Audiobook>> GetByIdsWithFilesAsync(IEnumerable<int> ids, CancellationToken ct = default);
         Task<List<Audiobook>> GetMonitoredAudiobooksForSearchAsync(DateTime cutoff, CancellationToken ct = default);
         Task NormalizeJsonColumnsAsync(CancellationToken ct = default);

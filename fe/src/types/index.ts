@@ -812,6 +812,39 @@ export interface SeriesLookupResponse {
   totalBooks?: number
 }
 
+export interface SeriesResolutionCandidate {
+  asin: string
+  name: string
+  confidence: 'high' | 'medium' | 'low'
+  score: number
+  existingLibraryBookCount: number
+  proposedMergedBookCount: number
+  overlappingBookCount: number
+  evidence: string[]
+  conflicts: string[]
+}
+
+export interface SeriesResolutionPreview {
+  seriesId: string
+  importedSeriesName: string
+  importedBookCount: number
+  booksWithoutAsin: string[]
+  unresolvedBooks: string[]
+  conflicts: string[]
+  isAmbiguous: boolean
+  candidates: SeriesResolutionCandidate[]
+}
+
+export interface SeriesResolutionMergeResult {
+  seriesId: string
+  canonicalSeriesAsin: string
+  canonicalSeriesName: string
+  transferredMembershipCount: number
+  deduplicatedMembershipCount: number
+  mergedBookCount: number
+  catalogWarning?: string | null
+}
+
 export interface MonitoredAuthor {
   id: number
   authorName: string

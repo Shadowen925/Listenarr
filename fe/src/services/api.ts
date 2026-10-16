@@ -60,6 +60,8 @@ import type {
   SeriesMonitoringStatusResponse,
   SeriesCatalogResponse,
   SeriesLookupResponse,
+  SeriesResolutionPreview,
+  SeriesResolutionMergeResult,
   ManualImportPreviewResponse,
   ManualImportRequest,
   ManualImportResult,
@@ -496,6 +498,39 @@ class ApiService {
     } catch {
       return null
     }
+  }
+
+  async previewSeriesResolution(
+    region: string = 'us',
+    seriesId?: string,
+  ): Promise<SeriesResolutionPreview[]> {
+    const params = new URLSearchParams({ region })
+    if (seriesId) params.set('seriesId', seriesId)
+    return this.request<SeriesResolutionPreview[]>(
+      `/series/resolution/preview?${params.toString()}`,
+    )
+  }
+
+  async mergeSeriesResolution(payload: {
+    seriesId: string
+    candidateAsin: string
+    region?: string
+  }): Promise<SeriesResolutionMergeResult> {
+    return this.request<SeriesResolutionMergeResult>('/series/resolution/merge', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, region: payload.region ?? 'us' }),
+    })
+  }
+
+  async refreshSeriesCatalogByAsin(payload: {
+    asin: string
+    name: string
+    region?: string
+  }): Promise<SeriesCatalogResponse> {
+    return this.request<SeriesCatalogResponse>('/series/resolution/catalog/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, region: payload.region ?? 'us' }),
+    })
   }
 
   async getAuthorMonitoringStatus(

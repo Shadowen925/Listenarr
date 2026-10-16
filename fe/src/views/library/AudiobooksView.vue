@@ -100,6 +100,10 @@
           <PhArrowClockwise />
           Refresh
         </button>
+        <button class="toolbar-btn" @click="showSeriesResolutionDialog = true">
+          <PhBooks />
+          Resolve Series Metadata
+        </button>
         <button v-if="selectedCount > 0" class="toolbar-btn" @click="libraryStore.clearSelection()">
           <PhX />
           Clear Selection
@@ -792,6 +796,11 @@
       </template>
     </DeleteConfirmationModal>
 
+    <SeriesResolutionDialog
+      v-model="showSeriesResolutionDialog"
+      @merged="handleSeriesResolutionMerged"
+    />
+
     <!-- Confirm delete custom filter handled via global showConfirm() -->
   </div>
 </template>
@@ -835,6 +844,7 @@ import BulkEditModal from '@/components/domain/collection/BulkEditModal.vue'
 import EditAudiobookModal from '@/components/domain/audiobook/EditAudiobookModal.vue'
 import RenamePreviewModal from '@/components/domain/organize/RenamePreviewModal.vue'
 import DeleteConfirmationModal from '@/components/feedback/DeleteConfirmationModal.vue'
+import SeriesResolutionDialog from '@/components/domain/collection/SeriesResolutionDialog.vue'
 import CustomSelect from '@/components/form/CustomSelect.vue'
 import FiltersDropdown from '@/components/ui/FiltersDropdown.vue'
 import CustomFilterModal from '@/components/domain/collection/CustomFilterModal.vue'
@@ -889,6 +899,7 @@ function getNarratorFirstNameSortKey(narrator: string): string {
 const router = useRouter()
 const route = useRoute()
 const libraryStore = useLibraryStore()
+const showSeriesResolutionDialog = ref(false)
 const configStore = useConfigurationStore()
 const rootFoldersStore = useRootFoldersStore()
 const downloadsStore = useDownloadsStore()
@@ -2266,6 +2277,10 @@ function getCoverStyle(index: number, count: number) {
 }
 
 async function refreshLibrary() {
+  await libraryStore.fetchLibrary()
+}
+
+async function handleSeriesResolutionMerged() {
   await libraryStore.fetchLibrary()
 }
 

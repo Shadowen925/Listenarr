@@ -27,6 +27,14 @@ namespace Listenarr.Application.Audiobooks.Contracts
             string? language = null,
             bool forceRefresh = false,
             CancellationToken cancellationToken = default);
+
+        Task<SeriesCatalogFetchResult?> GetCatalogByAsinAsync(
+            string asin,
+            string name,
+            string region = "us",
+            int limit = 250,
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default);
     }
 
     public sealed class SeriesCatalogFetchResult

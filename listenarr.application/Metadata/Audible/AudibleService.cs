@@ -102,6 +102,13 @@ namespace Listenarr.Application.Metadata.Audible
             return await _metadataWorkflow.GetBookMetadataAsync(asin, region, language);
         }
 
+        public virtual async Task<List<AudibleBookResponse>> GetBooksMetadataByAsinsAsync(
+            IEnumerable<string> asins,
+            string region = "us")
+        {
+            return await _metadataWorkflow.GetBooksMetadataByAsinsAsync(asins, region);
+        }
+
         public virtual async Task<AudibleSearchResponse?> SearchByTitleAsync(string title, int page = 1, int limit = 50, string region = "us", string? language = null)
         {
             return await _productSearchWorkflow.SearchByTitleAsync(title, page, limit, region, language);

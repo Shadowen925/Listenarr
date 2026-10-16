@@ -74,6 +74,67 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.Catalog
         }
 
         [Fact]
+        public async Task GetCatalogByAsinAsync_DoesNotReplaceNameCacheForDifferentSeriesAsin()
+        {
+            using var httpClientForAudible = new HttpClient();
+            var audible = new Mock<AudibleService>(
+                httpClientForAudible,
+                Mock.Of<ILogger<AudibleService>>())
+            {
+                CallBase = false
+            };
+            var audiobookRepository = new Mock<IAudiobookRepository>();
+            var logger = new Mock<ILogger<SeriesCatalogService>>();
+            audiobookRepository
+                .Setup(repository => repository.GetCachedSeriesByAsinAsync("TARGET123", "us"))
+                .ReturnsAsync((SeriesCacheEntry?)null);
+            audiobookRepository
+                .Setup(repository => repository.GetCachedSeriesByNameAsync("Mistborn", "us"))
+                .ReturnsAsync(new SeriesCacheEntry
+                {
+                    SeriesName = "Mistborn",
+                    SeriesNameNormalized = "mistborn",
+                    SeriesAsin = "OTHER123",
+                    Region = "us",
+                    CatalogBooks = new List<CachedSeriesCatalogBook>
+                    {
+                        new() { Asin = "OLD1", Title = "Other Catalog Book" }
+                    }
+                });
+            audible
+                .Setup(service => service.GetSeriesByAsinAsync("TARGET123", "us"))
+                .ReturnsAsync(new SeriesLookupItem
+                {
+                    Asin = "TARGET123",
+                    Name = "Mistborn"
+                });
+            audible
+                .Setup(service => service.GetTypedBooksBySeriesAsinAsync("TARGET123", "us"))
+                .ReturnsAsync(new List<AudibleSearchResult>
+                {
+                    new() { Asin = "NEW1", Title = "Selected Catalog Book" }
+                });
+
+            var service = new SeriesCatalogService(
+                audible.Object,
+                audiobookRepository.Object,
+                logger.Object);
+
+            var result = await service.GetCatalogByAsinAsync(
+                "TARGET123",
+                "Mistborn",
+                "us",
+                forceRefresh: true);
+
+            Assert.NotNull(result);
+            Assert.Equal("TARGET123", result!.Series.Asin);
+            Assert.Equal("Selected Catalog Book", Assert.Single(result.Books).Title);
+            audiobookRepository.Verify(
+                repository => repository.UpsertCachedSeriesAsync(It.IsAny<SeriesCacheEntry>()),
+                Times.Never);
+        }
+
+        [Fact]
         public async Task GetCatalogAsync_ForceRefresh_BypassesPersistedCatalogCache_AndPersistsFreshBooks()
         {
             using var httpClientForAudible = new HttpClient();

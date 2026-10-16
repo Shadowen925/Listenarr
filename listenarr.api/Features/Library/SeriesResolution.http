@@ -1,0 +1,29 @@
+@baseUrl = http://localhost:4545/api/v1
+@seriesId = abs:replace-with-audiobookshelf-series-id
+@seriesAsin = replace-with-audible-series-asin
+
+### Preview every unresolved Audiobookshelf/imported series
+GET {{baseUrl}}/series/resolution/preview?region=us
+
+### Preview one imported series by its stable Listenarr series ID
+GET {{baseUrl}}/series/resolution/preview?seriesId={{seriesId}}&region=us
+
+### Merge memberships after reviewing and confirming a preview candidate
+POST {{baseUrl}}/series/resolution/merge
+Content-Type: application/json
+
+{
+  "seriesId": "{{seriesId}}",
+  "candidateAsin": "{{seriesAsin}}",
+  "region": "us"
+}
+
+### Refresh a selected Audible series catalog by its ASIN
+POST {{baseUrl}}/series/resolution/catalog/refresh
+Content-Type: application/json
+
+{
+  "asin": "{{seriesAsin}}",
+  "name": "Dungeon Crawler Carl",
+  "region": "us"
+}

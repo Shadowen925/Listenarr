@@ -19,7 +19,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Application.Audiobooks.Catalog
 {
-    public class SeriesCatalogService : ISeriesCatalogService
+    public partial class SeriesCatalogService : ISeriesCatalogService
     {
         private static readonly Dictionary<string, string> LanguageAliases = new(StringComparer.OrdinalIgnoreCase)
         {

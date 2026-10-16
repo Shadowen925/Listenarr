@@ -9,6 +9,7 @@
  */
 using Listenarr.Application.Audiobooks.Deletion;
 using Listenarr.Application.Audiobooks.RootFolders;
+using Listenarr.Application.Audiobooks.SeriesResolution;
 using Listenarr.Infrastructure.Library.Realtime;
 using Listenarr.Infrastructure.Persistence;
 using Listenarr.Infrastructure.Persistence.Repositories;
@@ -63,6 +64,7 @@ internal static class LibraryRegistrationExtensions
             serviceProvider.GetRequiredService<MoveSourceManifestService>());
         services.AddScoped<IAuthorCatalogService, AuthorCatalogService>();
         services.AddScoped<ISeriesCatalogService, SeriesCatalogService>();
+        services.AddScoped<IAudiobookSeriesResolutionService, AudiobookSeriesResolutionService>();
         services.AddScoped<ILibraryDestinationMutationGuard, LibraryDestinationMutationGuard>();
         services.AddScoped<ILibraryAddService, LibraryAddService>();
         services.AddScoped<IAudiobookFilesystemDeleteService, AudiobookFilesystemDeleteService>();

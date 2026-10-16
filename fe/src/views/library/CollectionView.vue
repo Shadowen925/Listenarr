@@ -314,6 +314,24 @@
               <component v-else :is="isCurrentSeriesMonitored ? PhEye : PhPlus" />
               {{ isCurrentSeriesMonitored ? 'Monitoring Series' : 'Monitor Series' }}
             </button>
+            <button
+              class="toolbar-btn"
+              @click="showSeriesResolutionDialog = true"
+              title="Resolve this imported series to an Audible catalog"
+            >
+              Resolve Series Metadata
+            </button>
+          </div>
+        </div>
+        <div v-else-if="isSeriesCollection" class="series-resolution-control">
+          <div class="author-monitoring-actions">
+            <button
+              class="toolbar-btn"
+              @click="showSeriesResolutionDialog = true"
+              title="Resolve this imported series to an Audible catalog"
+            >
+              Resolve Series Metadata
+            </button>
           </div>
         </div>
         <div class="toolbar-filters">
@@ -760,6 +778,13 @@
       </template>
     </DeleteConfirmationModal>
 
+    <SeriesResolutionDialog
+      v-model="showSeriesResolutionDialog"
+      :series-id="resolutionSeriesId"
+      :region="seriesCatalogRegion"
+      @merged="handleSeriesResolutionMerged"
+    />
+
     <AddLibraryModal
       v-if="pendingAddBook"
       :visible="true"
@@ -807,6 +832,7 @@ import AddLibraryModal from '@/components/domain/audiobook/AddLibraryModal.vue'
 import BulkEditModal from '@/components/domain/collection/BulkEditModal.vue'
 import RenamePreviewModal from '@/components/domain/organize/RenamePreviewModal.vue'
 import DeleteConfirmationModal from '@/components/feedback/DeleteConfirmationModal.vue'
+import SeriesResolutionDialog from '@/components/domain/collection/SeriesResolutionDialog.vue'
 import { showConfirm } from '@/composables/useConfirm'
 import { preparePhysicalDeleteRetry } from '@/composables/useMutationSemanticsConfirmation'
 import { getPlaceholderUrl } from '@/utils/placeholder'
@@ -864,6 +890,7 @@ const downloadsStore = useDownloadsStore()
 const filesystemReadinessStore = useFilesystemReadinessStore()
 const toast = useToast()
 const { getProtectedImageSrc } = useProtectedImages()
+const showSeriesResolutionDialog = ref(false)
 
 const type = computed(() => route.params.type as string)
 const isAuthorCollection = computed(() => type.value === 'author')
@@ -882,6 +909,30 @@ const routeSeriesId = computed(() => {
     if (membership?.seriesAsin?.trim()) return membership.seriesAsin.trim()
   }
   return ''
+})
+const resolutionSeriesId = computed(() => {
+  if (routeSeriesId.value) return routeSeriesId.value
+
+  const requestedName = routeCollectionValue.value.trim().toLocaleLowerCase()
+  const matchingIds = new Set<string>()
+  for (const audiobook of libraryStore.audiobooks) {
+    for (const membership of audiobook.seriesMemberships ?? []) {
+      if (
+        membership.seriesName.trim().toLocaleLowerCase() !== requestedName ||
+        membership.seriesAsin?.trim()
+      ) {
+        continue
+      }
+
+      if (membership.audiobookshelfSeriesId?.trim()) {
+        matchingIds.add(`abs:${membership.audiobookshelfSeriesId.trim()}`)
+      } else if (membership.seriesId?.trim()) {
+        matchingIds.add(membership.seriesId.trim())
+      }
+    }
+  }
+
+  return matchingIds.size === 1 ? matchingIds.values().next().value : undefined
 })
 const isLocalOnlySeries = computed(
   () => isSeriesCollection.value && /^(?:abs|local):/i.test(routeCollectionValue.value),
@@ -2046,6 +2097,12 @@ async function refreshSeriesMetadata() {
   }
 }
 
+async function handleSeriesResolutionMerged() {
+  await libraryStore.fetchLibrary()
+  await loadSeriesCatalog(true)
+  await loadSeriesLookup(routeSeriesId.value, true)
+}
+
 const goBack = () => {
   router.back()
 }
@@ -3058,6 +3115,11 @@ defineExpose({
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.series-resolution-control {
+  display: inline-flex;
+  align-items: center;
 }
 
 .author-monitoring-context {
