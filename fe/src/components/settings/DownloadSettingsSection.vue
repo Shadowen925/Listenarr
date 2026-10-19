@@ -77,6 +77,25 @@
       </FormRow>
 
       <FormRow
+        label="Automatic Search Interval (hours)"
+        help="Minimum time between automatic searches for a monitored audiobook, including retries after temporary search failures (1-168 hours)."
+      >
+        <input
+          :value="settings.automaticSearchIntervalHours ?? 6"
+          @input="
+            (e) =>
+              updateField(
+                'automaticSearchIntervalHours',
+                Number((e.target as HTMLInputElement).value || 6),
+              )
+          "
+          type="number"
+          min="1"
+          max="168"
+        />
+      </FormRow>
+
+      <FormRow
         label="Download Completion Stability (seconds)"
         help="How long (seconds) a download must be seen as complete on the client before finalization begins. Increase for clients that post-process/extract after completion."
       >

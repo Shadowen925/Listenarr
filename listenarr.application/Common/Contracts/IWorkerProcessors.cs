@@ -77,6 +77,7 @@ namespace Listenarr.Application.Common.Contracts
     public interface IAutomaticSearchProcessor
     {
         Task RunCycleAsync(CancellationToken cancellationToken);
+        Task SearchAudiobookAsync(int audiobookId, CancellationToken cancellationToken);
     }
 
     public interface IAuthorMonitoringProcessor

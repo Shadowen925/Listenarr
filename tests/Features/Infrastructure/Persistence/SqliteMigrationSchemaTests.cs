@@ -48,6 +48,8 @@ public class SqliteMigrationSchemaTests : BaseTests
         "20261016035008_AddDownloadAuditAndRejections";
     private const string AudiobookshelfSeriesIdentityMigrationId =
         "20261016161253_AddAudiobookshelfSeriesIdentity";
+    private const string AutomaticSearchIntervalMigrationId =
+        "20261019160740_AddAutomaticSearchInterval";
     private const string AudiobookshelfIntegrationMigrationId =
         "20261015190028_AddAudiobookshelfIntegration";
 
@@ -211,7 +213,8 @@ public class SqliteMigrationSchemaTests : BaseTests
                 AudiobookshelfIntegrationMigrationId,
                 StalledDownloadSettingsMigrationId,
                 DownloadAuditMigrationId,
-                AudiobookshelfSeriesIdentityMigrationId
+                AudiobookshelfSeriesIdentityMigrationId,
+                AutomaticSearchIntervalMigrationId
             ],
             postCanary);
         Assert.Contains("20251124102000_AddMoveJobSourcePath", applied);

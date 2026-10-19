@@ -237,24 +237,21 @@ namespace Listenarr.Infrastructure.Downloads.Processing
 
                 QueueItem queueItem;
                 List<string> files;
+                List<string> resolvedSourceFiles;
                 try
                 {
-                    var downloadItemService = scope.ServiceProvider.GetRequiredService<IDownloadItemService>();
                     // External client DownloadPath may be stale or missing. Client-specific
                     // import resolvers own recovery from queue/history before the processor
                     // decides the source is unavailable.
-                    queueItem = await downloadItemService.GetImportItemAsync(download, cancellationToken);
-                    if (queueItem?.SourceFiles == null)
-                    {
-                        await ScheduleRetryAsync(job, downloadProcessingJobService, historyRepository, download, audiobook,
-                            correlationId, isDirectDownload
-                                ? "Unable to resolve the local direct-download file"
-                                : "Unable to fetch the download from the download client", cancellationToken);
-                        return;
-                    }
-
-                    job.AddLogEntry($"Resolved {queueItem.SourceFiles.Count} file(s) for import");
-                    files = [.. queueItem.SourceFiles.Where(File.Exists)];
+                    var resolvedImportItem = await ResolveImportItemAsync(
+                        scope.ServiceProvider,
+                        download,
+                        isDirectDownload,
+                        cancellationToken);
+                    queueItem = resolvedImportItem.Item;
+                    resolvedSourceFiles = resolvedImportItem.SourceFiles;
+                    job.AddLogEntry($"Resolved {resolvedSourceFiles.Count} file(s) for import");
+                    files = [.. resolvedSourceFiles.Where(File.Exists)];
                     job.AddLogEntry($"{files.Count} file(s) remaining after checking which ones are effectively on disk");
                 }
                 catch (DownloadProcessingException exception)
@@ -264,7 +261,7 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                     return;
                 }
 
-                if (files.Count == 0 || files.Count != queueItem.SourceFiles.Count)
+                if (files.Count == 0 || files.Count != resolvedSourceFiles.Count)
                 {
                     var reason = files.Count == 0
                         ? "No importable files found"

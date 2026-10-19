@@ -29,6 +29,7 @@ namespace Listenarr.Tests.Mocks
         public bool RemoveResult { get; set; }
         public bool? LastRemoveDeleteFiles { get; private set; }
         public bool MarkImportedResult { get; set; } = true;
+        public Exception? QueueItemException { get; set; }
         private readonly Dictionary<string, int> MethodCalls = [];
 
         public Task<(bool Success, string Message)> TestConnectionAsync(DownloadClientConfiguration client, CancellationToken ct = default)
@@ -80,6 +81,10 @@ namespace Listenarr.Tests.Mocks
         public Task<QueueItem> GetQueueItemAsync(DownloadClientConfiguration client, Download download, QueueItem queueItem, CancellationToken ct = default)
         {
             RegisterMethodCall(nameof(GetQueueItemAsync));
+            if (QueueItemException != null)
+            {
+                throw QueueItemException;
+            }
 
             queueItem.SourceFiles = SourceFiles;
             queueItem.LocalPath = download.DownloadPath;

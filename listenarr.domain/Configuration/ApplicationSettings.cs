@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Listenarr.Domain.Common;
 
@@ -243,6 +244,13 @@ namespace Listenarr.Domain.Configuration
         public string? DiscordBotAvatar { get; set; }
 
         // Search settings
+        /// <summary>
+        /// Minimum hours between automatic searches for a monitored audiobook, including retries
+        /// after a transient indexer/search failure.
+        /// </summary>
+        [Range(1, 168)]
+        public int AutomaticSearchIntervalHours { get; set; } = 6;
+
         /// <summary>
         /// Enable searching Amazon as part of intelligent searches.
         /// </summary>

@@ -195,6 +195,21 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
         }
 
         [Fact]
+        public async Task GetQueueAsync_Forbidden_IdentifiesHostRestrictionAndProxyChecks()
+        {
+            sabnzbdApiMock.QueueStatusCode = HttpStatusCode.Forbidden;
+            var adapter = MockUtils.CreateSabnzbdAdapter(_provider);
+
+            var exception = await Assert.ThrowsAsync<DownloadClientAdapterPollingException>(
+                () => adapter.GetQueueAsync(_client, ["tracked-nzo-id"]));
+
+            Assert.Contains("HTTP 403", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("host restrictions", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("reverse-proxy", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secret", exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task GetQueueAsync_WithMissingTrackedItem_Throws_WhenHistoryFails()
         {
             sabnzbdApiMock.HistoryStatusCode = HttpStatusCode.InternalServerError;

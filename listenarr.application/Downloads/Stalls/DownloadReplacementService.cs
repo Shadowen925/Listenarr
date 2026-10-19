@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using Listenarr.Application.Search.Matching;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Application.Downloads.Stalls
@@ -97,7 +98,16 @@ namespace Listenarr.Application.Downloads.Stalls
                 }
 
                 var excluded = await GetExcludedReleasesAsync(audiobookId, download, ct);
-                var results = await searchService.SearchAsync(DownloadSearchQueryBuilder.Build(audiobook), isAutomaticSearch: true);
+                var searchQuery = DownloadSearchQueryBuilder.Build(audiobook);
+                var results = await searchService.SearchAsync(searchQuery, isAutomaticSearch: true);
+                results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesAsin(audiobook, result));
+                if (results.Count == 0
+                    && !string.IsNullOrWhiteSpace(audiobook.Asin)
+                    && !string.Equals(searchQuery, audiobook.Asin, StringComparison.OrdinalIgnoreCase))
+                {
+                    results = await searchService.SearchAsync(audiobook.Asin.Trim(), isAutomaticSearch: true);
+                    results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesAsin(audiobook, result));
+                }
                 var scored = results.Count == 0 ? [] : await qualityProfileService.ScoreSearchResults(results, audiobook.QualityProfile);
                 var best = scored
                     .Where(s => !s.IsRejected && !excluded.Matches(s.SearchResult))
@@ -380,17 +390,15 @@ namespace Listenarr.Application.Downloads.Stalls
             }
         }
 
-        private async Task<ExcludedReleases> GetExcludedReleasesAsync(int audiobookId, Download current, CancellationToken ct)
+        private async Task<ReleaseRejectionSet> GetExcludedReleasesAsync(int audiobookId, Download current, CancellationToken ct)
         {
-            var excluded = new ExcludedReleases();
+            var excluded = new ReleaseRejectionSet();
             foreach (var rejection in await rejections.ListAsync(audiobookId, 1000, ct))
             {
                 excluded.AddKey(rejection.ReleaseKey);
             }
 
-            excluded.Add(current.GetMetadataString("Replacement.ReleaseId"), current.Title);
-            excluded.AddHash(current.GetExternalId());
-            excluded.AddHash(current.GetMetadataString("TorrentHash"));
+            excluded.AddDownload(current);
             foreach (var previous in await downloadRepository.GetByAudiobookIdAsync(audiobookId))
             {
                 var replaced = previous.GetMetadataString(StallMetadataKeys.ReplacementState) != null
@@ -398,57 +406,11 @@ namespace Listenarr.Application.Downloads.Stalls
                     || previous.GetMetadataString(StallMetadataKeys.Blocklisted) != null;
                 if (replaced)
                 {
-                    excluded.Add(previous.GetMetadataString("Replacement.ReleaseId"), previous.Title);
-                    excluded.AddHash(previous.GetExternalId());
-                    excluded.AddHash(previous.GetMetadataString("TorrentHash"));
+                    excluded.AddDownload(previous);
                 }
             }
 
             return excluded;
-        }
-
-        private sealed class ExcludedReleases
-        {
-            private readonly HashSet<string> _ids = new(StringComparer.OrdinalIgnoreCase);
-            private readonly HashSet<string> _titles = new(StringComparer.OrdinalIgnoreCase);
-            private readonly HashSet<string> _keys = new(StringComparer.Ordinal);
-
-            public void Add(string? id, string? title)
-            {
-                if (!string.IsNullOrWhiteSpace(id)) _ids.Add(id);
-                if (!string.IsNullOrWhiteSpace(title)) _titles.Add(title.Trim());
-            }
-
-            public void AddKey(string key) => _keys.Add(key);
-            public void AddHash(string? hash)
-            {
-                var key = ReleaseRejection.HashKey(hash);
-                if (key.Length > 0)
-                {
-                    _keys.Add(key);
-                }
-            }
-
-            public bool Matches(SearchResult result)
-            {
-                var id = result.Id;
-                var title = result.Title;
-                var magnetHash = TryReadMagnetHash(result.MagnetLink);
-                return (!string.IsNullOrWhiteSpace(id) && (_ids.Contains(id) || _keys.Contains(ReleaseRejection.IdKey(id)) || _keys.Contains(ReleaseRejection.HashKey(id))))
-                    || (!string.IsNullOrWhiteSpace(title) && (_titles.Contains(title.Trim()) || _keys.Contains(ReleaseRejection.TitleKey(title))))
-                    || (!string.IsNullOrWhiteSpace(magnetHash) && _keys.Contains(ReleaseRejection.HashKey(magnetHash)));
-            }
-
-            private static string? TryReadMagnetHash(string? magnet)
-            {
-                if (string.IsNullOrWhiteSpace(magnet))
-                {
-                    return null;
-                }
-
-                var match = System.Text.RegularExpressions.Regex.Match(magnet, @"btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})");
-                return match.Success ? match.Groups[1].Value : null;
-            }
         }
     }
 }

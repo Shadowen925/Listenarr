@@ -27,6 +27,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Submission
         [InlineData("qbittorrent", "Torrent", true)]
         [InlineData("transmission", "Torrent", false)]
         [InlineData("transmission", "Torrent", true)]
+        [InlineData("deluge", "Torrent", false)]
+        [InlineData("deluge", "Torrent", true)]
         [InlineData("sabnzbd", "Usenet", false)]
         [InlineData("sabnzbd", "Usenet", true)]
         [InlineData("nzbget", "Usenet", false)]

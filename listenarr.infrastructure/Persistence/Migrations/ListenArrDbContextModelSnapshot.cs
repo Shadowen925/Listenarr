@@ -1842,6 +1842,11 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("AutomaticSearchIntervalHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(6);
+
                     b.Property<int>("CompletedFileAction")
                         .HasColumnType("INTEGER");
 

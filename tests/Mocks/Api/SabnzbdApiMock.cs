@@ -12,6 +12,7 @@ namespace Listenarr.Tests.Mocks.Api
 
         public string contentPath = FileUtils.GetAbsolutePath("completed", "Book.m4b");
         public System.Net.HttpStatusCode HistoryStatusCode { get; set; } = System.Net.HttpStatusCode.OK;
+        public System.Net.HttpStatusCode QueueStatusCode { get; set; } = System.Net.HttpStatusCode.OK;
         public string? HistoryResponseOverride { get; set; }
         public List<Uri> RemovalRequests { get; } = [];
 
@@ -65,6 +66,11 @@ namespace Listenarr.Tests.Mocks.Api
 
         public async Task<HttpResponseMessage> GetQueue(HttpRequestMessage request, CancellationToken ct)
         {
+            if (QueueStatusCode != System.Net.HttpStatusCode.OK)
+            {
+                return new HttpResponseMessage(QueueStatusCode);
+            }
+
             var response = """
             {
                 "queue": {

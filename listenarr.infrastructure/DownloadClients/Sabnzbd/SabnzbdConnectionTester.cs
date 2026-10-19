@@ -7,7 +7,6 @@
  * by the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
-using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
@@ -38,17 +37,10 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 var resp = await http.GetAsync(url, ct);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-                    {
-                        return (false, "SABnzbd: API key invalid or unauthorized");
-                    }
-
-                    if (resp.StatusCode == HttpStatusCode.NotFound)
-                    {
-                        return (false, "SABnzbd: host or endpoint not found (check host/port)");
-                    }
-
-                    return (false, $"SABnzbd: returned {resp.StatusCode}");
+                    return (false, SabnzbdRequestBuilder.DescribeHttpFailure(
+                        resp.StatusCode,
+                        "connection test",
+                        client.Name ?? client.Id));
                 }
 
                 return (true, "SABnzbd: connected");

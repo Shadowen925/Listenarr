@@ -45,6 +45,7 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
         public void Configure(EntityTypeBuilder<ApplicationSettings> builder)
         {
             builder.Property(e => e.Version).IsConcurrencyToken();
+            builder.Property(e => e.AutomaticSearchIntervalHours).HasDefaultValue(6);
             // AllowedFileExtensions stored as pipe-delimited list
             builder.Property(e => e.AllowedFileExtensions)
                 .HasConversion(

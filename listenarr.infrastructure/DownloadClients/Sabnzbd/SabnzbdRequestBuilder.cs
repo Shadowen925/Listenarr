@@ -7,12 +7,29 @@
  * by the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
-
+using System.Net;
 
 namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
 {
     internal sealed class SabnzbdRequestBuilder
     {
+        public static string DescribeHttpFailure(HttpStatusCode statusCode, string operation, string clientName)
+        {
+            var safeClientName = LogRedaction.SanitizeText(clientName);
+            var context = $"SABnzbd {operation} failed with HTTP {(int)statusCode} for client {safeClientName}.";
+
+            return statusCode switch
+            {
+                HttpStatusCode.Unauthorized =>
+                    $"{context} Authentication was rejected; verify the API key and any configured HTTP authentication.",
+                HttpStatusCode.Forbidden =>
+                    $"{context} Access was forbidden; verify API-key access, SABnzbd host restrictions, and reverse-proxy access rules.",
+                HttpStatusCode.NotFound =>
+                    $"{context} Check the host, port, and configured URL path.",
+                _ => context
+            };
+        }
+
         public SabnzbdRequestContext CreateContext(DownloadClientConfiguration client)
         {
             var baseUrl = DownloadClientUriBuilder.BuildUri(client, "/api").ToString();

@@ -67,8 +67,11 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 var response = await http.GetAsync(requestUrl, ct);
                 if (!response.IsSuccessStatusCode)
                 {
-                    var message = $"SABnzbd queue request failed with status {response.StatusCode} for client {LogRedaction.SanitizeText(client.Name ?? client.Id)}.";
-                    logger.LogWarning("SABnzbd queue request failed with status {Status}", response.StatusCode);
+                    var message = SabnzbdRequestBuilder.DescribeHttpFailure(
+                        response.StatusCode,
+                        "queue request",
+                        client.Name ?? client.Id);
+                    logger.LogWarning("{Message}", message);
                     if (isMonitorPoll)
                     {
                         throw new DownloadClientAdapterPollingException(message);

@@ -34,6 +34,7 @@ namespace Listenarr.Api.Features.Library
         private readonly ILibraryDestinationMutationGuard _destinationMutationGuard;
         private readonly IFilesystemMutationCoordinator _mutationCoordinator;
         private readonly ILogger<LibraryAddWorkflow> _logger;
+        private readonly IAutomaticSearchProcessor? _automaticSearchProcessor;
 
         public LibraryAddWorkflow(
             IAudiobookRepository repo,
@@ -44,7 +45,8 @@ namespace Listenarr.Api.Features.Library
             IFilesystemMutationCoordinator mutationCoordinator,
             ILogger<LibraryAddWorkflow> logger,
             INotificationService? notificationService = null,
-            ILibraryAddService? libraryAddService = null)
+            ILibraryAddService? libraryAddService = null,
+            IAutomaticSearchProcessor? automaticSearchProcessor = null)
         {
             _repo = repo;
             _imageCacheService = imageCacheService;
@@ -56,6 +58,7 @@ namespace Listenarr.Api.Features.Library
             _logger = logger;
             _notificationService = notificationService;
             _libraryAddService = libraryAddService;
+            _automaticSearchProcessor = automaticSearchProcessor;
         }
 
         public Task<IActionResult> AddAsync(
@@ -95,6 +98,31 @@ namespace Listenarr.Api.Features.Library
             if (result.AlreadyExists)
             {
                 return new ConflictObjectResult(new { message = result.Message, audiobook = result.Audiobook });
+            }
+
+            if (result.Added &&
+                result.Audiobook != null &&
+                request.Monitored &&
+                request.AutoSearch &&
+                _automaticSearchProcessor != null)
+            {
+                try
+                {
+                    await _automaticSearchProcessor.SearchAudiobookAsync(
+                        result.Audiobook.Id,
+                        cancellationToken);
+                }
+                catch (Exception ex) when (Listenarr.Application.Common.WorkerExceptionClassifier.IsNonFatal(ex))
+                {
+                    _logger.LogError(
+                        ex,
+                        "Immediate automatic search failed for newly added audiobook {AudiobookId}; the periodic search will retry it",
+                        result.Audiobook.Id);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
             }
 
             return new OkObjectResult(new { message = result.Message, audiobook = result.Audiobook });

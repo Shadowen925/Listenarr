@@ -476,6 +476,7 @@ export interface ApplicationSettings {
   maxConcurrentDownloads: number
   unmatchedScanConcurrency?: number
   pollingIntervalSeconds?: number
+  automaticSearchIntervalHours?: number
   // How many seconds a download must be observed as complete by the client before finalization begins
   downloadCompletionStabilitySeconds?: number
   stalledHandlingEnabled?: boolean | null

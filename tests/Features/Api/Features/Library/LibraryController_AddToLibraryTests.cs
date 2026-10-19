@@ -121,6 +121,32 @@ namespace Listenarr.Tests.Features.Api.Features.Library
         }
 
         [Fact]
+        public async Task AddToLibrary_WhenAutoSearchEnabled_TriggersImmediateSearchForCreatedAudiobook()
+        {
+            var automaticSearchProcessor = new Mock<IAutomaticSearchProcessor>();
+            await ReinitializeAsync(builder => builder
+                .WithSingleton<IAutomaticSearchProcessor>(automaticSearchProcessor.Object));
+
+            var result = await _provider.GetRequiredService<LibraryController>().AddToLibrary(
+                new LibraryController.AddToLibraryRequest
+                {
+                    Metadata = new AudibleBookMetadata
+                    {
+                        Title = "Immediate Search",
+                        Author = "Author"
+                    },
+                    Monitored = true,
+                    AutoSearch = true
+                });
+
+            Assert.IsType<OkObjectResult>(result);
+            var audiobook = Assert.Single(await _audiobookRepository.GetAllAsync());
+            automaticSearchProcessor.Verify(
+                processor => processor.SearchAudiobookAsync(audiobook.Id, It.IsAny<CancellationToken>()),
+                Times.Once);
+        }
+
+        [Fact]
         public async Task AddToLibrary_ConcurrentIdentifierlessSameDestination_CommitsExactlyOnce()
         {
             var destination = Path.Join(tempRoot, "Identifierless", "Book");

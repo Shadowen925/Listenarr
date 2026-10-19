@@ -249,6 +249,115 @@ namespace Listenarr.Tests.Features.Api.Services
         }
 
         [Fact]
+        public async Task AutomaticSearchProcessor_UsesConfiguredIntervalForDueSearches()
+        {
+            var settings = new ApplicationSettings
+            {
+                AutomaticSearchIntervalHours = 3
+            };
+            var configurationService = new Mock<IConfigurationService>();
+            configurationService
+                .Setup(service => service.GetApplicationSettingsAsync())
+                .ReturnsAsync(settings);
+
+            DateTime? cutoff = null;
+            var audiobookRepository = new Mock<IAudiobookRepository>();
+            audiobookRepository
+                .Setup(r => r.GetMonitoredAudiobooksForSearchAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+                .Callback<DateTime, CancellationToken>((value, _) => cutoff = value)
+                .ReturnsAsync([]);
+            _services.AddSingleton(configurationService.Object);
+            _services.AddSingleton(audiobookRepository.Object);
+            Init();
+
+            var processor = new AutomaticSearchProcessor(
+                _provider.GetRequiredService<ILogger<AutomaticSearchProcessor>>(),
+                _provider.GetRequiredService<IServiceScopeFactory>());
+            var before = DateTime.UtcNow;
+
+            await processor.RunCycleAsync(CancellationToken.None);
+
+            Assert.NotNull(cutoff);
+            Assert.InRange((before.AddHours(-3) - cutoff.Value).Duration(), TimeSpan.Zero, TimeSpan.FromSeconds(2));
+        }
+
+        [Fact]
+        public async Task AutomaticSearchProcessor_NoReleases_RecordsSearchTimeForPeriodicRetry()
+        {
+            var audiobook = new Audiobook
+            {
+                Id = 37,
+                Title = "Unavailable Book",
+                Monitored = true,
+                QualityProfile = new QualityProfile()
+            };
+            var audiobookRepository = new Mock<IAudiobookRepository>();
+            audiobookRepository
+                .Setup(repository => repository.GetMonitoredAudiobooksForSearchAsync(
+                    It.IsAny<DateTime>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([audiobook]);
+            var downloadRepository = new Mock<IDownloadRepository>();
+            downloadRepository
+                .Setup(repository => repository.GetByAudiobookIdAsync(
+                    audiobook.Id,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            var fileRepository = new Mock<IAudiobookFileRepository>();
+            fileRepository
+                .Setup(repository => repository.GetByAudiobookIdAsync(
+                    audiobook.Id,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            var searchService = new Mock<ISearchService>();
+            searchService
+                .Setup(service => service.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string?>(),
+                    It.IsAny<List<string>?>(),
+                    It.IsAny<SearchSortBy>(),
+                    It.IsAny<SearchSortDirection>(),
+                    true))
+                .ReturnsAsync([]);
+            var rejections = new Mock<IReleaseRejectionRepository>();
+            rejections
+                .Setup(repository => repository.ListAsync(
+                    audiobook.Id,
+                    1000,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            var configurationService = new Mock<IConfigurationService>();
+            configurationService
+                .Setup(service => service.GetApplicationSettingsAsync())
+                .ReturnsAsync(new ApplicationSettings { AutomaticSearchIntervalHours = 3 });
+
+            _services.AddSingleton(audiobookRepository.Object);
+            _services.AddSingleton(downloadRepository.Object);
+            _services.AddSingleton(fileRepository.Object);
+            _services.AddSingleton(searchService.Object);
+            _services.AddSingleton(rejections.Object);
+            _services.AddSingleton(configurationService.Object);
+            _services.AddSingleton(Mock.Of<IDownloadService>());
+            Init();
+
+            var processor = new AutomaticSearchProcessor(
+                _provider.GetRequiredService<ILogger<AutomaticSearchProcessor>>(),
+                _provider.GetRequiredService<IServiceScopeFactory>());
+
+            await processor.RunCycleAsync(CancellationToken.None);
+
+            searchService.Verify(service => service.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<SearchSortBy>(),
+                It.IsAny<SearchSortDirection>(),
+                true), Times.Once);
+            Assert.NotNull(audiobook.LastSearchTime);
+            audiobookRepository.Verify(repository => repository.UpdateAsync(audiobook), Times.Once);
+        }
+
+        [Fact]
         public async Task UnmatchedScanProcessor_ProcessJob_CompletesWithUntrackedAudio()
         {
             var root = FileService.GetTempDirectory("unmatched-processor-root");

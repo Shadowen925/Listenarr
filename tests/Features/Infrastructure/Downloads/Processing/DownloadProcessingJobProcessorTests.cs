@@ -111,6 +111,38 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
         }
 
         [Fact]
+        public async Task Import_SourceResolutionFailure_SchedulesRetryWithoutImporting()
+        {
+            downloadClientGatewayMock.QueueItemException =
+                new InvalidOperationException("Remote path mapping is unavailable.");
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithAudiobook(await CreateAudiobook())
+                .WithDownloadClientConfiguration(await CreateDownloadClientConfiguration())
+                .WithPath(FileService.GetTempDirectory("remote-source"))
+                .WithCompletedStatus(at: DateTime.UtcNow)
+                .Build());
+            var job = await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
+                .WithDownload(download)
+                .Build());
+
+            await _provider.GetRequiredService<DownloadProcessingJobProcessor>()
+                .ProcessQueueAsync(CancellationToken.None);
+
+            job = await _downloadProcessingJobRepository.GetByIdAsync(job.Id);
+            Assert.NotNull(job);
+            Assert.Equal(ProcessingJobStatus.Pending, job.Status);
+            Assert.Equal(1, job.RetryCount);
+            Assert.Contains("Remote path mapping is unavailable", job.ErrorMessage);
+            downloadImportServiceMock.Verify(service => service.ImportDownloadFilesAsync(
+                    It.IsAny<Audiobook>(),
+                    It.IsAny<List<string>>(),
+                    It.IsAny<CancellationToken>(),
+                    It.IsAny<DownloadImportOptions?>()),
+                Times.Never);
+            Assert.Equal(0, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.MarkItemAsImportedAsync)));
+        }
+
+        [Fact]
         [Trait("Scenario", "ExternalImportResolverRecoversStaleDownloadPath")]
         public async Task Import_ExternalClientStaleDownloadPath_UsesResolvedSourceFiles()
         {
