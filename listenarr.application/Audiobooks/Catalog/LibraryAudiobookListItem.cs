@@ -36,6 +36,11 @@ namespace Listenarr.Application.Audiobooks.Catalog
         public string? Language { get; set; }
         public int? Runtime { get; set; }
         public string? Edition { get; set; }
+        public string? Version { get; set; }
+        public string ProductionType { get; set; } = nameof(AudiobookProductionType.Standard);
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
+        public bool Abridged { get; set; }
         public string? ImageUrl { get; set; }
         public bool Monitored { get; set; }
         public string? BasePath { get; set; }

@@ -86,6 +86,7 @@ public static class ListenarrWorkflowRegistration
         services.AddScoped<LibraryIdentifierWorkflow>();
         services.AddScoped<LibraryPreviewPathWorkflow>();
         services.AddScoped<LibraryQueryWorkflow>();
+        services.AddScoped<IAutomaticSearchDiagnosticQueryService, AutomaticSearchDiagnosticQueryService>();
         services.AddScoped<LibraryRenameWorkflow>();
         services.AddScoped<SearchResponseMapper>();
         services.AddScoped<ImagePlaceholderResolver>();

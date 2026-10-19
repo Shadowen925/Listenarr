@@ -47,7 +47,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
         }
     }
 
-    public class AutomaticSearchProcessor : IAutomaticSearchProcessor
+    public partial class AutomaticSearchProcessor : IAutomaticSearchProcessor
     {
         private readonly ILogger<AutomaticSearchProcessor> _logger;
         private readonly IServiceScopeFactory _serviceScopeFactory;
@@ -68,130 +68,6 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
         public Task RunCycleAsync(CancellationToken cancellationToken) => PerformAutomaticSearchesAsync(cancellationToken);
 
-        public async Task SearchAudiobookAsync(int audiobookId, CancellationToken cancellationToken)
-        {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var audiobookRepository = scope.ServiceProvider.GetRequiredService<IAudiobookRepository>();
-            var audiobook = await audiobookRepository.GetByIdAsync(audiobookId);
-            if (audiobook == null)
-            {
-                _logger.LogWarning("Cannot immediately search missing audiobook {AudiobookId}", audiobookId);
-                return;
-            }
-
-            if (!audiobook.Monitored)
-            {
-                _logger.LogInformation(
-                    "Skipping immediate search for unmonitored audiobook '{Title}' (ID: {AudiobookId})",
-                    audiobook.Title,
-                    audiobook.Id);
-                return;
-            }
-
-            var downloadRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-            var fileRepository = scope.ServiceProvider.GetRequiredService<IAudiobookFileRepository>();
-            var searchService = scope.ServiceProvider.GetRequiredService<ISearchService>();
-            var qualityProfileService = scope.ServiceProvider.GetRequiredService<IQualityProfileService>();
-            var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
-            var releaseRejections = scope.ServiceProvider.GetRequiredService<IReleaseRejectionRepository>();
-
-            _logger.LogInformation(
-                "Starting immediate automatic search for audiobook '{Title}' (ID: {AudiobookId})",
-                audiobook.Title,
-                audiobook.Id);
-
-            var queued = await ProcessAudiobookAsync(
-                audiobook,
-                searchService,
-                qualityProfileService,
-                downloadService,
-                audiobookRepository,
-                downloadRepository,
-                fileRepository,
-                releaseRejections,
-                cancellationToken);
-
-            audiobook.LastSearchTime = DateTime.UtcNow;
-            await audiobookRepository.UpdateAsync(audiobook);
-            _logger.LogInformation(
-                "Immediate automatic search completed for audiobook '{Title}' (ID: {AudiobookId}); queued {QueuedCount} download(s)",
-                audiobook.Title,
-                audiobook.Id,
-                queued);
-        }
-
-        private async Task PerformAutomaticSearchesAsync(CancellationToken stoppingToken)
-        {
-            _logger.LogInformation("Starting automatic search cycle for monitored audiobooks");
-
-            using var scope = _serviceScopeFactory.CreateScope();
-            var audiobookRepository = scope.ServiceProvider.GetRequiredService<IAudiobookRepository>();
-            var downloadRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-            var fileRepository = scope.ServiceProvider.GetRequiredService<IAudiobookFileRepository>();
-            var searchService = scope.ServiceProvider.GetRequiredService<ISearchService>();
-            var qualityProfileService = scope.ServiceProvider.GetRequiredService<IQualityProfileService>();
-            var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
-            var releaseRejections = scope.ServiceProvider.GetRequiredService<IReleaseRejectionRepository>();
-            var configurationService = scope.ServiceProvider.GetRequiredService<IConfigurationService>();
-            var settings = await configurationService.GetApplicationSettingsAsync();
-            if (settings.AutomaticSearchIntervalHours is < 1 or > 168)
-            {
-                throw new InvalidOperationException(
-                    $"Automatic search interval must be between 1 and 168 hours, but is {settings.AutomaticSearchIntervalHours}.");
-            }
-
-            var cutoffTime = DateTime.UtcNow.AddHours(-settings.AutomaticSearchIntervalHours);
-            var monitoredAudiobooks = await audiobookRepository.GetMonitoredAudiobooksForSearchAsync(cutoffTime, stoppingToken);
-
-            _logger.LogInformation("Found {Count} monitored audiobooks eligible for automatic search", monitoredAudiobooks.Count);
-
-            if (!monitoredAudiobooks.Any())
-            {
-                _logger.LogInformation("No audiobooks require automatic search at this time");
-                return;
-            }
-
-            var processedCount = 0;
-            var downloadsQueued = 0;
-
-            foreach (var audiobook in monitoredAudiobooks)
-            {
-                if (stoppingToken.IsCancellationRequested)
-                    break;
-
-                try
-                {
-                    var downloadsQueuedForBook = await ProcessAudiobookAsync(
-                        audiobook, searchService, qualityProfileService, downloadService, audiobookRepository, downloadRepository, fileRepository, releaseRejections, stoppingToken);
-
-                    downloadsQueued += downloadsQueuedForBook;
-                    processedCount++;
-
-                    // Update last search time
-                    audiobook.LastSearchTime = DateTime.UtcNow;
-                    await audiobookRepository.UpdateAsync(audiobook);
-
-                    _logger.LogInformation("Processed audiobook '{Title}' - queued {QueuedCount} downloads",
-                        audiobook.Title, downloadsQueuedForBook);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (OperationCanceledException ex)
-                {
-                    _logger.LogWarning(ex, "Automatic search processing canceled/timed out for audiobook '{Title}' (ID: {Id})", audiobook.Title, audiobook.Id);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                {
-                    _logger.LogError(ex, "Error processing audiobook '{Title}' (ID: {Id})", audiobook.Title, audiobook.Id);
-                }
-            }
-
-            _logger.LogInformation("Automatic search cycle completed. Processed {ProcessedCount} audiobooks, queued {DownloadsQueued} total downloads",
-                processedCount, downloadsQueued);
-        }
-
         private async Task<int> ProcessAudiobookAsync(
             Audiobook audiobook,
             ISearchService searchService,
@@ -201,6 +77,10 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             IDownloadRepository downloadRepository,
             IAudiobookFileRepository fileRepository,
             IReleaseRejectionRepository releaseRejections,
+            IConfigurationService configurationService,
+            IReadOnlyList<string> indexersQueried,
+            AutomaticSearchTrigger searchTrigger,
+            int retryIntervalHours,
             CancellationToken stoppingToken)
         {
             if (audiobook.QualityProfile == null)
@@ -242,6 +122,8 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             var searchQuery = _resultClassifier.BuildSearchQuery(audiobook);
             _logger.LogInformation("Searching for audiobook '{Title}' with query: {Query}", audiobook.Title, searchQuery);
 
+            var submissionAttempts = new List<AutomaticSearchSubmissionAttempt>();
+            var rejectionReasons = new List<string>();
             // Search for results
             List<SearchResult> searchResults;
             var searchedQuery = searchQuery;
@@ -281,6 +163,16 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             {
                 audiobook.LastSearchTime = DateTime.UtcNow;
                 await audiobookRepository.UpdateAsync(audiobook);
+                await PublishDiagnosticAsync(
+                    audiobook,
+                    searchQuery,
+                    "IndexerFailure",
+                    resultCount: 0,
+                    eligibleCount: 0,
+                    rejectedCount: 0,
+                    searchTrigger,
+                    indexersQueried,
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
                 throw;
             }
             _logger.LogInformation(
@@ -317,6 +209,16 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             if (!searchResults.Any())
             {
                 _logger.LogInformation("No search results found for audiobook '{Title}'", audiobook.Title);
+                await PublishDiagnosticAsync(
+                    audiobook,
+                    searchedQuery,
+                    "NoReleases",
+                    resultCount: 0,
+                    eligibleCount: 0,
+                    rejectedCount: 0,
+                    searchTrigger,
+                    indexersQueried,
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
                 return 0;
             }
 
@@ -332,7 +234,17 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             {
                 rejectedReleases.AddDownload(failedDownload);
             }
+            var releaseRejectionCount = scoredResults.Count(result =>
+                rejectedReleases.Matches(result.SearchResult));
             scoredResults = [.. scoredResults.Where(result => !rejectedReleases.Matches(result.SearchResult))];
+            rejectionReasons.AddRange(scoredResults
+                .Where(result => result.IsRejected)
+                .SelectMany(result => result.RejectionReasons)
+                .Where(reason => !string.IsNullOrWhiteSpace(reason)));
+            if (releaseRejectionCount > 0)
+            {
+                rejectionReasons.Add("PreviouslyRejected");
+            }
 
             // Log all scored results for debugging
             _logger.LogInformation("Scored {Count} search results for audiobook '{Title}':", scoredResults.Count, audiobook.Title);
@@ -355,7 +267,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
                 using var scope2 = _serviceScopeFactory.CreateScope();
                 var hub2 = scope2.ServiceProvider.GetRequiredService<IHubContext<DownloadHub>>();
-                await hub2.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Scored results for '{audiobook.Title}'", details = new { scoredCount = scoredResults.Count, scoredSamples = scoredSummaries }, type = "automatic", audiobookId = audiobook.Id } });
+                await hub2.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Scored results for '{audiobook.Title}'", details = new { query = searchedQuery, resultCount = searchResults.Count, rejectedReleaseCount = releaseRejectionCount, eligibleCount = scoredResults.Count(s => !s.IsRejected), scoredCount = scoredResults.Count, scoredSamples = scoredSummaries }, type = "automatic", audiobookId = audiobook.Id } });
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
@@ -374,68 +286,176 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 }
             }
 
-            var topResult = scoredResults
-                .Where(s => !s.IsRejected) // Only non-rejected results
-                .OrderByDescending(s => s.TotalScore)
-                .FirstOrDefault(); // Pick only the top scoring result
+            var eligibleResults = scoredResults
+                .Where(result => !result.IsRejected)
+                .OrderByDescending(result => result.TotalScore)
+                .Where(result => string.IsNullOrWhiteSpace(bestExistingQuality)
+                    || _qualityEvaluator.IsQualityBetter(
+                        result.SearchResult.Quality,
+                        bestExistingQuality,
+                        audiobook.QualityProfile))
+                .ToList();
 
-            if (topResult == null)
+            if (eligibleResults.Count == 0)
             {
-                _logger.LogInformation("No acceptable search results found for audiobook '{Title}' after quality filtering", audiobook.Title);
+                _logger.LogInformation(
+                    "No eligible release improves existing quality for audiobook '{Title}'",
+                    audiobook.Title);
+                rejectionReasons.Add("NoReleaseImprovesExistingQuality");
+                await PublishDiagnosticAsync(
+                    audiobook,
+                    searchedQuery,
+                    "NoSuitableReleases",
+                    searchResults.Count,
+                    eligibleCount: 0,
+                    rejectedCount: scoredResults.Count(s => s.IsRejected) + releaseRejectionCount,
+                    searchTrigger,
+                    indexersQueried,
+                    rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
                 return 0;
             }
 
-            _logger.LogInformation("Found top result for audiobook '{Title}': {ResultTitle} (Score: {Score}, Quality: {Quality})",
-                audiobook.Title, topResult.SearchResult.Title, topResult.TotalScore, topResult.SearchResult.Quality);
-
-            // Check if the found result is better quality than what we already have
-            if (!string.IsNullOrEmpty(bestExistingQuality))
+            foreach (var scoredResult in eligibleResults)
             {
-                var resultIsBetter = _qualityEvaluator.IsQualityBetter(topResult.SearchResult.Quality, bestExistingQuality, audiobook.QualityProfile);
-                if (!resultIsBetter)
+                stoppingToken.ThrowIfCancellationRequested();
+                var result = scoredResult.SearchResult;
+                result.Score = scoredResult.TotalScore;
+                var isTorrent = _resultClassifier.IsTorrentResult(result);
+                string? clientType = null;
+                try
                 {
-                    _logger.LogInformation("Top result quality '{ResultQuality}' is not better than existing quality '{ExistingQuality}' for audiobook '{Title}', skipping download",
-                        topResult.SearchResult.Quality, bestExistingQuality, audiobook.Title);
-                    return 0;
+                    var clientId = await _downloadClientSelector.GetAppropriateDownloadClientAsync(result, isTorrent);
+                    if (string.IsNullOrWhiteSpace(clientId))
+                    {
+                        submissionAttempts.Add(new AutomaticSearchSubmissionAttempt(
+                            result.Title,
+                            null,
+                            "Failed",
+                            "NoCompatibleClient"));
+                        continue;
+                    }
+
+                    var clientConfiguration = await configurationService.GetDownloadClientConfigurationAsync(clientId);
+                    clientType = clientConfiguration?.Type;
+                    var downloadId = await downloadService.StartDownloadAsync(result, clientId, audiobook.Id);
+                    if (string.IsNullOrWhiteSpace(downloadId))
+                    {
+                        submissionAttempts.Add(new AutomaticSearchSubmissionAttempt(
+                            result.Title,
+                            clientType,
+                            "Skipped",
+                            "DuplicatePrevented"));
+                        await PublishDiagnosticAsync(
+                            audiobook,
+                            searchedQuery,
+                            "DuplicatePrevented",
+                            searchResults.Count,
+                            eligibleCount: eligibleResults.Count,
+                            rejectedCount: scoredResults.Count(s => s.IsRejected) + releaseRejectionCount,
+                            searchTrigger,
+                            indexersQueried,
+                            selectedRelease: result.Title,
+                            rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
+                            submissionAttempts: submissionAttempts,
+                            downloadClient: clientType,
+                            nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                        return 0;
+                    }
+
+                    submissionAttempts.Add(new AutomaticSearchSubmissionAttempt(
+                        result.Title,
+                        clientType,
+                        "Submitted",
+                        null));
+                    _logger.LogInformation(
+                        "Queued download for audiobook '{Title}': {ResultTitle} (Score: {Score})",
+                        audiobook.Title,
+                        result.Title,
+                        scoredResult.TotalScore);
+                    await PublishDiagnosticAsync(
+                        audiobook,
+                        searchedQuery,
+                        "DownloadQueued",
+                        searchResults.Count,
+                        eligibleCount: eligibleResults.Count,
+                        rejectedCount: scoredResults.Count(s => s.IsRejected) + releaseRejectionCount,
+                        searchTrigger,
+                        indexersQueried,
+                        selectedRelease: result.Title,
+                        rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
+                        submissionAttempts: submissionAttempts,
+                        downloadClient: clientType);
+                    return 1;
                 }
-                _logger.LogInformation("Top result quality '{ResultQuality}' is better than existing quality '{ExistingQuality}', proceeding with download",
-                    topResult.SearchResult.Quality, bestExistingQuality);
-            }
-            else
-            {
-                _logger.LogInformation("No existing files for audiobook '{Title}', proceeding with download", audiobook.Title);
-            }
-
-            // Add score to the search result for tracking
-            topResult.SearchResult.Score = topResult.TotalScore;
-
-            // Queue download for the top result
-            var downloadsQueued = 0;
-            try
-            {
-                // Determine appropriate download client for this result
-                var isTorrent = _resultClassifier.IsTorrentResult(topResult.SearchResult);
-                var downloadClientId = await _downloadClientSelector.GetAppropriateDownloadClientAsync(topResult.SearchResult, isTorrent);
-
-                if (string.IsNullOrEmpty(downloadClientId))
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
                 {
-                    _logger.LogWarning("No suitable download client found for result type: {Type}", isTorrent ? "torrent" : "NZB");
-                    return 0;
+                    var failureKind = ex is DownloadClientSubmissionException submissionException
+                        ? submissionException.FailureKind
+                        : DownloadSubmissionFailureKind.ClientUnavailable;
+                    var failureReason = failureKind == DownloadSubmissionFailureKind.ReleaseSpecific
+                        ? "ReleaseSourceRejected"
+                        : "ClientUnavailable";
+                    submissionAttempts.Add(new AutomaticSearchSubmissionAttempt(
+                        result.Title,
+                        clientType,
+                        "Failed",
+                        failureReason));
+                    _logger.LogWarning(
+                        ex,
+                        "Automatic submission attempt failed for audiobook {AudiobookId} and release {ReleaseTitle} through client type {ClientType}",
+                        audiobook.Id,
+                        result.Title,
+                        clientType ?? "unknown");
+
+                    if (failureKind == DownloadSubmissionFailureKind.ReleaseSpecific)
+                    {
+                        var releaseKey = !string.IsNullOrWhiteSpace(result.Id)
+                            ? ReleaseRejection.IdKey(result.Id)
+                            : ReleaseRejection.TitleKey(result.Title);
+                        if (!string.IsNullOrWhiteSpace(releaseKey))
+                        {
+                            await releaseRejections.AddAsync(new ReleaseRejection
+                            {
+                                AudiobookId = audiobook.Id,
+                                ReleaseKey = releaseKey,
+                                ReleaseTitle = result.Title,
+                                Reason = "Automatic submission rejected the release source.",
+                                Source = "AutomaticSearch"
+                            }, stoppingToken);
+                        }
+                    }
                 }
-
-                await downloadService.StartDownloadAsync(topResult.SearchResult, downloadClientId, audiobook.Id);
-                downloadsQueued++;
-
-                _logger.LogInformation("Queued download for audiobook '{Title}': {ResultTitle} (Score: {Score})",
-                    audiobook.Title, topResult.SearchResult.Title, topResult.TotalScore);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+
+            _logger.LogWarning(
+                "All {AttemptCount} eligible release submission attempts failed for audiobook '{Title}'",
+                submissionAttempts.Count,
+                audiobook.Title);
+            await PublishDiagnosticAsync(
+                audiobook,
+                searchedQuery,
+                "AllSubmissionsFailed",
+                searchResults.Count,
+                eligibleCount: eligibleResults.Count,
+                rejectedCount: scoredResults.Count(s => s.IsRejected) + releaseRejectionCount,
+                searchTrigger,
+                indexersQueried,
+                selectedRelease: submissionAttempts.LastOrDefault()?.ReleaseTitle,
+                rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
+                submissionAttempts: submissionAttempts,
+                downloadClient: submissionAttempts.LastOrDefault()?.ClientType,
+                nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+            return 0;
+        }
+
+        private static void ValidateSearchInterval(int intervalHours)
+        {
+            if (intervalHours is < 1 or > 168)
             {
-                _logger.LogError(ex, "Failed to queue download for audiobook '{Title}': {ResultTitle}",
-                    audiobook.Title, topResult.SearchResult.Title);
+                throw new InvalidOperationException(
+                    $"Automatic search interval must be between 1 and 168 hours, but is {intervalHours}.");
             }
-
-            return downloadsQueued;
         }
 
     }

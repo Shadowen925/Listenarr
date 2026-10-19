@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { computed, reactive, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { setDesktopSidebarVisible } from '@/utils/desktopLayoutPreferences'
 
 const deleteOperationsMock = vi.hoisted(() => ({
   operations: [] as Array<{
@@ -220,6 +221,43 @@ describe('App.vue activity badge', () => {
     expect(dropdown.text()).toContain('Verifying source')
     expect(dropdown.text()).toContain('42%')
     expect(dropdown.find('.progress-fill').attributes('style')).toContain('width: 42.4%')
+  })
+
+  it('opens sidebar submenus from the current route only and preserves visibility preference', async () => {
+    setDesktopSidebarVisible(false)
+    const { default: AppComponent } = await import('@/App.vue')
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/audiobooks', name: 'audiobooks', component: { template: '<div />' } },
+        { path: '/settings', name: 'settings', component: { template: '<div />' } },
+        { path: '/downloads', name: 'downloads', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/audiobooks?group=series')
+    await router.isReady()
+
+    wrapper = mount(AppComponent, {
+      global: { stubs: ['RouterLink', 'RouterView'], plugins: [createPinia(), router] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const sidebar = wrapper.find('.sidebar')
+    const [audiobookSubmenu, settingsSubmenu] = wrapper.findAll('.nav-sub')
+    expect(sidebar.classes()).toContain('desktop-collapsed')
+    expect(audiobookSubmenu.classes()).toContain('open')
+    expect(settingsSubmenu.classes()).not.toContain('open')
+
+    await wrapper.find('.sidebar .nav-item').trigger('mouseenter')
+    expect(audiobookSubmenu.classes()).toContain('open')
+    expect(settingsSubmenu.classes()).not.toContain('open')
+
+    await router.push('/settings')
+    await wrapper.vm.$nextTick()
+    expect(audiobookSubmenu.classes()).not.toContain('open')
+    expect(settingsSubmenu.classes()).toContain('open')
+    expect(sidebar.classes()).toContain('desktop-collapsed')
   })
 
   it('updates folder scan progress in one notification without a fake percentage', async () => {

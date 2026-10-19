@@ -348,13 +348,10 @@ namespace Listenarr.Application.Downloads.Submission
             catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
                 await RemoveProvisionalDownloadAsync(downloadId);
-
-                if (exception is DownloadClientSubmissionException)
-                {
-                    throw;
-                }
-
-                throw new DownloadClientSubmissionException("Failed to send the torrent to the download client.", exception);
+                throw new DownloadClientSubmissionException(
+                    "The download client rejected or could not accept the submission.",
+                    exception,
+                    DownloadSubmissionFailureKind.ClientUnavailable);
             }
 
             var downloadToUpdate = await downloadRepository.FindAsync(downloadId);

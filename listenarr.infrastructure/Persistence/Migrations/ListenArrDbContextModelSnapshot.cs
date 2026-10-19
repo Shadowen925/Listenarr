@@ -290,6 +290,12 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("OpenLibraryId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PartNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProductionType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("PublishYear")
                         .HasColumnType("TEXT");
 
@@ -322,6 +328,9 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Title")
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("TotalParts")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Version")
                         .HasColumnType("TEXT");
@@ -2644,6 +2653,63 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.HasIndex("Username");
 
                     b.ToTable("UserSessions");
+                });
+
+            modelBuilder.Entity("Listenarr.Domain.Search.AutomaticSearchDiagnostic", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AudiobookId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DownloadClient")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FinalOutcome")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IndexersQueried")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RejectionReasons")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ResultsReturned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("SearchTimestamp")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SearchTrigger")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SelectedRelease")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubmissionAttempts")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SearchTimestamp");
+
+                    b.HasIndex("AudiobookId", "SearchTimestamp");
+
+                    b.ToTable("AutomaticSearchDiagnostics", (string)null);
                 });
 
             modelBuilder.Entity("Listenarr.Domain.Search.Indexer", b =>

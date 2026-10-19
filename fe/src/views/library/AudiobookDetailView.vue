@@ -109,7 +109,21 @@
         </div>
         <div class="info-section">
           <h1 class="title">{{ safeText(audiobook.title) }}</h1>
-          <div class="subtitle" v-if="audiobook.subtitle">{{ audiobook.subtitle }}</div>
+          <div class="subtitle" v-if="audiobook.subtitle">
+            <button
+              v-if="subtitleSeriesMembership"
+              type="button"
+              class="subtitle-series-link"
+              @click="
+                goToSeriesCollection(
+                  subtitleSeriesMembership.seriesId || subtitleSeriesMembership.seriesAsin,
+                )
+              "
+            >
+              {{ audiobook.subtitle }}
+            </button>
+            <span v-else>{{ audiobook.subtitle }}</span>
+          </div>
 
           <div class="meta-info">
             <span class="runtime" v-if="audiobook.runtime">
@@ -139,6 +153,17 @@
               <PhTag />
               <span>{{ audiobook.abridged ? 'Abridged' : 'Unabridged' }}</span>
             </div>
+            <div class="detail-item" v-if="audiobook.productionType">
+              <PhMusicNotes />
+              <span>{{ productionTypeLabel(audiobook.productionType) }}</span>
+            </div>
+            <div class="detail-item" v-if="audiobook.partNumber">
+              <PhBooks />
+              <span>
+                Part {{ audiobook.partNumber
+                }}<template v-if="audiobook.totalParts"> of {{ audiobook.totalParts }}</template>
+              </span>
+            </div>
           </div>
 
           <div class="status-badges">
@@ -158,9 +183,9 @@
               <PhMusicNotes />
               {{ audiobook.version }}
             </Pill>
-            <Pill variant="default" v-if="audiobook.edition">
+            <Pill variant="default" v-if="displayEdition">
               <PhTag />
-              {{ audiobook.edition }}
+              {{ displayEdition }}
             </Pill>
           </div>
 
@@ -225,6 +250,76 @@
     <div class="tab-content">
       <!-- Details Tab -->
       <div id="details" v-if="activeTab === 'details'" class="details-content">
+        <section class="automatic-search-diagnostics" aria-live="polite">
+          <div class="diagnostics-heading">
+            <h3>Automatic search diagnostics</h3>
+            <button
+              v-if="automaticSearchHistory.length"
+              type="button"
+              class="nav-btn"
+              @click="exportAutomaticSearchDiagnostics"
+            >
+              Export JSON
+            </button>
+          </div>
+          <p v-if="automaticSearchHistoryLoading">Loading search history…</p>
+          <p v-else-if="automaticSearchHistoryError" role="alert">
+            {{ automaticSearchHistoryError }}
+          </p>
+          <p v-else-if="automaticSearchHistory.length === 0">
+            No automatic search history has been recorded yet.
+          </p>
+          <ul v-else class="search-history-list">
+            <li v-for="entry in automaticSearchHistory" :key="entry.id">
+              <time :datetime="entry.searchTimestamp">
+                {{ formatDiagnosticTime(entry.searchTimestamp) }}
+              </time>
+              <strong>{{ entry.searchTrigger }} — {{ entry.finalOutcome }}</strong>
+              <span>
+                {{ entry.resultsReturned }} results; indexers:
+                {{ entry.indexersQueried.join(', ') || 'none recorded' }}
+              </span>
+              <span v-if="entry.selectedRelease">Selected: {{ entry.selectedRelease }}</span>
+              <span v-if="entry.downloadClient">Client: {{ entry.downloadClient }}</span>
+              <span v-if="entry.rejectionReasons.length">
+                Rejections: {{ entry.rejectionReasons.join(', ') }}
+              </span>
+              <span v-for="(attempt, index) in entry.submissionAttempts" :key="index">
+                {{ attempt.outcome }}: {{ attempt.releaseTitle }}
+                <template v-if="attempt.clientType"> via {{ attempt.clientType }}</template>
+                <template v-if="attempt.failureReason"> ({{ attempt.failureReason }})</template>
+              </span>
+              <span v-if="entry.nextRetryAt">
+                Next retry: {{ formatDiagnosticTime(entry.nextRetryAt) }}
+              </span>
+            </li>
+          </ul>
+          <div v-if="automaticSearchEvents.length" class="live-search-diagnostics">
+            <strong>Live updates</strong>
+            <ul>
+              <li
+                v-for="(event, index) in automaticSearchEvents"
+                :key="`${event.receivedAt}-${index}`"
+              >
+                <time :datetime="event.receivedAt">{{
+                  formatDiagnosticTime(event.receivedAt)
+                }}</time>
+                <span>{{ event.message }}</span>
+                <span v-if="typeof event.details?.query === 'string'">
+                  Query: {{ event.details.query }}
+                </span>
+                <span v-if="typeof event.details?.outcome === 'string'">
+                  Outcome: {{ event.details.outcome }}
+                </span>
+                <span v-if="typeof event.details?.resultCount === 'number'">
+                  {{ event.details.resultCount }} releases,
+                  {{ event.details.eligibleCount ?? 0 }} eligible,
+                  {{ event.details.rejectedCount ?? 0 }} rejected
+                </span>
+              </li>
+            </ul>
+          </div>
+        </section>
         <div class="details-grid">
           <div class="detail-card">
             <h3>Author Information</h3>
@@ -693,6 +788,7 @@ import { getPlaceholderUrl } from '@/utils/placeholder'
 import { detectPathKind, joinPaths, isAbsolutePath } from '@/utils/path'
 import { signalRService } from '@/services/signalr'
 import type {
+  AutomaticSearchDiagnosticHistoryItem,
   Audiobook,
   AudiobookExternalIdentifier,
   AudiobookSeriesMembership,
@@ -1102,6 +1198,21 @@ const displaySeriesMemberships = computed<AudiobookSeriesMembership[]>(() => {
   return normalized
 })
 
+const subtitleSeriesMembership = computed(() => {
+  const subtitle = audiobook.value?.subtitle?.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+  if (!subtitle) return undefined
+
+  return displaySeriesMemberships.value.find((membership) => {
+    if (!membership.seriesId && !membership.seriesAsin) return false
+    const name = membership.seriesName.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+    const number = membership.seriesNumber?.trim()
+    return (
+      subtitle === name ||
+      (!!number && (subtitle === `${name} #${number}` || subtitle === `${name} ${number}`))
+    )
+  })
+})
+
 // Utility function to capitalize first letter
 const capitalizeFirst = (str: string | undefined): string => {
   if (!str) return ''
@@ -1282,6 +1393,18 @@ watch(activeTab, async (newTab) => {
 
 let audiobookUpdateUnsub: (() => void) | null = null
 let scanJobUpdateUnsub: (() => void) | null = null
+let searchProgressUnsub: (() => void) | null = null
+const automaticSearchEvents = ref<
+  Array<{ receivedAt: string; message: string; details?: Record<string, unknown> }>
+>([])
+const automaticSearchHistory = ref<AutomaticSearchDiagnosticHistoryItem[]>([])
+const automaticSearchHistoryLoading = ref(false)
+const automaticSearchHistoryError = ref<string | null>(null)
+
+const displayEdition = computed(() => {
+  const edition = audiobook.value?.edition?.trim()
+  return edition && !/^(abridged|unabridged)$/i.test(edition) ? edition : ''
+})
 
 onMounted(async () => {
   syncActiveTabFromRoute()
@@ -1289,6 +1412,24 @@ onMounted(async () => {
 
   await loadAudiobook()
   await loadWeakStorageMissingFiles()
+
+  searchProgressUnsub = signalRService.onSearchProgress((payload) => {
+    if (
+      payload.type !== 'automatic' ||
+      !audiobook.value ||
+      String(payload.audiobookId) !== String(audiobook.value.id)
+    ) {
+      return
+    }
+    automaticSearchEvents.value = [
+      ...automaticSearchEvents.value.slice(-9),
+      {
+        receivedAt: new Date().toISOString(),
+        message: payload.message,
+        details: payload.details,
+      },
+    ]
+  }, true)
 
   // Keep the shared scan notification store current when this detail view is mounted.
   // App.vue also subscribes globally; duplicate updates are monotonic/idempotent in the store.
@@ -1351,6 +1492,9 @@ onUnmounted(() => {
     if (audiobookUpdateUnsub) audiobookUpdateUnsub()
   } catch {}
   try {
+    if (searchProgressUnsub) searchProgressUnsub()
+  } catch {}
+  try {
     if (scanJobUpdateUnsub) scanJobUpdateUnsub()
   } catch {}
 })
@@ -1389,9 +1533,24 @@ async function loadAudiobook() {
 
     if (loadedBook) {
       audiobook.value = loadedBook
+      void loadAutomaticSearchHistory(loadedBook.id)
       await afterLoad()
     } else {
       error.value = 'Audiobook not found'
+    }
+
+    async function loadAutomaticSearchHistory(audiobookId: number) {
+      automaticSearchHistoryLoading.value = true
+      automaticSearchHistoryError.value = null
+      try {
+        automaticSearchHistory.value = await apiService.getAutomaticSearchHistory(audiobookId, 25)
+      } catch (err) {
+        automaticSearchHistoryError.value =
+          err instanceof Error ? err.message : 'Failed to load automatic search history.'
+        logger.warn('Failed to load automatic search history', { audiobookId, error: err })
+      } finally {
+        automaticSearchHistoryLoading.value = false
+      }
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load audiobook'
@@ -1475,6 +1634,57 @@ function goToSeriesCollection(seriesId: string | undefined | null) {
   if (!normalizedSeriesId) return
 
   router.push(`/collection/series/${encodeURIComponent(normalizedSeriesId)}`)
+}
+
+function formatDiagnosticTime(value: string): string {
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString()
+}
+
+function productionTypeLabel(value: Audiobook['productionType']): string {
+  switch (value) {
+    case 'Dramatized':
+      return 'Dramatized adaptation'
+    case 'FullCast':
+      return 'Full-cast production'
+    default:
+      return 'Standard audiobook'
+  }
+}
+
+function exportAutomaticSearchDiagnostics() {
+  const payload = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    audiobook: audiobook.value
+      ? { id: audiobook.value.id, title: audiobook.value.title, asin: audiobook.value.asin }
+      : null,
+    history: automaticSearchHistory.value.map((entry) => ({
+      id: entry.id,
+      searchTimestamp: entry.searchTimestamp,
+      searchTrigger: entry.searchTrigger,
+      indexersQueried: entry.indexersQueried,
+      resultsReturned: entry.resultsReturned,
+      rejectionReasons: entry.rejectionReasons,
+      submissionAttempts: entry.submissionAttempts.map((attempt) => ({
+        releaseTitle: attempt.releaseTitle,
+        clientType: attempt.clientType,
+        outcome: attempt.outcome,
+        failureReason: attempt.failureReason,
+      })),
+      selectedRelease: entry.selectedRelease,
+      downloadClient: entry.downloadClient,
+      finalOutcome: entry.finalOutcome,
+      nextRetryAt: entry.nextRetryAt,
+    })),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `listenarr-automatic-search-${audiobook.value?.id ?? 'unknown'}.json`
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 function goToGenreCollection(genre: string | undefined | null) {
@@ -2323,6 +2533,23 @@ function formatDate(dateString?: string): string {
   margin-bottom: 20px;
 }
 
+.subtitle-series-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(77, 171, 247, 0.55);
+  text-underline-offset: 0.2em;
+}
+
+.subtitle-series-link:hover,
+.subtitle-series-link:focus-visible {
+  color: #4dabf7;
+}
+
 @media (max-width: 768px) {
   .subtitle {
     font-size: 1rem;
@@ -2651,6 +2878,49 @@ function formatDate(dateString?: string): string {
   .tab-content {
     padding: 30px 20px;
   }
+}
+
+.automatic-search-diagnostics {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(77, 171, 247, 0.25);
+  border-radius: 8px;
+  background: rgba(77, 171, 247, 0.05);
+  color: #cbd2d9;
+}
+
+.diagnostics-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.diagnostics-heading h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.automatic-search-diagnostics p {
+  margin: 0.75rem 0 0;
+}
+
+.automatic-search-diagnostics ul {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.automatic-search-diagnostics li {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.automatic-search-diagnostics time {
+  color: #aab3bd;
+  font-size: 0.85rem;
 }
 
 .details-grid {

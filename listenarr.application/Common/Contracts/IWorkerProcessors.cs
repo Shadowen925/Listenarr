@@ -77,7 +77,10 @@ namespace Listenarr.Application.Common.Contracts
     public interface IAutomaticSearchProcessor
     {
         Task RunCycleAsync(CancellationToken cancellationToken);
-        Task SearchAudiobookAsync(int audiobookId, CancellationToken cancellationToken);
+        Task SearchAudiobookAsync(
+            int audiobookId,
+            CancellationToken cancellationToken,
+            AutomaticSearchTrigger trigger = AutomaticSearchTrigger.Immediate);
     }
 
     public interface IAuthorMonitoringProcessor

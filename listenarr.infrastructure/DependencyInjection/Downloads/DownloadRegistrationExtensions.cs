@@ -67,6 +67,7 @@ internal static class DownloadRegistrationExtensions
         services.AddScoped<Listenarr.Application.Downloads.Cleanup.DownloadQueueRemovalService>();
         services.AddScoped<Listenarr.Application.Downloads.Stalls.DownloadReplacementService>();
         services.AddScoped<Listenarr.Application.Downloads.Contracts.Repositories.IReleaseRejectionRepository, Listenarr.Infrastructure.Persistence.Repositories.EfReleaseRejectionRepository>();
+        services.AddScoped<IAutomaticSearchDiagnosticRepository, EfAutomaticSearchDiagnosticRepository>();
         services.AddScoped<Listenarr.Application.Downloads.Contracts.Repositories.IDownloadEventRepository, Listenarr.Infrastructure.Persistence.Repositories.EfDownloadEventRepository>();
         services.AddScoped<Listenarr.Application.Downloads.Stalls.DownloadEventRecorder>();
         services.AddScoped<DownloadQueueCandidateLoader>();

@@ -278,7 +278,6 @@
           'desktop-collapsed': !desktopSidebarVisible,
           'auth-warning-visible': showSecurityWarningBanner,
         }"
-        ref="sidebarRef"
       >
         <nav class="sidebar-nav" @click.capture="onNavCapture">
           <div class="nav-section">
@@ -292,10 +291,8 @@
                   pendingNavPath?.startsWith('/audiobooks') ||
                   pendingNavPath === '/',
               }"
-              @mouseenter="onPrimaryNavMouseEnter('home', 'audiobooks')"
-              @mouseleave="onNavMouseLeave('audiobooks')"
-              @focus="onPrimaryNavFocus('home', 'audiobooks')"
-              @blur="onNavBlur('audiobooks')"
+              @mouseenter="preload('home')"
+              @focus="preload('home')"
               @touchstart.passive="preload('home')"
               @click="onAudiobooksPrimaryNavClick"
             >
@@ -305,14 +302,8 @@
             <!-- Sub-navigation for Audiobooks grouping (stacked under Audiobooks) -->
             <div
               class="nav-sub"
-              @mouseenter="onNavMouseEnter('audiobooks')"
-              @mouseleave="onNavMouseLeave('audiobooks')"
-              @focusin="onNavFocus('audiobooks')"
-              @focusout="onNavBlur('audiobooks')"
               :class="{
                 open:
-                  hoverNav === 'audiobooks' ||
-                  persistentNav === 'audiobooks' ||
                   route.path.startsWith('/audiobooks') ||
                   route.name === 'home' ||
                   route.name === 'audiobooks',
@@ -415,30 +406,16 @@
               to="/settings"
               class="nav-item"
               :class="{ 'router-link-active': pendingNavPath === '/settings' }"
-              @mouseenter="onPrimaryNavMouseEnter('settings', 'settings')"
-              @mouseleave="onNavMouseLeave('settings')"
-              @focus="onPrimaryNavFocus('settings', 'settings')"
-              @blur="onNavBlur('settings')"
+              @mouseenter="preload('settings')"
+              @focus="preload('settings')"
               @touchstart.passive="preload('settings')"
-              @click="onPrimaryNavClick('settings')"
+              @click="closeMobileMenu"
             >
               <PhGear />
               <span>Settings</span>
             </RouterLink>
             <!-- Sub-navigation for Settings tabs -->
-            <div
-              class="nav-sub"
-              @mouseenter="onNavMouseEnter('settings')"
-              @mouseleave="onNavMouseLeave('settings')"
-              @focusin="onNavFocus('settings')"
-              @focusout="onNavBlur('settings')"
-              :class="{
-                open:
-                  hoverNav === 'settings' ||
-                  persistentNav === 'settings' ||
-                  route.path === '/settings',
-              }"
-            >
+            <div class="nav-sub" :class="{ open: route.path === '/settings' }">
               <RouterLink
                 :to="{ path: '/settings', hash: '#rootfolders' }"
                 class="nav-subitem"
@@ -672,90 +649,12 @@ const securityWarningDismissed = ref(false)
 const securityWarningPermanentlyHidden = ref(getSecurityWarningBannerHiddenPreference())
 const desktopSidebarVisible = ref(getDesktopSidebarVisible())
 const desktopSearchVisible = ref(getDesktopSearchVisible())
-// Hover and persistence state for sidebar subnavs
-const hoverNav = ref<string | null>(null)
-const persistentNav = ref<string | null>(null)
 // Optimistic active state: set immediately on click, cleared after navigation resolves
 const pendingNavPath = ref<string | null>(null)
-const hoverTimeout = ref<number | null>(null)
-const HOVER_CLOSE_DELAY = 200
-const sidebarRef = ref<HTMLElement | null>(null)
-const hoverSupported = ref(false)
-const isTouchDevice = ref(false)
-
-function onPrimaryNavMouseEnter(routeName: string, navName: string) {
-  preload(routeName)
-  onNavMouseEnter(navName)
-}
-
-function onPrimaryNavFocus(routeName: string, navName: string) {
-  preload(routeName)
-  onNavFocus(navName)
-}
-
-function onPrimaryNavClick(navName: string) {
-  onNavClick(navName)
-  closeMobileMenu()
-}
 
 onMounted(() => {
-  try {
-    hoverSupported.value = !!(
-      window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches
-    )
-  } catch {
-    hoverSupported.value = false
-  }
-  try {
-    isTouchDevice.value =
-      'ontouchstart' in window ||
-      ((navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints ?? 0) > 0
-  } catch {
-    isTouchDevice.value = false
-  }
-
   refreshSecurityWarningBannerPreference()
 })
-
-function onNavMouseEnter(name: string) {
-  // Only use hover behavior on pointer-capable devices (prevents touch-only devices from triggering)
-  if (!hoverSupported.value) return
-  if (hoverTimeout.value) {
-    clearTimeout(hoverTimeout.value)
-    hoverTimeout.value = null
-  }
-  hoverNav.value = name
-}
-
-function onNavMouseLeave(name: string) {
-  if (!hoverSupported.value) return
-  if (hoverTimeout.value) clearTimeout(hoverTimeout.value)
-  hoverTimeout.value = window.setTimeout(() => {
-    // if this nav is persistently open, keep it open
-    if (persistentNav.value === name) {
-      hoverNav.value = name
-    } else {
-      hoverNav.value = null
-    }
-    hoverTimeout.value = null
-  }, HOVER_CLOSE_DELAY)
-}
-
-function onNavFocus(name: string) {
-  // Focus should open immediately for keyboard users
-  hoverNav.value = name
-}
-
-function onNavBlur(name: string) {
-  // Blur should behave like mouseleave
-  onNavMouseLeave(name)
-}
-
-function onNavClick(name: string) {
-  // Toggle persistent open state
-  persistentNav.value = persistentNav.value === name ? null : name
-  hoverNav.value = persistentNav.value || null
-}
 
 // Capture nav-item clicks at the nav level to set an optimistic active state immediately,
 // before the router guard (which may await async work) resolves.
@@ -765,16 +664,6 @@ function onNavCapture(e: MouseEvent) {
     pendingNavPath.value = new URL(link.href, window.location.origin).pathname
   }
 }
-
-// Close persistent nav when clicking outside sidebar
-useEventListener(document, 'click', (e: MouseEvent) => {
-  const target = e.target as Node
-  if (!sidebarRef.value) return
-  if (!sidebarRef.value.contains(target)) {
-    persistentNav.value = null
-    hoverNav.value = null
-  }
-})
 
 // Version from API
 const version = ref('')
@@ -1336,7 +1225,7 @@ const resetGlobalSearchAndCloseMobileMenu = () => {
 
 const onAudiobooksPrimaryNavClick = () => {
   resetGlobalSearch(false)
-  onPrimaryNavClick('audiobooks')
+  closeMobileMenu()
 }
 
 const onSearchInput = async () => {

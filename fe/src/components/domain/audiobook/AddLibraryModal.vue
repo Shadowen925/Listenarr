@@ -509,7 +509,7 @@ const qualityProfiles = ref<QualityProfile[]>([])
 const options = ref({
   monitored: true,
   qualityProfileId: null as number | null,
-  autoSearch: false,
+  autoSearch: true,
   // editable relative path portion (relative to rootPath)
   relativePath: '' as string | null,
 })
@@ -637,6 +637,9 @@ function cloneMetadata(source: AudibleBookMetadata): AudibleBookMetadata {
     runtime: typeof source.runtime === 'number' ? source.runtime : undefined,
     edition: trimToUndefined(source.edition),
     version: trimToUndefined(source.version),
+    productionType: source.productionType,
+    partNumber: source.partNumber,
+    totalParts: source.totalParts,
     imageUrl: trimToUndefined(source.imageUrl),
     explicit: Boolean(source.explicit),
     abridged: Boolean(source.abridged),
@@ -698,6 +701,9 @@ function buildMetadataPayload(): AudibleBookMetadata {
         : undefined,
     edition: trimToUndefined(source?.edition),
     version: trimToUndefined(source?.version),
+    productionType: source?.productionType,
+    partNumber: source?.partNumber,
+    totalParts: source?.totalParts,
     imageUrl: trimToUndefined(source?.imageUrl),
     explicit: Boolean(source?.explicit),
     abridged: Boolean(source?.abridged),
@@ -902,6 +908,9 @@ interface Audible {
   genres?: AudibleGenre[]
   series?: AudibleSeries[]
   bookFormat?: string
+  productionType?: AudibleBookMetadata['productionType']
+  partNumber?: number
+  totalParts?: number
   version?: string
   isbn?: string
 }
@@ -962,6 +971,9 @@ const mapAudibleToAudible = (
     language: audible?.language || fallbackBook?.language,
     edition: fallbackBook?.edition,
     version: audible?.version || fallbackBook?.version,
+    productionType: audible?.productionType ?? fallbackBook?.productionType,
+    partNumber: audible?.partNumber ?? fallbackBook?.partNumber,
+    totalParts: audible?.totalParts ?? fallbackBook?.totalParts,
     genres: genres.length ? genres : fallbackBook?.genres || [],
     region: audible?.region || fallbackBook?.region,
     series: primaryMembership?.seriesName || fallbackBook?.series,

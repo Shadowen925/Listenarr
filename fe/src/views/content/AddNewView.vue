@@ -353,7 +353,12 @@
         <h2>Audiobook Found</h2>
         <div class="title-results">
           <div class="title-result-card">
-            <div class="result-poster">
+            <button
+              type="button"
+              class="result-poster result-detail-trigger"
+              :aria-label="`View details for ${audibleResult.title}`"
+              @click="addToLibrary(audibleResult)"
+            >
               <img
                 v-if="audibleResult.imageUrl"
                 :src="getAudibleResultImageSrc()"
@@ -372,9 +377,17 @@
                   @error="handleLazyImageError"
                 />
               </span>
-            </div>
+            </button>
             <div class="result-info">
-              <h3>{{ safeText(audibleResult.title) }}</h3>
+              <h3>
+                <button
+                  type="button"
+                  class="result-title-link"
+                  @click="addToLibrary(audibleResult)"
+                >
+                  {{ safeText(audibleResult.title) }}
+                </button>
+              </h3>
               <p class="result-author">
                 by
                 {{
@@ -457,6 +470,18 @@
 
               <!-- Metadata badges -->
               <div class="metadata-badges">
+                <span v-if="audibleResult.edition" class="metadata-badge">
+                  <PhBook />
+                  {{ safeText(audibleResult.edition) }}
+                </span>
+                <span v-if="audibleResult.version" class="metadata-badge">
+                  <PhBook />
+                  {{ safeText(audibleResult.version) }}
+                </span>
+                <span v-if="audibleResult.abridged" class="metadata-badge">
+                  <PhScissors />
+                  Abridged
+                </span>
                 <span v-if="audibleResult.publisher" class="metadata-badge">
                   <PhBuilding />
                   {{ safeText(audibleResult.publisher) }}
@@ -589,7 +614,35 @@
                         addedOpenLibraryIds.has(audibleResult.openLibraryId)))
                   )
                     ? 'Added'
-                    : 'Add to Library'
+                    : 'Advanced Add'
+                }}
+              </button>
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="
+                  quickAddStates['asin-result']?.status === 'adding' ||
+                  quickAddStates['asin-result']?.status === 'added' ||
+                  !!(
+                    (audibleResult.asin && addedAsins.has(audibleResult.asin)) ||
+                    (audibleResult.openLibraryId &&
+                      addedOpenLibraryIds.has(audibleResult.openLibraryId))
+                  )
+                "
+                @click="quickAddAudibleResult"
+              >
+                <PhSpinner
+                  v-if="quickAddStates['asin-result']?.status === 'adding'"
+                  class="ph-spin"
+                />
+                <PhCheck v-else-if="quickAddStates['asin-result']?.status === 'added'" />
+                <PhPlus v-else />
+                {{
+                  quickAddStates['asin-result']?.status === 'adding'
+                    ? 'Adding...'
+                    : quickAddStates['asin-result']?.status === 'added'
+                      ? 'Added'
+                      : 'Quick Add'
                 }}
               </button>
             </div>
@@ -616,6 +669,39 @@
         <h2>
           Found {{ totalTitleResultsCount }} Book{{ totalTitleResultsCount === 1 ? '' : 's' }}
         </h2>
+        <div class="bulk-add-toolbar" data-testid="bulk-add-toolbar">
+          <label>
+            <input
+              v-model="quickAddOptions.monitored"
+              type="checkbox"
+              :disabled="bulkAddInProgress"
+            />
+            Monitor new additions
+          </label>
+          <label>
+            <input
+              v-model="quickAddOptions.autoSearch"
+              type="checkbox"
+              :disabled="!quickAddOptions.monitored || bulkAddInProgress"
+            />
+            Search immediately
+          </label>
+          <button
+            class="btn btn-primary"
+            type="button"
+            :disabled="bulkAddInProgress || selectedBulkResults.length === 0"
+            @click="addSelectedResults"
+          >
+            <PhSpinner v-if="bulkAddInProgress" class="ph-spin" />
+            <PhPlus v-else />
+            Add selected ({{ selectedBulkResults.length }})
+          </button>
+          <span v-if="bulkAddProgress.total > 0" role="status" aria-live="polite">
+            Processed {{ bulkAddProgress.completed }} of {{ bulkAddProgress.total }}:
+            {{ bulkAddProgress.successful }} successful, {{ bulkAddProgress.failed }} failed,
+            {{ bulkAddProgress.skipped }} skipped
+          </span>
+        </div>
         <div v-if="hasTitleResultControls" class="results-controls">
           <div
             v-if="isAudiblePaged && Math.ceil(audibleTotal / audibleLimit) > 1"
@@ -683,7 +769,12 @@
         </div>
         <div class="title-results">
           <div v-for="book in displayedTitleResults" :key="book.key" class="title-result-card">
-            <div class="result-poster">
+            <button
+              type="button"
+              class="result-poster result-detail-trigger"
+              :aria-label="`View details for ${book.title}`"
+              @click="selectTitleResult(book)"
+            >
               <img
                 :src="getCoverUrl(book)"
                 :alt="book.title"
@@ -691,10 +782,12 @@
                 decoding="async"
                 @error="handleLazyImageError"
               />
-            </div>
+            </button>
             <div class="result-info">
               <h3>
-                {{ safeText(book.title) }}
+                <button type="button" class="result-title-link" @click="selectTitleResult(book)">
+                  {{ safeText(book.title) }}
+                </button>
               </h3>
               <p v-if="book.searchResult?.subtitle" class="result-subtitle">
                 {{ safeText(book.searchResult.subtitle) }}
@@ -769,6 +862,18 @@
 
               <!-- Metadata badges -->
               <div class="metadata-badges">
+                <span v-if="book.searchResult?.edition" class="metadata-badge">
+                  <PhBook />
+                  {{ safeText(book.searchResult.edition) }}
+                </span>
+                <span v-if="book.searchResult?.version" class="metadata-badge">
+                  <PhBook />
+                  {{ safeText(book.searchResult.version) }}
+                </span>
+                <span v-if="book.searchResult?.abridged" class="metadata-badge">
+                  <PhScissors />
+                  Abridged
+                </span>
                 <span v-if="book.publisher?.length" class="metadata-badge">
                   <PhBuilding />
                   {{ safeText(book.publisher[0]) }}
@@ -854,6 +959,45 @@
             </div>
 
             <div class="result-actions">
+              <label class="bulk-select">
+                <input
+                  type="checkbox"
+                  :checked="selectedBulkKeys.includes(book.key)"
+                  :disabled="
+                    quickAddStates[book.key]?.status === 'adding' ||
+                    quickAddStates[book.key]?.status === 'added' ||
+                    !!(getAsin(book) && addedAsins.has(getAsin(book)!)) ||
+                    (!!book.searchResult?.id && addedOpenLibraryIds.has(book.searchResult.id))
+                  "
+                  @change="toggleBulkSelection(book.key)"
+                />
+                Select
+              </label>
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="
+                  quickAddStates[book.key]?.status === 'adding' ||
+                  quickAddStates[book.key]?.status === 'added' ||
+                  !!(getAsin(book) && addedAsins.has(getAsin(book)!)) ||
+                  (!!book.searchResult?.id && addedOpenLibraryIds.has(book.searchResult.id))
+                "
+                :title="quickAddStates[book.key]?.reason"
+                @click="quickAddTitleResult(book)"
+              >
+                <PhSpinner v-if="quickAddStates[book.key]?.status === 'adding'" class="ph-spin" />
+                <PhCheck v-else-if="quickAddStates[book.key]?.status === 'added'" />
+                <PhPlus v-else />
+                {{
+                  quickAddStates[book.key]?.status === 'adding'
+                    ? 'Adding...'
+                    : quickAddStates[book.key]?.status === 'added'
+                      ? 'Added'
+                      : quickAddStates[book.key]?.status === 'failed'
+                        ? 'Retry Quick Add'
+                        : 'Quick Add'
+                }}
+              </button>
               <button
                 :class="[
                   'btn',
@@ -880,7 +1024,7 @@
                   !!(getAsin(book) && addedAsins.has(getAsin(book)!)) ||
                   (!!book.searchResult?.id && addedOpenLibraryIds.has(book.searchResult.id))
                     ? 'Added'
-                    : 'Add to Library'
+                    : 'Advanced Add'
                 }}
               </button>
             </div>
@@ -984,6 +1128,7 @@ import type {
   AudibleNarrator,
   AudibleGenre,
   AudibleSearchResult,
+  AudiobookProductionType,
 } from '@/types'
 import { apiService } from '@/services/api'
 import { getPlaceholderUrl } from '@/utils/placeholder'
@@ -1083,6 +1228,7 @@ const SOURCE_KEYS = ['source', 'Source'] as const
 interface AudibleSeriesEntry {
   name?: string
   position?: string | number
+  asin?: string
 }
 
 interface AudibleMetadataPayload {
@@ -1105,6 +1251,12 @@ interface AudibleMetadataPayload {
   genres?: AudibleGenre[]
   series?: AudibleSeriesEntry[]
   bookFormat?: string
+  edition?: string
+  version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
+  abridged?: boolean
   isbn?: string
 }
 
@@ -1328,6 +1480,23 @@ const errorMessage = ref('')
 // Modal state
 const showAddLibraryModal = ref(false)
 const selectedBookForLibrary = ref<AudibleBookMetadata>({} as AudibleBookMetadata)
+const quickAddOptions = ref({ monitored: true, autoSearch: true })
+const quickAddStates = ref<
+  Record<string, { status: 'adding' | 'added' | 'failed'; reason?: string }>
+>({})
+const selectedBulkKeys = ref<string[]>([])
+const bulkAddInProgress = ref(false)
+const bulkAddProgress = ref({
+  completed: 0,
+  total: 0,
+  successful: 0,
+  failed: 0,
+  skipped: 0,
+})
+const quickAddInFlightIdentities = ref(new Set<string>())
+const selectedBulkResults = computed(() =>
+  titleResults.value.filter((book) => selectedBulkKeys.value.includes(book.key)),
+)
 
 // Local storage keys for persisting search results
 const RESULTS_KEY = 'listenarr.addNewResults'
@@ -1823,6 +1992,7 @@ const performAdvancedSearch = async () => {
     }
 
     advancedSearchError.value = ''
+    clearBulkSearchSelection()
     isSearching.value = true
     searchError.value = ''
 
@@ -2028,6 +2198,7 @@ const clearAdvancedSearch = () => {
 
 const changeAudiblePage = async (newPage: number) => {
   if (newPage < 1) return
+  clearBulkSearchSelection()
   audiblePage.value = newPage
   // Update URL query param
   try {
@@ -2125,6 +2296,7 @@ const handleUnifiedSearchResults = async (results: SearchResult[] | null | undef
 }
 
 const performSearch = async () => {
+  clearBulkSearchSelection()
   const results = await runSearch()
   await handleUnifiedSearchResults(results)
   return results
@@ -2463,6 +2635,28 @@ const getAsin = (book: TitleSearchResult): string | null => {
   )
 }
 
+const getQuickAddIdentity = (
+  asin: string | null | undefined,
+  openLibraryId: string | null | undefined,
+  fallbackKey: string,
+): string => {
+  if (asin?.trim()) return `asin:${asin.trim().toUpperCase()}`
+  if (openLibraryId?.trim()) return `openlibrary:${openLibraryId.trim().toUpperCase()}`
+  return `result:${fallbackKey}`
+}
+
+function clearBulkSearchSelection() {
+  selectedBulkKeys.value = []
+  quickAddStates.value = {}
+  bulkAddProgress.value = {
+    completed: 0,
+    total: 0,
+    successful: 0,
+    failed: 0,
+    skipped: 0,
+  }
+}
+
 const getResultRegion = (book: TitleSearchResult): string => {
   const rawRegion =
     book.region ??
@@ -2710,7 +2904,11 @@ const attemptResolveAsinsForTitleResults = async (): Promise<void> => {
 // Removed manual ASIN helper methods (createAsinSearchHint, openAmazonSearch, useBookForAsinSearch)
 
 // Common methods for both search types
-const selectTitleResult = async (book: TitleSearchResult) => {
+const selectTitleResult = async (
+  book: TitleSearchResult,
+  quickAdd = false,
+  addOptions = quickAddOptions.value,
+): Promise<boolean> => {
   logger.debug('selectTitleResult called with book:', book)
   const asin = resolvedAsins.value[book.key] || book.searchResult?.asin
 
@@ -2736,15 +2934,20 @@ const selectTitleResult = async (book: TitleSearchResult) => {
         genres: [],
         series: result.series,
         seriesNumber: result.seriesNumber,
-        abridged: false,
+        seriesMemberships: result.seriesMemberships,
+        edition: result.edition,
+        version: result.version,
+        productionType: result.productionType,
+        partNumber: result.partNumber,
+        totalParts: result.totalParts,
+        abridged: result.abridged ?? false,
         isbn: undefined,
         source: book.metadataSource || result.source,
         openLibraryId: result.id || undefined,
       }
 
       // Add to library directly using the enriched metadata
-      await addToLibrary(metadata)
-      return
+      return await addToLibrary(metadata, quickAdd, addOptions)
     }
 
     // Fallback: if we have an ASIN, fetch metadata from configured sources
@@ -2812,14 +3015,19 @@ const selectTitleResult = async (book: TitleSearchResult) => {
           genres: Array.isArray(result?.genres) ? result.genres : [],
           series: result?.series,
           seriesNumber: result?.seriesNumber,
-          abridged: false,
+          seriesMemberships: result?.seriesMemberships,
+          edition: result?.edition,
+          version: result?.version,
+          productionType: result?.productionType,
+          partNumber: result?.partNumber,
+          totalParts: result?.totalParts,
+          abridged: result?.abridged ?? false,
           isbn: undefined,
           source: metadataSource,
           openLibraryId: result?.id || undefined,
         }
         toast.warning('Metadata unavailable', 'Using search result details to continue.')
-        await addToLibrary(fallbackMetadata)
-        return
+        return await addToLibrary(fallbackMetadata, quickAdd, addOptions)
       }
 
       toast.success('Metadata retrieved', `Book details fetched from ${metadataSource}`)
@@ -2864,18 +3072,33 @@ const selectTitleResult = async (book: TitleSearchResult) => {
           audibleData.series?.[0]?.position !== undefined
             ? String(audibleData.series[0].position)
             : undefined, // Extract position from primary series
+        seriesMemberships: audibleData.series
+          ?.filter((series) => typeof series.name === 'string' && series.name.trim().length > 0)
+          .map((series, index) => ({
+            seriesName: series.name!.trim(),
+            seriesNumber: series.position !== undefined ? String(series.position) : undefined,
+            seriesAsin: series.asin,
+            isPrimary: index === 0,
+            sortOrder: index,
+          })),
+        edition: audibleData.edition,
+        version: audibleData.version,
+        productionType: audibleData.productionType,
+        partNumber: audibleData.partNumber,
+        totalParts: audibleData.totalParts,
         abridged:
-          typeof audibleData.bookFormat === 'string'
-            ? audibleData.bookFormat.toLowerCase().includes('abridged')
-            : false,
+          typeof audibleData.abridged === 'boolean'
+            ? audibleData.abridged
+            : typeof audibleData.bookFormat === 'string'
+              ? audibleData.bookFormat.toLowerCase().includes('abridged')
+              : false,
         isbn: audibleData.isbn,
         source: metadataSource,
         openLibraryId: book.searchResult?.id || undefined,
       }
 
       // Add to library directly
-      await addToLibrary(metadata)
-      return
+      return await addToLibrary(metadata, quickAdd, addOptions)
     }
 
     // Allow adding any book with a title and ISBN (relaxed, not just OpenLibrary)
@@ -2926,22 +3149,27 @@ const selectTitleResult = async (book: TitleSearchResult) => {
               : undefined,
         metadataSource: book.metadataSource || 'unknown',
       }
-      await addToLibrary(metadata)
-      return
+      return await addToLibrary(metadata, quickAdd, addOptions)
     }
     // Otherwise, block as before
     logger.error(
       'No ASIN, enriched metadata, or OpenLibrary ISBN+title available for selected book',
     )
     toast.warning('Cannot add', 'Cannot add to library: No ASIN, metadata, or ISBN available')
+    return false
   } catch (error) {
     logger.error('Failed to add audiobook:', error)
     toast.error('Add failed', 'Failed to add audiobook. Please try again.')
+    return false
   }
 }
 
 // Common methods for both search types
-const addToLibrary = async (book: AudibleBookMetadata) => {
+const addToLibrary = async (
+  book: AudibleBookMetadata,
+  quickAdd = false,
+  addOptions = quickAddOptions.value,
+): Promise<boolean> => {
   // Check if root folder is configured
   if (rootFoldersStore.folders.length === 0 && !configStore.applicationSettings?.outputPath) {
     toast.warning(
@@ -2949,7 +3177,7 @@ const addToLibrary = async (book: AudibleBookMetadata) => {
       'Please configure the root folder in Settings before adding audiobooks.',
     )
     router.push('/settings')
-    return
+    return false
   }
 
   // Show the add to library modal instead of directly adding
@@ -2969,7 +3197,150 @@ const addToLibrary = async (book: AudibleBookMetadata) => {
           ? book.searchResult.genres
           : categoryGenres) || [],
   }
+  if (quickAdd) {
+    const response = await apiService.addToLibrary(selectedBookForLibrary.value, {
+      monitored: addOptions.monitored,
+      autoSearch: addOptions.monitored && addOptions.autoSearch,
+    })
+    handleLibraryAdded(response.audiobook)
+    toast.success('Added to library', `${response.audiobook.title} was added to your library.`)
+    return true
+  }
+
   showAddLibraryModal.value = true
+  return true
+}
+
+function toggleBulkSelection(key: string) {
+  selectedBulkKeys.value = selectedBulkKeys.value.includes(key)
+    ? selectedBulkKeys.value.filter((selectedKey) => selectedKey !== key)
+    : [...selectedBulkKeys.value, key]
+}
+
+async function quickAddTitleResult(
+  book: TitleSearchResult,
+  addOptions = quickAddOptions.value,
+): Promise<boolean> {
+  const current = quickAddStates.value[book.key]
+  if (current?.status === 'adding' || current?.status === 'added') return false
+  const identity = getQuickAddIdentity(getAsin(book), book.searchResult?.id, book.key)
+  if (quickAddInFlightIdentities.value.has(identity)) return false
+
+  quickAddInFlightIdentities.value.add(identity)
+  quickAddStates.value = {
+    ...quickAddStates.value,
+    [book.key]: { status: 'adding' },
+  }
+  try {
+    const added = await selectTitleResult(book, true, addOptions)
+    quickAddStates.value = {
+      ...quickAddStates.value,
+      [book.key]: added
+        ? { status: 'added' }
+        : {
+            status: 'failed',
+            reason: 'The audiobook could not be added. See the error notification.',
+          },
+    }
+    return added
+  } finally {
+    quickAddInFlightIdentities.value.delete(identity)
+  }
+}
+
+async function quickAddAudibleResult(): Promise<void> {
+  const result = audibleResult.value
+  if (!result || quickAddStates.value['asin-result']?.status === 'adding') return
+  const identity = getQuickAddIdentity(result.asin, result.openLibraryId, 'asin-result')
+  if (quickAddInFlightIdentities.value.has(identity)) return
+  quickAddInFlightIdentities.value.add(identity)
+  quickAddStates.value = {
+    ...quickAddStates.value,
+    'asin-result': { status: 'adding' },
+  }
+
+  try {
+    const added = await addToLibrary(result, true, { ...quickAddOptions.value })
+    quickAddStates.value = {
+      ...quickAddStates.value,
+      'asin-result': added ? { status: 'added' } : { status: 'failed' },
+    }
+  } catch (error) {
+    logger.error('Quick add failed for ASIN result', error)
+    toast.error(
+      'Add failed',
+      'The audiobook could not be added. Please review the error and retry.',
+    )
+    quickAddStates.value = {
+      ...quickAddStates.value,
+      'asin-result': {
+        status: 'failed',
+        reason: error instanceof Error ? error.message : 'The audiobook could not be added.',
+      },
+    }
+  } finally {
+    quickAddInFlightIdentities.value.delete(identity)
+  }
+}
+
+async function addSelectedResults(): Promise<void> {
+  if (bulkAddInProgress.value) return
+  const currentSelection = [...selectedBulkResults.value]
+  const seenIdentities = new Set<string>()
+  const skippedKeys = new Set<string>()
+  const selected = currentSelection.filter((book) => {
+    const asin = getAsin(book)
+    const identity = getQuickAddIdentity(asin, book.searchResult?.id, book.key)
+    const isDuplicate = seenIdentities.has(identity)
+    seenIdentities.add(identity)
+    const alreadyInLibrary = Boolean(
+      (asin && addedAsins.value.has(asin)) ||
+      (book.searchResult?.id && addedOpenLibraryIds.value.has(book.searchResult.id)),
+    )
+    if (isDuplicate || alreadyInLibrary) {
+      skippedKeys.add(book.key)
+      return false
+    }
+    return true
+  })
+  if (currentSelection.length === 0) return
+  selectedBulkKeys.value = selectedBulkKeys.value.filter((key) => !skippedKeys.has(key))
+
+  bulkAddInProgress.value = true
+  bulkAddProgress.value = {
+    completed: currentSelection.length - selected.length,
+    total: currentSelection.length,
+    successful: 0,
+    failed: 0,
+    skipped: currentSelection.length - selected.length,
+  }
+  const options = { ...quickAddOptions.value }
+  let nextIndex = 0
+  const worker = async () => {
+    while (nextIndex < selected.length) {
+      const book = selected[nextIndex]
+      nextIndex += 1
+      const added = await quickAddTitleResult(book, options)
+      if (added) {
+        bulkAddProgress.value.successful += 1
+        selectedBulkKeys.value = selectedBulkKeys.value.filter((key) => key !== book.key)
+      } else if (quickAddStates.value[book.key]?.status === 'failed') {
+        bulkAddProgress.value.failed += 1
+      } else {
+        bulkAddProgress.value.skipped += 1
+        if (quickAddStates.value[book.key]?.status === 'added') {
+          selectedBulkKeys.value = selectedBulkKeys.value.filter((key) => key !== book.key)
+        }
+      }
+      bulkAddProgress.value.completed += 1
+    }
+  }
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(3, selected.length) }, worker))
+  } finally {
+    bulkAddInProgress.value = false
+  }
 }
 
 const closeAddLibraryModal = () => {
@@ -4113,6 +4484,49 @@ select.form-input:focus {
   font-weight: 500;
 }
 
+.bulk-add-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: -0.5rem 0 1.25rem;
+  color: #d4d8dd;
+}
+
+.bulk-add-toolbar label,
+.bulk-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.bulk-add-toolbar input,
+.bulk-select input {
+  accent-color: #2196f3;
+}
+
+.result-detail-trigger {
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.result-title-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.result-title-link:hover,
+.result-title-link:focus-visible {
+  color: #4dabf7;
+  text-decoration: underline;
+}
+
 /* ASIN Result Card */
 .result-card {
   display: flex;
@@ -4504,6 +4918,12 @@ select.form-input:focus {
   font-weight: 500;
   border-radius: 6px;
   transition: all 0.2s ease;
+}
+
+.title-result-card .result-actions .bulk-select {
+  color: #c6ccd2;
+  font-size: 0.9rem;
+  cursor: pointer;
 }
 
 .title-result-card .result-actions .btn:hover {

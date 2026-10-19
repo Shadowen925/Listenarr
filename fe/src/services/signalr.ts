@@ -472,6 +472,7 @@ class SignalRService {
             asin?: string | null
             type?: string
             audiobookId?: number
+            details?: Record<string, unknown>
           }
           // Deliver payload to callbacks that opted-in to automatic messages
           for (const [cb, includeAutomatic] of Array.from(this.searchProgressCallbacks.entries())) {
@@ -782,6 +783,7 @@ class SignalRService {
       asin?: string | null
       type?: string
       audiobookId?: number
+      details?: Record<string, unknown>
     }) => void,
     includeAutomatic = false,
   ): () => void {

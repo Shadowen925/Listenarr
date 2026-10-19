@@ -226,6 +226,9 @@ namespace Listenarr.Tests.Features.Api.Features.Metadata
                             Language = "english",
                             Authors = new List<AudibleAuthor> { new() { Name = "Brandon Sanderson" } },
                             Narrators = new List<AudibleNarrator> { new() { Name = "Narrator Example" } },
+                            Edition = "Anniversary Edition",
+                            Version = "Version 2",
+                            BookFormat = "Abridged",
                             Series = new List<AudibleSeries> { new() { Name = "Mistborn", Position = "1" } }
                         }
                     }
@@ -255,6 +258,9 @@ namespace Listenarr.Tests.Features.Api.Features.Metadata
             Assert.Equal("The Final Empire", payload.Books[0].Title);
             Assert.Equal("Mistborn", payload.Books[0].Series);
             Assert.Equal("1", payload.Books[0].SeriesNumber);
+            Assert.Equal("Anniversary Edition", payload.Books[0].Edition);
+            Assert.Equal("Version 2", payload.Books[0].Version);
+            Assert.True(payload.Books[0].Abridged);
         }
     }
 }

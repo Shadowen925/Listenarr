@@ -108,6 +108,13 @@ namespace Listenarr.Domain.Search
         public List<string> Isbn { get; set; } = new();
         public string? Series { get; set; }
         public string? SeriesNumber { get; set; }
+        public string? Edition { get; set; }
+        public string? Version { get; set; }
+        public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
+        public bool Abridged { get; set; }
+        public List<AudiobookSeriesMembership>? SeriesMemberships { get; set; }
         public string? ProductUrl { get; set; } // Direct link to Amazon/Audible product page
         public List<string>? Genres { get; set; } // Genres from metadata sources (e.g., Audible)
         // Indicates this result had a successful full metadata enrichment pass
@@ -166,6 +173,13 @@ namespace Listenarr.Domain.Search
         public List<string> Isbn { get; set; } = new();
         public string? Series { get; set; }
         public string? SeriesNumber { get; set; }
+        public string? Edition { get; set; }
+        public string? Version { get; set; }
+        public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
+        public bool Abridged { get; set; }
+        public List<AudiobookSeriesMembership>? SeriesMemberships { get; set; }
         public string? ProductUrl { get; set; } // Direct link to Amazon/Audible product page
         public List<string>? Genres { get; set; } // Genres from metadata sources (e.g., Audible)
         // Indicates this result had a successful full metadata enrichment pass (Audible product scrape)
@@ -185,44 +199,6 @@ namespace Listenarr.Domain.Search
         public string? IndexerUsed { get; set; }
         public string? DownloadClientUsed { get; set; }
         public SearchResult? SearchResult { get; set; }
-    }
-
-    /// <summary>
-    /// DTO representing indexer results in a Prowlarr-like shape for the public API
-    /// </summary>
-    public class IndexerResultDto
-    {
-        public string? Guid { get; set; }
-        public int? Age { get; set; }
-        public double? AgeHours { get; set; }
-        public double? AgeMinutes { get; set; }
-        public long Size { get; set; }
-        public int Files { get; set; }
-        public int Grabs { get; set; }
-        public int? IndexerId { get; set; }
-        public string? Indexer { get; set; }
-        public string Title { get; set; } = string.Empty;
-        public string? SortTitle { get; set; }
-        public int ImdbId { get; set; }
-        public int TmdbId { get; set; }
-        public int TvdbId { get; set; }
-        public int TvMazeId { get; set; }
-        public string? PublishDate { get; set; }
-        public string? DownloadUrl { get; set; }
-        public string? InfoUrl { get; set; }
-        public List<string> IndexerFlags { get; set; } = new();
-        public List<object> Categories { get; set; } = new();
-        public int? Seeders { get; set; }
-        public int? Leechers { get; set; }
-        public string? Protocol { get; set; }
-        public string? FileName { get; set; }
-        public string? DownloadReference { get; set; }
-        // Filetype as provided/derived from indexer (e.g., MP3, M4B)
-        [System.Text.Json.Serialization.JsonPropertyName("filetype")]
-        public string? FileType { get; set; }
-        // Language code or parsed language (lang_code / ENG -> English)
-        [System.Text.Json.Serialization.JsonPropertyName("lang_code")]
-        public string? Language { get; set; }
     }
 
     /// <summary>
@@ -295,6 +271,10 @@ namespace Listenarr.Domain.Search
                 Isbn = result.Isbn,
                 Series = result.Series,
                 SeriesNumber = result.SeriesNumber,
+                Edition = result.Edition,
+                Version = result.Version,
+                Abridged = result.Abridged,
+                SeriesMemberships = result.SeriesMemberships,
                 ProductUrl = result.ProductUrl,
                 IsEnriched = result.IsEnriched,
                 MetadataSource = result.MetadataSource
@@ -444,6 +424,10 @@ namespace Listenarr.Domain.Search
                 Isbn = result.Isbn,
                 Series = result.Series,
                 SeriesNumber = result.SeriesNumber,
+                Edition = result.Edition,
+                Version = result.Version,
+                Abridged = result.Abridged,
+                SeriesMemberships = result.SeriesMemberships,
                 ProductUrl = result.ProductUrl,
                 IsEnriched = result.IsEnriched,
                 MetadataSource = result.MetadataSource
@@ -477,6 +461,10 @@ namespace Listenarr.Domain.Search
                 result.Isbn,
                 result.Series,
                 result.SeriesNumber,
+                result.Edition,
+                result.Version,
+                result.Abridged,
+                result.SeriesMemberships,
                 result.ProductUrl,
                 result.PublishedDate,
                 result.PublishYear,

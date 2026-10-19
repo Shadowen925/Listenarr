@@ -10,6 +10,12 @@
 
 namespace Listenarr.Application.Common
 {
+    public enum DownloadSubmissionFailureKind
+    {
+        ReleaseSpecific,
+        ClientUnavailable
+    }
+
     /// <summary>
     /// Represents a safe, user-facing failure while handing a download to an external client.
     /// Infrastructure adapters should avoid including credentials, query strings, or response
@@ -17,9 +23,15 @@ namespace Listenarr.Application.Common
     /// </summary>
     public sealed class DownloadClientSubmissionException : Exception
     {
-        public DownloadClientSubmissionException(string message, Exception? innerException = null)
+        public DownloadClientSubmissionException(
+            string message,
+            Exception? innerException = null,
+            DownloadSubmissionFailureKind failureKind = DownloadSubmissionFailureKind.ReleaseSpecific)
             : base(message, innerException)
         {
+            FailureKind = failureKind;
         }
+
+        public DownloadSubmissionFailureKind FailureKind { get; }
     }
 }

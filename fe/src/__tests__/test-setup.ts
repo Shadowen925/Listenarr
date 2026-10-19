@@ -159,6 +159,7 @@ vi.mock('@/services/api', () => {
     getStartupConfig: vi.fn(async () => ({})),
     getApplicationSettings: vi.fn(async () => ({})),
     getLibrary: vi.fn(async () => []),
+    getAutomaticSearchHistory: vi.fn(async () => []),
     previewLibraryPath: vi.fn(async () => ({ path: '' })),
     previewRename: vi.fn(async () => []),
     executeRename: vi.fn(async () => []),

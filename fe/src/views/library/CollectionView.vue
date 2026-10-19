@@ -449,6 +449,14 @@
                     .join(', ') || 'Unknown Author'
                 }}
               </div>
+              <div
+                v-if="editionClassificationLabels(audiobook).length"
+                class="edition-classification"
+              >
+                <span v-for="label in editionClassificationLabels(audiobook)" :key="label">
+                  {{ safeText(label) }}
+                </span>
+              </div>
               <div v-if="showItemDetails" class="list-extra-details">
                 <div class="detail-line small">
                   {{
@@ -630,6 +638,14 @@
                     {{ audiobook.authors[0] }}
                   </p>
                   <p class="series-bottom-meta">{{ statusText(getAudiobookStatus(audiobook)) }}</p>
+                  <p
+                    v-if="editionClassificationLabels(audiobook).length"
+                    class="series-bottom-meta edition-classification"
+                  >
+                    <span v-for="label in editionClassificationLabels(audiobook)" :key="label">
+                      {{ safeText(label) }}
+                    </span>
+                  </p>
                 </div>
               </div>
               <!-- Action buttons -->
@@ -854,6 +870,7 @@ import type {
   SeriesLookupResponse,
 } from '@/types'
 import { computeAudiobookStatus, formatAudiobookStatus } from '@/utils/audiobookStatus'
+import { editionClassificationLabels } from '@/utils/audiobookEdition'
 import { safeText, stripHtmlAndNormalize } from '@/utils/textUtils'
 import { useProtectedImages } from '@/composables/useProtectedImages'
 import {
@@ -1171,6 +1188,12 @@ function buildCatalogMetadata(book: RemoteCatalogBook): AudibleBookMetadata {
     genres: book.genres || [],
     series: book.series,
     seriesNumber: book.seriesNumber,
+    edition: book.edition,
+    version: book.version,
+    productionType: book.productionType,
+    partNumber: book.partNumber,
+    totalParts: book.totalParts,
+    abridged: book.abridged,
     publishedDate: book.publishedDate,
     publishYear,
     isbn: book.isbn,
@@ -1201,6 +1224,12 @@ function mapCatalogItem(
     genres: book.genres || [],
     series: book.series,
     seriesNumber: book.seriesNumber,
+    edition: book.edition,
+    version: book.version,
+    productionType: book.productionType,
+    partNumber: book.partNumber,
+    totalParts: book.totalParts,
+    abridged: book.abridged,
     publishedDate: book.publishedDate,
     publishYear: book.publishedDate?.match(/\d{4}/)?.[0],
     isbn: book.isbn,
@@ -2428,7 +2457,6 @@ function getAudiobookStatus(audiobook: CollectionDisplayItem): CollectionStatus 
   if (!audiobook.inLibrary) {
     return 'not-added'
   }
-
   return computeAudiobookStatus(audiobook, activeDownloadAudiobookIds.value)
 }
 
@@ -3773,6 +3801,20 @@ defineExpose({
   white-space: nowrap;
   opacity: 0;
   transition: opacity 0.2s ease;
+}
+
+.edition-classification {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  color: #b6c6d6;
+  font-size: 0.75rem;
+}
+
+.edition-classification span {
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(77, 171, 247, 0.12);
 }
 
 .collection-cover:hover .audiobook-title,

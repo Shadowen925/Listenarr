@@ -20,6 +20,8 @@ namespace Listenarr.Application.Metadata.Audible
         public string? Isbn { get; set; }
         public string? Region { get; set; }
         public string? BookFormat { get; set; }
+        public string? Edition { get; set; }
+        public string? Version { get; set; }
         public string? ContentType { get; set; }
         public string? ContentDeliveryType { get; set; }
         public string? EpisodeType { get; set; }
@@ -50,6 +52,11 @@ namespace Listenarr.Application.Metadata.Audible
         public string? EpisodeType { get; set; }
         public string? Sku { get; set; }
         public string? BookFormat { get; set; }
+        public string? Edition { get; set; }
+        public string? Version { get; set; }
+        public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
         public List<AudibleGenre>? Genres { get; set; }
         public List<AudibleSeries>? Series { get; set; }
         public string? Publisher { get; set; }

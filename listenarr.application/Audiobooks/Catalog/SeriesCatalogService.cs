@@ -408,6 +408,15 @@ namespace Listenarr.Application.Audiobooks.Catalog
                     .ToList(),
                 Series = primarySeries?.Name,
                 SeriesNumber = primarySeries?.Position,
+                Edition = book.Edition,
+                Version = book.Version,
+                ProductionType = AudibleEditionClassifier.ClassifyProductionType(
+                    book.BookFormat, book.Edition, book.Version),
+                PartNumber = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).PartNumber,
+                TotalParts = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).TotalParts,
+                Abridged = book.BookFormat?.Contains("abridged", StringComparison.OrdinalIgnoreCase) == true,
                 PublishedDate = book.ReleaseDate,
                 Isbn = book.Isbn,
                 Link = book.Link,
@@ -448,6 +457,12 @@ namespace Listenarr.Application.Audiobooks.Catalog
                             Position = book.SeriesNumber
                         }
                     },
+                Edition = book.Edition,
+                Version = book.Version,
+                ProductionType = book.ProductionType,
+                PartNumber = book.PartNumber,
+                TotalParts = book.TotalParts,
+                BookFormat = book.Abridged ? "Abridged" : null,
                 ReleaseDate = book.PublishedDate,
                 Isbn = book.Isbn,
                 Link = book.Link

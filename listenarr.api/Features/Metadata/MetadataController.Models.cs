@@ -83,6 +83,12 @@ namespace Listenarr.Api.Features.Metadata
             public List<string> Genres { get; set; } = new();
             public string? Series { get; set; }
             public string? SeriesNumber { get; set; }
+            public string? Edition { get; set; }
+            public string? Version { get; set; }
+            public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+            public int? PartNumber { get; set; }
+            public int? TotalParts { get; set; }
+            public bool Abridged { get; set; }
             public string? PublishedDate { get; set; }
             public string? Isbn { get; set; }
             public string? Link { get; set; }
@@ -118,6 +124,12 @@ namespace Listenarr.Api.Features.Metadata
             public List<string> Genres { get; set; } = new();
             public string? Series { get; set; }
             public string? SeriesNumber { get; set; }
+            public string? Edition { get; set; }
+            public string? Version { get; set; }
+            public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+            public int? PartNumber { get; set; }
+            public int? TotalParts { get; set; }
+            public bool Abridged { get; set; }
             public string? PublishedDate { get; set; }
             public string? Isbn { get; set; }
             public string? Link { get; set; }

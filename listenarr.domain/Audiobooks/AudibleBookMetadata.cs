@@ -45,6 +45,9 @@ namespace Listenarr.Domain.Audiobooks
         public int? Runtime { get; set; }
         public string? Edition { get; set; }
         public string? Version { get; set; }
+        public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
         public bool Explicit { get; set; }
         public bool Abridged { get; set; }
         // Legacy fields for compatibility
@@ -79,6 +82,9 @@ namespace Listenarr.Domain.Audiobooks
                 Runtime = Runtime,
                 Edition = Edition,
                 Version = Version,
+                ProductionType = ProductionType,
+                PartNumber = PartNumber,
+                TotalParts = TotalParts,
                 Explicit = Explicit,
                 Abridged = Abridged
             };

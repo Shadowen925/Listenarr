@@ -38,6 +38,7 @@ vi.mock('@/services/api', () => ({
     getImageUrl: vi.fn((url: string) => url || 'https://via.placeholder.com/300x450?text=No+Image'),
     getQualityProfiles: vi.fn(async () => []),
     getLibrary: vi.fn(async () => []),
+    getAutomaticSearchHistory: vi.fn(async () => []),
     scanAudiobook: vi.fn(),
     getWeakStorageMissingFiles: vi.fn(async () => ({ items: [] })),
     confirmWeakStorageMissingFiles: vi.fn(),
@@ -56,6 +57,7 @@ vi.mock('@/services/signalr', () => ({
     onDownloadUpdate: vi.fn(() => () => undefined),
     onDownloadsList: vi.fn(() => () => undefined),
     onScanJobUpdate: vi.fn(() => () => undefined),
+    onSearchProgress: vi.fn(() => () => undefined),
   },
 }))
 
@@ -85,6 +87,67 @@ describe('AudiobookDetailView image recache behavior', () => {
       mock: { calls: Array<[string]> }
     }
     expect(ensureImageCachedMock.mock.calls[0]?.[0]).toBe(imagePath)
+  })
+
+  it('shows persisted search history and exports only redacted history fields', async () => {
+    vi.mocked(apiService.getAutomaticSearchHistory).mockResolvedValueOnce([
+      {
+        id: 8,
+        audiobookId: 5,
+        searchTimestamp: '2026-05-22T10:00:00Z',
+        searchTrigger: 'Periodic',
+        indexersQueried: ['Indexer A'],
+        resultsReturned: 2,
+        rejectionReasons: ['BelowQuality'],
+        submissionAttempts: [
+          {
+            releaseTitle: 'Dune audiobook',
+            clientType: 'sabnzbd',
+            outcome: 'Failed',
+            failureReason: 'ClientUnavailable',
+          },
+        ],
+        selectedRelease: 'Dune audiobook',
+        downloadClient: 'sabnzbd',
+        finalOutcome: 'AllSubmissionsFailed',
+        nextRetryAt: '2026-05-22T11:00:00Z',
+      },
+    ])
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [{ id: 5, title: 'Detail Book', files: [] }] as unknown as ReturnType<
+      typeof useLibraryStore
+    >['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:diagnostics')
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(wrapper.find('.search-history-list').text()).toContain('Periodic — AllSubmissionsFailed')
+    expect(wrapper.text()).toContain('ClientUnavailable')
+    expect(apiService.getAutomaticSearchHistory).toHaveBeenCalledWith(5, 25)
+
+    await wrapper.find('.automatic-search-diagnostics button').trigger('click')
+    expect(createObjectUrl).toHaveBeenCalledOnce()
+    expect(anchorClick).toHaveBeenCalledOnce()
+    const exportedBlob = createObjectUrl.mock.calls[0][0] as Blob
+    const exportedText = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(exportedBlob)
+    })
+    expect(exportedText).toContain('Dune audiobook')
+    expect(exportedText).not.toContain('torrentUrl')
+    expect(exportedText).not.toContain('magnet:')
+    wrapper.unmount()
+    createObjectUrl.mockRestore()
+    anchorClick.mockRestore()
   })
 
   it('navigates to the author, narrator, publisher, series, and genre collections when their tags are clicked', async () => {
@@ -204,6 +267,65 @@ describe('AudiobookDetailView image recache behavior', () => {
     expect(membership.text()).toContain('Unlinked Series')
     expect(membership.text()).toContain('#4')
     expect(membership.find('button.detail-link-tag').exists()).toBe(false)
+  })
+
+  it('links a series subtitle only when it exactly matches a canonical membership', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 5,
+        title: 'Mistborn',
+        subtitle: 'Mistborn #1',
+        seriesMemberships: [
+          {
+            seriesName: 'Mistborn',
+            seriesNumber: '1',
+            seriesAsin: 'MISTBORN-SERIES',
+            isPrimary: true,
+          },
+        ],
+        files: [],
+      },
+    ] as unknown as ReturnType<typeof useLibraryStore>['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    await wrapper.find('.subtitle-series-link').trigger('click')
+
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/MISTBORN-SERIES')
+  })
+
+  it('does not turn arbitrary subtitle text into a series link', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 5,
+        title: 'Mistborn',
+        subtitle: 'A Novel',
+        seriesMemberships: [
+          {
+            seriesName: 'Mistborn',
+            seriesNumber: '1',
+            seriesAsin: 'MISTBORN-SERIES',
+            isPrimary: true,
+          },
+        ],
+        files: [],
+      },
+    ] as unknown as ReturnType<typeof useLibraryStore>['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(wrapper.find('.subtitle-series-link').exists()).toBe(false)
+    expect(wrapper.find('.subtitle').text()).toBe('A Novel')
   })
 
   it('opens the edit metadata modal from the detail view action', async () => {

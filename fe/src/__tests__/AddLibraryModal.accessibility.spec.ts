@@ -71,4 +71,29 @@ describe('AddLibraryModal accessibility', () => {
     const emitted = wrapper.emitted('close')
     expect(emitted).toBeTruthy()
   })
+
+  it('defaults monitored and immediate search options to enabled', async () => {
+    const wrapper = mount(AddLibraryModal, {
+      props: {
+        visible: false,
+        book: fakeBook,
+      },
+      global: {
+        plugins: [(await import('pinia')).createPinia()],
+      },
+    })
+
+    await wrapper.setProps({ visible: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const monitoredOption = wrapper
+      .findAll('label')
+      .find((label) => label.text().includes('Monitor for new releases'))
+    const immediateSearchOption = wrapper
+      .findAll('label')
+      .find((label) => label.text().includes('Search for downloads immediately'))
+
+    expect((monitoredOption?.find('input').element as HTMLInputElement).checked).toBe(true)
+    expect((immediateSearchOption?.find('input').element as HTMLInputElement).checked).toBe(true)
+  })
 })

@@ -29,6 +29,7 @@ import type {
   AudiobookshelfSeriesSyncPreview,
   AudiobookshelfSeriesSyncResult,
   Audiobook,
+  AutomaticSearchDiagnosticHistoryItem,
   AudiobookUpdateRequest,
   History,
   Indexer,
@@ -1437,6 +1438,15 @@ class ApiService {
 
   async getAudiobook(id: number): Promise<Audiobook> {
     return this.request<Audiobook>(`/library/${id}`)
+  }
+
+  async getAutomaticSearchHistory(
+    audiobookId: number,
+    limit = 25,
+  ): Promise<AutomaticSearchDiagnosticHistoryItem[]> {
+    return this.request<AutomaticSearchDiagnosticHistoryItem[]>(
+      `/library/${audiobookId}/search-history?limit=${encodeURIComponent(String(limit))}`,
+    )
   }
 
   async getAudiobookIdentifiers(

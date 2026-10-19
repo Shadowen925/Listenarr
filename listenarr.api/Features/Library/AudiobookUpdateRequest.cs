@@ -37,6 +37,9 @@ public sealed record AudiobookUpdateRequest
     public int? Runtime { get; init; }
     public string? Edition { get; init; }
     public string? Version { get; init; }
+    public string? ProductionType { get; init; }
+    public int? PartNumber { get; init; }
+    public int? TotalParts { get; init; }
     public bool? Explicit { get; init; }
     public bool? Abridged { get; init; }
     public bool? Monitored { get; init; }

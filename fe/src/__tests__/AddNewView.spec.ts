@@ -980,4 +980,223 @@ describe('AddNewView pagination', () => {
     expect(addBtn.text()).toContain('Added')
     expect(addBtn.attributes('disabled')).toBeDefined()
   })
+
+  it('quick-adds enriched metadata with monitoring and immediate search enabled', async () => {
+    const apiModule = await import('@/services/api')
+    const apiService = apiModule.apiService as unknown as { addToLibrary: Mock }
+    apiService.addToLibrary = vi.fn().mockResolvedValue({
+      audiobook: { id: 21, title: 'Dune', openLibraryId: 'OL123' },
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+
+    const router = createTestRouter()
+    const wrapper = mount(AddNewView, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+    const configurationStore = useConfigurationStore()
+    configurationStore.applicationSettings = {
+      ...configurationStore.applicationSettings,
+      outputPath: 'C:\\Audiobooks',
+    }
+    const vm = wrapper.vm as unknown as {
+      quickAddTitleResult: (book: unknown) => Promise<boolean>
+      quickAddOptions: { monitored: boolean; autoSearch: boolean }
+    }
+    const book = {
+      key: 'dune',
+      title: 'Dune',
+      searchResult: {
+        id: 'OL123',
+        title: 'Dune',
+        artist: 'Frank Herbert',
+        isEnriched: true,
+        edition: 'Anniversary Edition',
+        version: 'Unabridged',
+        abridged: false,
+      },
+    }
+
+    expect(await vm.quickAddTitleResult(book)).toBe(true)
+
+    expect(apiService.addToLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        edition: 'Anniversary Edition',
+        version: 'Unabridged',
+      }),
+      { monitored: true, autoSearch: true },
+    )
+  })
+
+  it('quick-adds a direct Audible ASIN with the normal monitored and immediate-search defaults', async () => {
+    const apiModule = await import('@/services/api')
+    const apiService = apiModule.apiService as unknown as { addToLibrary: Mock }
+    apiService.addToLibrary = vi.fn().mockResolvedValue({
+      audiobook: { id: 22, title: 'ASIN Book', asin: 'B000123' },
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createTestRouter()
+    const wrapper = mount(AddNewView, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+    const configurationStore = useConfigurationStore()
+    configurationStore.applicationSettings = {
+      ...configurationStore.applicationSettings,
+      outputPath: 'C:\\Audiobooks',
+    }
+    const vm = wrapper.vm as unknown as {
+      audibleResult: Record<string, unknown>
+      quickAddAudibleResult: () => Promise<void>
+    }
+    vm.audibleResult = {
+      asin: 'B000123',
+      title: 'ASIN Book',
+      authors: ['Author'],
+    }
+
+    await vm.quickAddAudibleResult()
+
+    expect(apiService.addToLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({ asin: 'B000123', title: 'ASIN Book' }),
+      { monitored: true, autoSearch: true },
+    )
+  })
+
+  it('limits bulk quick-add concurrency to three while adding each selected result', async () => {
+    const apiModule = await import('@/services/api')
+    const apiService = apiModule.apiService as unknown as { addToLibrary: Mock }
+    let activeAdds = 0
+    let maximumActiveAdds = 0
+    apiService.addToLibrary = vi.fn().mockImplementation(async (metadata: { title: string }) => {
+      activeAdds += 1
+      maximumActiveAdds = Math.max(maximumActiveAdds, activeAdds)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      activeAdds -= 1
+      return { audiobook: { id: metadata.title, title: metadata.title } }
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+
+    const router = createTestRouter()
+    const wrapper = mount(AddNewView, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+    const configurationStore = useConfigurationStore()
+    configurationStore.applicationSettings = {
+      ...configurationStore.applicationSettings,
+      outputPath: 'C:\\Audiobooks',
+    }
+    const vm = wrapper.vm as unknown as {
+      titleResults: unknown[]
+      selectedBulkKeys: string[]
+      selectedBulkResults: unknown[]
+      bulkAddProgress: {
+        completed: number
+        total: number
+        successful: number
+        failed: number
+        skipped: number
+      }
+      addSelectedResults: () => Promise<void>
+    }
+    const books = Array.from({ length: 4 }, (_, index) => ({
+      key: `book-${index}`,
+      title: `Book ${index}`,
+      searchResult: {
+        id: `OL${index}`,
+        title: `Book ${index}`,
+        artist: 'Author',
+        isEnriched: true,
+      },
+    }))
+    vm.titleResults = books
+    vm.selectedBulkKeys = books.map((book) => book.key)
+    await wrapper.vm.$nextTick()
+
+    expect(vm.selectedBulkResults).toHaveLength(4)
+    await vm.addSelectedResults()
+
+    expect(apiService.addToLibrary).toHaveBeenCalledTimes(4)
+    expect(maximumActiveAdds).toBe(3)
+    expect(vm.bulkAddProgress).toEqual({
+      completed: 4,
+      total: 4,
+      successful: 4,
+      failed: 0,
+      skipped: 0,
+    })
+    expect(vm.selectedBulkKeys).toEqual([])
+  })
+
+  it('reports successful, failed, and duplicate bulk additions separately', async () => {
+    const apiModule = await import('@/services/api')
+    const apiService = apiModule.apiService as unknown as { addToLibrary: Mock }
+    apiService.addToLibrary = vi.fn(async (metadata: { title: string; openLibraryId?: string }) => {
+      if (metadata.title === 'Failure') {
+        throw new Error('simulated add failure')
+      }
+      return {
+        audiobook: {
+          id: 31,
+          title: metadata.title,
+          openLibraryId: metadata.openLibraryId,
+        },
+      }
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createTestRouter()
+    const wrapper = mount(AddNewView, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+    const configurationStore = useConfigurationStore()
+    configurationStore.applicationSettings = {
+      ...configurationStore.applicationSettings,
+      outputPath: 'C:\\Audiobooks',
+    }
+    const vm = wrapper.vm as unknown as {
+      titleResults: unknown[]
+      selectedBulkKeys: string[]
+      bulkAddProgress: {
+        completed: number
+        total: number
+        successful: number
+        failed: number
+        skipped: number
+      }
+      addSelectedResults: () => Promise<void>
+    }
+    const books = [
+      {
+        key: 'good',
+        title: 'Good',
+        searchResult: { id: 'OL-GOOD', title: 'Good', artist: 'Author', isEnriched: true },
+      },
+      {
+        key: 'duplicate',
+        title: 'Duplicate',
+        searchResult: { id: 'OL-GOOD', title: 'Duplicate', artist: 'Author', isEnriched: true },
+      },
+      {
+        key: 'failure',
+        title: 'Failure',
+        searchResult: { id: 'OL-FAIL', title: 'Failure', artist: 'Author', isEnriched: true },
+      },
+    ]
+    vm.titleResults = books
+    vm.selectedBulkKeys = books.map((book) => book.key)
+
+    await vm.addSelectedResults()
+
+    expect(vm.bulkAddProgress).toEqual({
+      completed: 3,
+      total: 3,
+      successful: 1,
+      failed: 1,
+      skipped: 1,
+    })
+    expect(vm.selectedBulkKeys).toEqual(['failure'])
+    expect(apiService.addToLibrary).toHaveBeenCalledTimes(2)
+  })
 })

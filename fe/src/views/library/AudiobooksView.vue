@@ -471,6 +471,14 @@
                     }}
                   </div>
                   <div
+                    v-if="editionClassificationLabels(audiobook).length"
+                    class="edition-classification"
+                  >
+                    <span v-for="label in editionClassificationLabels(audiobook)" :key="label">
+                      {{ safeText(label) }}
+                    </span>
+                  </div>
+                  <div
                     v-if="getQualityProfileName(audiobook.qualityProfileId)"
                     class="quality-profile-badge"
                   >
@@ -528,6 +536,14 @@
                   >
                 </div>
                 <div class="detail-line small">{{ statusText(getAudiobookStatus(audiobook)) }}</div>
+                <div
+                  v-if="editionClassificationLabels(audiobook).length"
+                  class="detail-line small edition-classification"
+                >
+                  <span v-for="label in editionClassificationLabels(audiobook)" :key="label">
+                    {{ safeText(label) }}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -592,6 +608,14 @@
                   audiobook.authors?.map((author) => safeText(author)).join(', ') ||
                   'Unknown Author'
                 }}
+              </div>
+              <div
+                v-if="editionClassificationLabels(audiobook).length"
+                class="edition-classification"
+              >
+                <span v-for="label in editionClassificationLabels(audiobook)" :key="label">
+                  {{ safeText(label) }}
+                </span>
               </div>
               <div v-if="showItemDetails" class="list-extra-details">
                 <div v-if="formatSeriesMemberships(audiobook)" class="detail-line small">
@@ -860,6 +884,7 @@ import type {
 import { evaluateRules } from '@/utils/customFilterEvaluator'
 import type { RuleLike } from '@/utils/customFilterEvaluator'
 import { computeAudiobookStatus, formatAudiobookStatus } from '@/utils/audiobookStatus'
+import { editionClassificationLabels } from '@/utils/audiobookEdition'
 import { safeText } from '@/utils/textUtils'
 import { formatSeriesMemberships } from '@/utils/seriesUtils'
 import { getPlaceholderUrl } from '@/utils/placeholder'
@@ -3576,6 +3601,22 @@ defineExpose({
 .audiobook-poster-container .audiobook-author {
   opacity: 0;
   transition: opacity 0.2s ease;
+}
+
+.edition-classification {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: #d5e7f8;
+}
+
+.edition-classification span {
+  border-radius: 999px;
+  background: rgba(33, 150, 243, 0.22);
+  padding: 2px 6px;
 }
 
 .audiobook-poster-container.show-details .audiobook-title,

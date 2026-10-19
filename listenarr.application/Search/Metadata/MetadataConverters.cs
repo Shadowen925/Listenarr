@@ -7,7 +7,7 @@ namespace Listenarr.Application.Search.Metadata;
 /// <summary>
 /// Converts external metadata API responses to internal AudibleBookMetadata and SearchResult models.
 /// </summary>
-public class MetadataConverters
+public partial class MetadataConverters
 {
     private readonly IImageCacheService? _imageCacheService;
     private readonly ILogger<MetadataConverters> _logger;
@@ -69,9 +69,23 @@ public class MetadataConverters
             Language = audibleData.Language,
             Isbn = !string.IsNullOrWhiteSpace(audibleData.Isbn) ? new List<string> { audibleData.Isbn! } : new List<string>(),
             ImageUrl = audibleData.ImageUrl,
+            Edition = audibleData.Edition,
+            Version = audibleData.Version,
+            ProductionType = AudibleEditionClassifier.ClassifyProductionType(
+                audibleData.BookFormat,
+                audibleData.Edition,
+                audibleData.Version,
+                audibleData.ContentType,
+                audibleData.ContentDeliveryType,
+                audibleData.EpisodeType),
             Abridged = audibleData.BookFormat?.Contains("abridged", StringComparison.OrdinalIgnoreCase) ?? false,
             Explicit = audibleData.Explicit ?? false
         };
+        (metadata.PartNumber, metadata.TotalParts) = AudibleEditionClassifier.ParseParts(
+            audibleData.Title,
+            audibleData.Subtitle,
+            audibleData.Edition,
+            audibleData.Version);
 
         metadata.SeriesMemberships = BuildSeriesMemberships(audibleData.Series);
         ApplyPrimarySeriesFields(metadata);
@@ -109,94 +123,6 @@ public class MetadataConverters
         }
 
         _logger.LogInformation("Converted audible data for {Asin}: Title={Title}, Runtime={Runtime}min, Year={Year}, Series={Series}, ImageUrl={ImageUrl}",
-            asin, metadata.Title, metadata.Runtime, metadata.PublishYear, metadata.Series, metadata.ImageUrl);
-
-        return metadata;
-    }
-
-    /// <summary>
-    /// Converts Audnexus API response to AudibleBookMetadata.
-    /// </summary>
-    public AudibleBookMetadata ConvertAudnexusToMetadata(AudnexusBookResponse audnexusData, string asin, string source = "Audible")
-    {
-        var metadata = new AudibleBookMetadata
-        {
-            Asin = audnexusData.Asin ?? asin,
-            Source = source, // Use the original search source (Amazon or Audible)
-            Region = audnexusData.Region,
-            Title = audnexusData.Title,
-            Subtitle = audnexusData.Subtitle,
-            Authors = audnexusData.Authors?.Where(a => !string.IsNullOrEmpty(a.Name)).Select(a => a.Name!).ToList(),
-            Narrators = audnexusData.Narrators?.Where(n => !string.IsNullOrEmpty(n.Name)).Select(n => n.Name!).ToList(),
-            Publisher = audnexusData.PublisherName,
-            Description = !string.IsNullOrWhiteSpace(audnexusData.Summary) ? audnexusData.Summary : audnexusData.Description,
-            Genres = audnexusData.Genres?.Where(g => !string.IsNullOrEmpty(g.Name)).Select(g => g.Name!).ToList(),
-            Language = audnexusData.Language,
-            Isbn = !string.IsNullOrWhiteSpace(audnexusData.Isbn) ? new List<string> { audnexusData.Isbn! } : new List<string>(),
-            ImageUrl = audnexusData.Image,
-            Abridged = audnexusData.FormatType?.Contains("abridged", StringComparison.OrdinalIgnoreCase) ?? false,
-            Explicit = audnexusData.IsAdult ?? false
-        };
-
-        var audnexusSeriesMemberships = new List<AudiobookSeriesMembership>();
-        if (audnexusData.SeriesPrimary != null)
-        {
-            audnexusSeriesMemberships.Add(new AudiobookSeriesMembership
-            {
-                SeriesName = audnexusData.SeriesPrimary.Name,
-                SeriesNumber = audnexusData.SeriesPrimary.Position,
-                IsPrimary = true,
-                SortOrder = 0
-            });
-        }
-
-        if (audnexusData.SeriesSecondary != null)
-        {
-            audnexusSeriesMemberships.Add(new AudiobookSeriesMembership
-            {
-                SeriesName = audnexusData.SeriesSecondary.Name,
-                SeriesNumber = audnexusData.SeriesSecondary.Position,
-                IsPrimary = audnexusSeriesMemberships.Count == 0,
-                SortOrder = audnexusSeriesMemberships.Count
-            });
-        }
-
-        metadata.SeriesMemberships = audnexusSeriesMemberships.Count == 0
-            ? null
-            : AudiobookSeriesMembershipHelper.Normalize(audnexusSeriesMemberships);
-        ApplyPrimarySeriesFields(metadata);
-
-        if (metadata.SeriesMemberships != null && metadata.SeriesMemberships.Count > 0)
-        {
-            _logger.LogInformation("Extracted {Count} series memberships from Audnexus for ASIN {Asin}", metadata.SeriesMemberships.Count, asin);
-        }
-        else
-        {
-            _logger.LogDebug("No series information from Audnexus for ASIN {Asin}", asin);
-        }
-
-        // Convert runtime from minutes
-        if (audnexusData.RuntimeLengthMin.HasValue && audnexusData.RuntimeLengthMin > 0)
-        {
-            metadata.Runtime = audnexusData.RuntimeLengthMin.Value;
-        }
-
-        // Extract year from releaseDate (format: "2021-05-04T00:00:00.000Z")
-        if (!string.IsNullOrEmpty(audnexusData.ReleaseDate))
-        {
-            var yearMatch = Regex.Match(audnexusData.ReleaseDate, @"\d{4}");
-            if (yearMatch.Success)
-            {
-                metadata.PublishYear = yearMatch.Value;
-            }
-        }
-        // Fallback to copyright year if no release date
-        else if (audnexusData.Copyright.HasValue)
-        {
-            metadata.PublishYear = audnexusData.Copyright.Value.ToString();
-        }
-
-        _logger.LogInformation("Converted Audnexus data for {Asin}: Title={Title}, Runtime={Runtime}min, Year={Year}, Series={Series}, ImageUrl={ImageUrl}",
             asin, metadata.Title, metadata.Runtime, metadata.PublishYear, metadata.Series, metadata.ImageUrl);
 
         return metadata;
@@ -336,6 +262,13 @@ public class MetadataConverters
             Narrator = string.Join(", ", metadata.Narrators ?? new List<string>()),
             Series = metadata.Series,
             SeriesNumber = metadata.SeriesNumber,
+            Edition = metadata.Edition,
+            Version = metadata.Version,
+            ProductionType = metadata.ProductionType,
+            PartNumber = metadata.PartNumber,
+            TotalParts = metadata.TotalParts,
+            Abridged = metadata.Abridged,
+            SeriesMemberships = metadata.SeriesMemberships,
             ImageUrl = imageUrl,
             Asin = asin,
             Isbn = metadata.Isbn ?? new List<string>(),

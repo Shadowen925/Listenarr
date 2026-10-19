@@ -32,6 +32,26 @@
           <PhSpinner class="ph-spin" />
           <span>Searching indexers... ({{ searchedIndexers }}/{{ totalIndexers }})</span>
         </div>
+        <section v-if="searchCompleted" class="search-diagnostics" aria-live="polite">
+          <h3>Search diagnostics</h3>
+          <p>
+            Query: <code>{{ diagnosticQuery }}</code> · {{ searchedIndexers }} of
+            {{ totalIndexers }} indexers completed · {{ results.length }} releases found ·
+            {{ rejectedResultCount }} rejected by the quality profile
+          </p>
+          <ul v-if="indexerDiagnostics.length">
+            <li v-for="indexer in indexerDiagnostics" :key="indexer.name">
+              <strong>{{ indexer.name }}:</strong>
+              <span v-if="indexer.status === 'failed'">request failed</span>
+              <span v-else-if="indexer.resultCount === 0">no releases found</span>
+              <span v-else>{{ indexer.resultCount }} release(s) found</span>
+            </li>
+          </ul>
+          <button class="btn btn-secondary btn-sm" type="button" @click="exportSearchDiagnostics">
+            Export diagnostics (JSON)
+          </button>
+        </section>
+        <div v-if="searchError" class="search-error" role="alert">{{ searchError }}</div>
 
         <!-- Results Table -->
         <div v-if="displayResults.length > 0 || !searching" class="results-container">
@@ -392,6 +412,16 @@ const qualityProfile = ref<QualityProfile | null>(null)
 const sortBy = ref<SearchSortBy | 'Score'>('Score')
 const sortDirection = ref<SearchSortDirection>('Descending')
 const searchQuery = ref('')
+const searchCompleted = ref(false)
+const searchError = ref('')
+const diagnosticQuery = ref('')
+const diagnosticStartedAt = ref<string | null>(null)
+const indexerDiagnostics = ref<
+  Array<{ name: string; status: 'completed' | 'failed'; resultCount: number }>
+>([])
+const rejectedResultCount = computed(
+  () => [...qualityScores.value.values()].filter((score) => score.isRejected).length,
+)
 
 watch(
   () => props.isOpen,
@@ -548,6 +578,11 @@ async function search() {
   results.value = []
   searchedIndexers.value = 0
   totalIndexers.value = 0
+  searchCompleted.value = false
+  searchError.value = ''
+  indexerDiagnostics.value = []
+  qualityScores.value.clear()
+  diagnosticStartedAt.value = new Date().toISOString()
 
   try {
     // Get count of enabled indexers first
@@ -556,6 +591,7 @@ async function search() {
 
     // Build search query from title and author (fallback if no manual query)
     const query = searchQuery.value.trim() || buildSearchQuery()
+    diagnosticQuery.value = query
 
     // Search each indexer individually to show progress
     const allResults: SearchResult[] = []
@@ -685,9 +721,19 @@ async function search() {
           r.language = normalizeLanguage(r.language as string | undefined)
         })
         allResults.push(...normalized)
+        indexerDiagnostics.value.push({
+          name: indexer.name,
+          status: 'completed',
+          resultCount: normalized.length,
+        })
         searchedIndexers.value++
       } catch (error) {
         logger.warn(`Failed to search indexer ${indexer.name}:`, error)
+        indexerDiagnostics.value.push({
+          name: indexer.name,
+          status: 'failed',
+          resultCount: 0,
+        })
         searchedIndexers.value++ // Still count as completed even if failed
       }
     })
@@ -757,10 +803,60 @@ async function search() {
       sortFrontendResults()
     }
   } catch (err) {
-    console.error('Manual search failed:', err)
+    logger.error('Manual search failed:', err)
+    searchError.value = 'The search could not be completed. Check the server logs for details.'
   } finally {
     searching.value = false
+    searchCompleted.value = true
   }
+}
+
+function exportSearchDiagnostics() {
+  const payload = {
+    schemaVersion: 1,
+    startedAt: diagnosticStartedAt.value,
+    completedAt: new Date().toISOString(),
+    query: diagnosticQuery.value,
+    audiobook: props.audiobook
+      ? {
+          id: props.audiobook.id,
+          title: props.audiobook.title,
+          authors: props.audiobook.authors ?? [],
+          asin: props.audiobook.asin ?? null,
+          qualityProfileId: props.audiobook.qualityProfileId ?? null,
+        }
+      : null,
+    indexers: indexerDiagnostics.value,
+    summary: {
+      totalIndexers: totalIndexers.value,
+      completedIndexers: searchedIndexers.value,
+      resultCount: results.value.length,
+      rejectedByQualityProfile: rejectedResultCount.value,
+    },
+    releases: results.value.map((result) => {
+      const score = qualityScores.value.get(result.id)
+      return {
+        title: result.title,
+        indexer: result.source,
+        protocol: result.downloadType,
+        sizeBytes: result.size,
+        seeders: result.seeders ?? null,
+        leechers: result.leechers ?? null,
+        language: result.language ?? null,
+        quality: result.quality ?? result.format ?? null,
+        score: score?.totalScore ?? null,
+        rejected: score?.isRejected ?? null,
+        rejectionReasons: score?.rejectionReasons ?? [],
+      }
+    }),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `listenarr-search-diagnostics-${Date.now()}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 async function loadQualityProfileAndScore() {
@@ -1103,6 +1199,40 @@ function getScoreClass(score: number): string {
 
 .search-status i {
   font-size: 3rem;
+}
+
+.search-diagnostics {
+  padding: 1rem;
+  border: 1px solid rgba(77, 171, 247, 0.28);
+  border-radius: 8px;
+  background: rgba(77, 171, 247, 0.06);
+  color: #d4d8dd;
+}
+
+.search-diagnostics h3 {
+  margin: 0 0 0.5rem;
+  color: #fff;
+  font-size: 1rem;
+}
+
+.search-diagnostics p {
+  margin: 0 0 0.5rem;
+}
+
+.search-diagnostics ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.search-diagnostics code {
+  overflow-wrap: anywhere;
+}
+
+.search-error {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  color: #ffe3e3;
+  background: rgba(250, 82, 82, 0.12);
 }
 
 .results-container {

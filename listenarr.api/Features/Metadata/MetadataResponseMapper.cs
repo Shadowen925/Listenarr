@@ -40,6 +40,15 @@ namespace Listenarr.Api.Features.Metadata
                 Genres = MapNames(book.Genres, genre => genre.Name),
                 Series = primarySeries?.Name,
                 SeriesNumber = primarySeries?.Position,
+                Edition = book.Edition,
+                Version = book.Version,
+                ProductionType = AudibleEditionClassifier.ClassifyProductionType(
+                    book.BookFormat, book.Edition, book.Version),
+                PartNumber = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).PartNumber,
+                TotalParts = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).TotalParts,
+                Abridged = book.BookFormat?.Contains("abridged", StringComparison.OrdinalIgnoreCase) == true,
                 PublishedDate = book.ReleaseDate,
                 Isbn = book.Isbn,
                 Link = book.Link,
@@ -66,6 +75,15 @@ namespace Listenarr.Api.Features.Metadata
                 Genres = MapNames(book.Genres, genre => genre.Name),
                 Series = primarySeries?.Name,
                 SeriesNumber = primarySeries?.Position,
+                Edition = book.Edition,
+                Version = book.Version,
+                ProductionType = AudibleEditionClassifier.ClassifyProductionType(
+                    book.BookFormat, book.Edition, book.Version),
+                PartNumber = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).PartNumber,
+                TotalParts = AudibleEditionClassifier.ParseParts(
+                    book.Title, book.Subtitle, book.Edition, book.Version).TotalParts,
+                Abridged = book.BookFormat?.Contains("abridged", StringComparison.OrdinalIgnoreCase) == true,
                 PublishedDate = book.ReleaseDate,
                 Isbn = book.Isbn,
                 Link = book.Link,

@@ -76,6 +76,13 @@ export interface MetadataSearchResult extends BaseSearchResult {
   seriesNumber?: string
   seriesAsin?: string
   seriesList?: string[]
+  seriesMemberships?: AudiobookSeriesMembership[]
+  edition?: string
+  version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
+  abridged?: boolean
   genres?: string[] // Genres from metadata sources (e.g., Audible)
   productUrl?: string // Direct link to Amazon/Audible product page
   isEnriched?: boolean
@@ -121,6 +128,13 @@ export interface SearchResult extends BaseSearchResult {
   seriesNumber?: string
   seriesAsin?: string
   seriesList?: string[]
+  seriesMemberships?: AudiobookSeriesMembership[]
+  edition?: string
+  version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
+  abridged?: boolean
   genres?: string[] // Genres from metadata sources (e.g., Audible)
   productUrl?: string // Direct link to Amazon/Audible product page
   isEnriched?: boolean
@@ -719,6 +733,9 @@ export interface AudibleBookMetadata {
   runtime?: number
   edition?: string
   version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
   imageUrl?: string
   explicit?: boolean
   abridged?: boolean
@@ -744,6 +761,12 @@ export interface AuthorCatalogBook {
   genres?: string[]
   series?: string
   seriesNumber?: string
+  edition?: string
+  version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
+  abridged?: boolean
   publishedDate?: string
   isbn?: string
   link?: string
@@ -787,6 +810,12 @@ export interface SeriesCatalogBook {
   genres?: string[]
   series?: string
   seriesNumber?: string
+  edition?: string
+  version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
+  abridged?: boolean
   publishedDate?: string
   isbn?: string
   link?: string
@@ -958,6 +987,9 @@ export interface Audiobook {
   runtime?: number
   edition?: string
   version?: string
+  productionType?: AudiobookProductionType
+  partNumber?: number
+  totalParts?: number
   imageUrl?: string
   explicit?: boolean
   abridged?: boolean
@@ -989,6 +1021,30 @@ export interface Audiobook {
   wanted?: boolean
   // Server-computed list status used by slim /library responses.
   status?: AudiobookStatus
+}
+
+export type AudiobookProductionType = 'Standard' | 'Dramatized' | 'FullCast'
+
+export interface AutomaticSearchSubmissionAttempt {
+  releaseTitle: string
+  clientType?: string | null
+  outcome: string
+  failureReason?: string | null
+}
+
+export interface AutomaticSearchDiagnosticHistoryItem {
+  id: number
+  audiobookId: number
+  searchTimestamp: string
+  searchTrigger: 'Manual' | 'Immediate' | 'Periodic' | 'Replacement' | string
+  indexersQueried: string[]
+  resultsReturned: number
+  rejectionReasons: string[]
+  submissionAttempts: AutomaticSearchSubmissionAttempt[]
+  selectedRelease?: string | null
+  downloadClient?: string | null
+  finalOutcome: string
+  nextRetryAt?: string | null
 }
 
 export interface AudiobookUpdateRequest {

@@ -61,6 +61,9 @@ namespace Listenarr.Application.Audiobooks.Common
         public int? QualityProfileId { get; set; }
         public string? Edition { get; set; }
         public string? Version { get; set; }
+        public AudiobookProductionType ProductionType { get; set; } = AudiobookProductionType.Standard;
+        public int? PartNumber { get; set; }
+        public int? TotalParts { get; set; }
         public bool? Abridged { get; set; }
         public bool? Explicit { get; set; }
         public string? FilePathHash { get; set; }

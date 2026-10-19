@@ -102,6 +102,9 @@ namespace Listenarr.Application.Mapping
                 QualityProfileId = audiobook.QualityProfileId,
                 Edition = audiobook.Edition,
                 Version = audiobook.Version,
+                ProductionType = audiobook.ProductionType,
+                PartNumber = audiobook.PartNumber,
+                TotalParts = audiobook.TotalParts,
                 Abridged = audiobook.Abridged,
                 Explicit = audiobook.Explicit
             };

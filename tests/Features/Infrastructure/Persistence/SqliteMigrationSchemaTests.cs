@@ -214,7 +214,8 @@ public class SqliteMigrationSchemaTests : BaseTests
                 StalledDownloadSettingsMigrationId,
                 DownloadAuditMigrationId,
                 AudiobookshelfSeriesIdentityMigrationId,
-                AutomaticSearchIntervalMigrationId
+                AutomaticSearchIntervalMigrationId,
+                "20261019193216_AddAutomaticSearchDiagnosticsAndEditionClassification"
             ],
             postCanary);
         Assert.Contains("20251124102000_AddMoveJobSourcePath", applied);

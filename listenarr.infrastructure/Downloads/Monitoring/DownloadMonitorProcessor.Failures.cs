@@ -84,7 +84,8 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                             scope.ServiceProvider.GetRequiredService<IAutomaticSearchProcessor>();
                         await automaticSearchProcessor.SearchAudiobookAsync(
                             download.AudiobookId.Value,
-                            cancellationToken);
+                            cancellationToken,
+                            AutomaticSearchTrigger.Replacement);
                     }
                 }
                 catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))

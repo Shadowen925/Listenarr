@@ -105,6 +105,7 @@ describe('ManualSearchModal.vue', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('uses details page for Usenet title links instead of direct NZB', async () => {
@@ -480,5 +481,72 @@ describe('ManualSearchModal.vue', () => {
     const badge = wrapper.find('.col-score .score-badge')
     expect(badge.exists()).toBe(true)
     expect(badge.text()).toContain('88')
+  })
+
+  it('exports useful search diagnostics without release URLs or download references', async () => {
+    const createObjectURL = vi.fn(() => 'blob:diagnostics')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    const wrapper = mount(ManualSearchModal, {
+      props: {
+        isOpen: false,
+        audiobook: {
+          id: 42,
+          title: 'Target Book',
+          authors: ['Author Name'],
+          asin: 'B012345678',
+        },
+      },
+      global: { stubs },
+    })
+    const vm = wrapper.vm as unknown as {
+      exportSearchDiagnostics: () => void
+      results: ManualSearchResult[]
+      diagnosticQuery: string
+      diagnosticStartedAt: string
+      indexerDiagnostics: Array<{
+        name: string
+        status: 'completed' | 'failed'
+        resultCount: number
+      }>
+      searchedIndexers: number
+      totalIndexers: number
+    }
+
+    setResultsOnVm(vm, [
+      {
+        id: 'release-1',
+        title: 'Candidate Release',
+        source: 'Indexer One',
+        downloadType: 'Torrent',
+        size: 1024,
+        magnetLink: 'magnet:?xt=secret-token',
+        torrentUrl: 'https://indexer.example/download?apikey=secret',
+        nzbUrl: 'https://indexer.example/release?token=secret',
+        downloadReference: 'secret-reference',
+      } as unknown as ManualSearchResult,
+    ])
+    vm.diagnosticQuery = 'Target Book Author Name'
+    vm.diagnosticStartedAt = '2025-01-02T03:04:05.000Z'
+    vm.indexerDiagnostics = [{ name: 'Indexer One', status: 'completed', resultCount: 1 }]
+    vm.searchedIndexers = 1
+    vm.totalIndexers = 1
+
+    vm.exportSearchDiagnostics()
+
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob
+    const exported = await blob.text()
+    const payload = JSON.parse(exported)
+    expect(payload.query).toBe('Target Book Author Name')
+    expect(payload.indexers).toEqual([{ name: 'Indexer One', status: 'completed', resultCount: 1 }])
+    expect(payload.releases[0].title).toBe('Candidate Release')
+    expect(exported).not.toContain('secret-token')
+    expect(exported).not.toContain('apikey=secret')
+    expect(exported).not.toContain('secret-reference')
+    expect(payload.releases[0]).not.toHaveProperty('magnetLink')
+    expect(payload.releases[0]).not.toHaveProperty('torrentUrl')
+    expect(payload.releases[0]).not.toHaveProperty('downloadReference')
   })
 })
