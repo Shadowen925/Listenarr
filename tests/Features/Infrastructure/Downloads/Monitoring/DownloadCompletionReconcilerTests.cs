@@ -108,8 +108,11 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                     Asin = audiobook.Asin,
                     Title = audiobook.Title!,
                     Status = DownloadStatus.Downloading,
-                    DownloadClientId = client.Id
+                    DownloadClientId = client.Id,
+                    TotalSize = 100,
+                    DownloadedSize = 99
                 };
+                download.SetMetadata("ClientState", "downloading");
                 var settings = new ApplicationSettings
                 {
                     CompletedDownloadMinimumStabilitySeconds = 60,
@@ -127,6 +130,65 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 Assert.Equal("tracked-dune-missing-torrent", download.Id);
                 Assert.Equal("ImportPending", download.GetMetadataString("Recovery.State"));
                 Assert.Equal("MissingFromClient", download.GetMetadataString("Recovery.ClientPresence"));
+                Assert.Equal(file, System.Text.Json.JsonSerializer.Deserialize<List<string>>(
+                    download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)!)!.Single());
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_RecoversStableMatchingFileWhenClientDisappearsWithStaleDownloadingProgress()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                var file = Path.Combine(root, "B000R34YKC.m4b");
+                await File.WriteAllBytesAsync(file, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 15,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var timeProvider = new MutableTimeProvider(DateTimeOffset.UtcNow);
+                var reconciler = CreateReconciler(root, audiobook, timeProvider, new AudioMetadata
+                {
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Artist = "Frank Herbert"
+                });
+                var client = new DownloadClientConfiguration { Id = "deluge" };
+                var download = new Download
+                {
+                    Id = "tracked-dune-stale-progress",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = client.Id,
+                    TotalSize = 100,
+                    DownloadedSize = 99,
+                    ExpectedFileSize = 32
+                };
+                download.SetMetadata("ClientState", "downloading");
+                var settings = new ApplicationSettings
+                {
+                    CompletedDownloadMinimumStabilitySeconds = 60,
+                    AutomaticImportReconciledDownloads = true
+                };
+
+                Assert.Empty(await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None));
+                Assert.Equal(DownloadStatus.Downloading, download.Status);
+
+                timeProvider.Advance(TimeSpan.FromSeconds(60));
+                var recovered = await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None);
+
+                Assert.Contains(download.Id, recovered);
+                Assert.Equal(DownloadStatus.Completed, download.Status);
                 Assert.Equal(file, System.Text.Json.JsonSerializer.Deserialize<List<string>>(
                     download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)!)!.Single());
             }
@@ -273,8 +335,11 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                     AudiobookId = audiobook.Id,
                     Status = DownloadStatus.Downloading,
                     DownloadClientId = client.Id,
+                    TotalSize = 100,
+                    DownloadedSize = 99,
                     ExpectedFileSize = 32
                 };
+                incomplete.SetMetadata("ClientState", "downloading");
 
                 var recovered = await reconciler.ReconcileAsync(
                     client,

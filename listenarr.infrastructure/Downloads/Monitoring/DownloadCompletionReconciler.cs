@@ -327,19 +327,9 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             Audiobook audiobook)
         {
             var clientState = download.GetMetadataString("ClientState")?.Trim().ToLowerInvariant();
-            if (clientState is "paused" or "stoppeddl" or "stoppedup" or "downloading" or "queued" or "queueddl")
-            {
-                return false;
-            }
-
             if (clientState is "completed" or "success" or "seeding" or "finished")
             {
                 return true;
-            }
-
-            if (download.TotalSize > 0)
-            {
-                return download.DownloadedSize >= download.TotalSize;
             }
 
             if (download.ExpectedFileSize is > 0)
