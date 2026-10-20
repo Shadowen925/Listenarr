@@ -1814,9 +1814,17 @@ class ApiService {
   }
 
   // Manual import preview / start
-  async previewManualImport(path: string): Promise<ManualImportPreviewResponse> {
-    const params = path ? `?path=${encodeURIComponent(path)}` : ''
-    return this.request<ManualImportPreviewResponse>(`/library/manual-import/preview${params}`)
+  async previewManualImport(
+    path: string,
+    audiobookId?: number | null,
+  ): Promise<ManualImportPreviewResponse> {
+    const params = new URLSearchParams()
+    if (path) params.set('path', path)
+    if (audiobookId) params.set('audiobookId', String(audiobookId))
+    const query = params.toString()
+    return this.request<ManualImportPreviewResponse>(
+      `/library/manual-import/preview${query ? `?${query}` : ''}`,
+    )
   }
 
   async startManualImport(request: ManualImportRequest): Promise<{

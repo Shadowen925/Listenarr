@@ -273,22 +273,34 @@ namespace Listenarr.Application.Downloads.Common
                 }
                 else
                 {
-                    // Some clients can only report a directory. Expand it so import code can
-                    // operate on the specific files that belong to this download.
-                    try
-                    {
-                        item.SourceFiles = [.. fileSystem
-                            .EnumerateFiles(item.ContentPath, "*.*", SearchOption.AllDirectories)
-                            .Select(f => FileUtils.NormalizeStoredPath(f))];
-                    }
-                    catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
+                    if (!fileSystem.DirectoryExists(item.ContentPath))
                     {
                         LogMissingSourceFiles(
                             client,
                             item,
-                            $"content path scanning failed with path {item.ContentPath}",
-                            exception);
+                            $"content path does not exist: {item.ContentPath}",
+                            null);
                         item.SourceFiles = [];
+                    }
+                    else
+                    {
+                        // Some clients can only report a directory. Expand it so import code can
+                        // operate on the specific files that belong to this download.
+                        try
+                        {
+                            item.SourceFiles = [.. fileSystem
+                                .EnumerateFiles(item.ContentPath, "*.*", SearchOption.AllDirectories)
+                                .Select(f => FileUtils.NormalizeStoredPath(f))];
+                        }
+                        catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
+                        {
+                            LogMissingSourceFiles(
+                                client,
+                                item,
+                                $"content path scanning failed with path {item.ContentPath}",
+                                exception);
+                            item.SourceFiles = [];
+                        }
                     }
                 }
             }

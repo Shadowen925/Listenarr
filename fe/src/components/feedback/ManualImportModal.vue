@@ -80,6 +80,74 @@
 
         <!-- Preview area (hidden until Interactive Import is clicked) -->
         <div v-if="showPreview" class="preview-area">
+          <section class="manual-import-match">
+            <h3>Match Existing Audiobook</h3>
+            <input
+              v-model="librarySearchText"
+              class="form-input"
+              type="search"
+              placeholder="Search your library..."
+              aria-label="Search existing audiobooks"
+            />
+            <select v-model.number="selectedExistingAudiobookId" class="form-select">
+              <option :value="null">Select an audiobook</option>
+              <option v-for="book in filteredLibrary" :key="book.id" :value="book.id">
+                {{ getBookDisplay(book) }}
+              </option>
+            </select>
+            <button
+              class="btn btn-secondary"
+              type="button"
+              :disabled="!selectedExistingAudiobookId || previewItems.length === 0"
+              @click="applyExistingAudiobook"
+            >
+              Match selected files
+            </button>
+          </section>
+          <section class="manual-import-match">
+            <h3>Search Audiobook Metadata</h3>
+            <div class="manual-import-metadata-search">
+              <input
+                v-model="metadataSearchQuery"
+                class="form-input"
+                type="search"
+                placeholder="Search Audible metadata..."
+                aria-label="Search audiobook metadata"
+                @keydown.enter.prevent="searchMetadata"
+              />
+              <button
+                class="btn btn-secondary"
+                type="button"
+                :disabled="metadataSearchLoading || !metadataSearchQuery.trim()"
+                @click="searchMetadata"
+              >
+                {{ metadataSearchLoading ? 'Searching...' : 'Search' }}
+              </button>
+            </div>
+            <p v-if="metadataSearchError" class="manual-import-error" role="alert">
+              {{ metadataSearchError }}
+            </p>
+            <div v-else-if="metadataSearchResults.length" class="manual-import-metadata-results">
+              <button
+                v-for="result in metadataSearchResults"
+                :key="result.asin"
+                class="manual-import-metadata-result"
+                type="button"
+                :disabled="metadataSearchLoading"
+                @click="addMetadataMatch(result)"
+              >
+                <strong>{{ result.title || 'Untitled' }}</strong>
+                <span>{{
+                  result.authors
+                    ?.map((author) => author.name)
+                    .filter(Boolean)
+                    .join(', ')
+                }}</span>
+              </button>
+            </div>
+            <p v-else-if="metadataSearchComplete">No metadata matches found.</p>
+          </section>
+
           <div v-if="loading" class="loading-state">
             <PhSpinner class="ph-spin" />
             Loading files...
@@ -110,6 +178,10 @@
                       <span v-else class="placeholder">&nbsp;</span>
                     </div>
                     <span v-else>{{ field.display(it) }}</span>
+                    <small v-if="field.key === 'path'" class="planned-destination">
+                      Destination:
+                      {{ it.destinationPath || 'Select a matching audiobook to preview naming.' }}
+                    </small>
                   </div>
                   <div class="col col-action">
                     <div
@@ -157,7 +229,8 @@
           </select>
 
           <select v-if="showPreview" class="extra-select" v-model="action">
-            <option value="">Select Import Mode</option>
+            <option value="">Use configured action</option>
+            <option value="copy">Copy</option>
             <option value="move">Move</option>
             <option value="hardlink/copy">Hardlink/Copy</option>
           </select>
@@ -338,7 +411,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
 import { PhFolderOpen, PhX, PhRocket, PhUser, PhSpinner, PhInfo } from '@phosphor-icons/vue'
-import type { ManualImportRequest } from '@/types'
+import type { AudibleBookMetadata, AudibleSearchResult, ManualImportRequest } from '@/types'
 import FolderBrowser from '@/components/ui/FolderBrowser.vue'
 import Checkbox from '@/components/form/Checkbox.vue'
 import FolderBrowserModal from '@/components/feedback/FolderBrowserModal.vue'
@@ -352,11 +425,22 @@ import { apiService } from '@/services/api'
 import { useLibraryStore } from '@/stores/library'
 import { useConfigurationStore } from '@/stores/configuration'
 import { useFilesystemReadinessStore } from '@/stores/filesystemReadiness'
+import { useToast } from '@/services/toastService'
 
-const props = withDefaults(defineProps<{ isOpen?: boolean; initialPath?: string }>(), {
-  isOpen: false,
-  initialPath: '',
-})
+const props = withDefaults(
+  defineProps<{
+    isOpen?: boolean
+    initialPath?: string
+    sourceTitle?: string
+    initialAudiobookId?: number
+  }>(),
+  {
+    isOpen: false,
+    initialPath: '',
+    sourceTitle: '',
+    initialAudiobookId: undefined,
+  },
+)
 
 const emit = defineEmits(['close', 'imported'] as const)
 
@@ -364,11 +448,12 @@ const selectedPath = ref(props.initialPath || '')
 const loading = ref(false)
 const browserMode = ref(false)
 const inputField = ref<string>('')
-const action = ref<'move' | 'hardlink/copy' | ''>('')
+const action = ref<'move' | 'copy' | 'hardlink/copy' | ''>('')
 
 const showPreview = ref(false)
 interface PreviewItem {
   relativePath: string
+  destinationPath?: string | null
   audiobook?: string
   quality?: string
   languages?: string[]
@@ -382,6 +467,13 @@ interface PreviewItem {
   rejections?: string[]
 }
 const previewItems = ref<PreviewItem[]>([])
+const librarySearchText = ref('')
+const selectedExistingAudiobookId = ref<number | null>(null)
+const metadataSearchQuery = ref(props.sourceTitle)
+const metadataSearchResults = ref<AudibleSearchResult[]>([])
+const metadataSearchLoading = ref(false)
+const metadataSearchComplete = ref(false)
+const metadataSearchError = ref('')
 
 interface ImportField {
   key: string
@@ -478,6 +570,11 @@ const selectRecent = (path: string) => {
 }
 const libraryStore = useLibraryStore()
 const library = computed(() => libraryStore.audiobooks)
+const filteredLibrary = computed(() => {
+  const query = librarySearchText.value.trim().toLowerCase()
+  if (!query) return library.value
+  return library.value.filter((book) => getBookDisplay(book).toLowerCase().includes(query))
+})
 const configurationStore = useConfigurationStore()
 const filesystemReadinessStore = useFilesystemReadinessStore()
 const qualityProfiles = computed(() => configurationStore.qualityProfiles)
@@ -546,6 +643,97 @@ const getBookAsin = (book: Book) => {
   )
 }
 
+const applyExistingAudiobook = () => {
+  if (!selectedExistingAudiobookId.value) return
+  for (const item of previewItems.value) {
+    item.matchedAudiobookId = selectedExistingAudiobookId.value
+    item.selected = true
+  }
+  void loadPreview()
+}
+
+const searchMetadata = async () => {
+  const query = metadataSearchQuery.value.trim()
+  if (!query || metadataSearchLoading.value) return
+
+  metadataSearchLoading.value = true
+  metadataSearchComplete.value = false
+  metadataSearchError.value = ''
+  try {
+    const response = await apiService.searchAudible(query, 1, 20)
+    metadataSearchResults.value = response.results ?? []
+    metadataSearchComplete.value = true
+  } catch (error) {
+    metadataSearchError.value = error instanceof Error ? error.message : 'Metadata search failed.'
+    metadataSearchResults.value = []
+  } finally {
+    metadataSearchLoading.value = false
+  }
+}
+
+const addMetadataMatch = async (result: AudibleSearchResult) => {
+  if (!result.asin || !result.title || metadataSearchLoading.value) return
+
+  metadataSearchLoading.value = true
+  metadataSearchError.value = ''
+  try {
+    const response = await apiService.getAudibleMetadata<Record<string, unknown>>(result.asin)
+    const metadataRecord = response['metadata']
+    const record: Record<string, unknown> =
+      metadataRecord !== null &&
+      typeof metadataRecord === 'object' &&
+      !Array.isArray(metadataRecord)
+        ? (metadataRecord as Record<string, unknown>)
+        : response
+    const readString = (key: string): string | undefined => {
+      const value = record[key]
+      return typeof value === 'string' && value.trim() ? value.trim() : undefined
+    }
+    const readStringArray = (key: string): string[] => {
+      const value = record[key]
+      return Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === 'string' && !!entry.trim())
+        : []
+    }
+    const metadata: AudibleBookMetadata = {
+      asin: result.asin,
+      title: readString('title') ?? result.title,
+      authors:
+        readStringArray('authors').length > 0
+          ? readStringArray('authors')
+          : (result.authors ?? []).flatMap((author) =>
+              author.name?.trim() ? [author.name.trim()] : [],
+            ),
+      narrators: readStringArray('narrators'),
+      publishedDate: readString('releaseDate') ?? result.releaseDate,
+      publisher: readString('publisher') ?? result.publisher,
+      language: readString('language') ?? result.language,
+      imageUrl: readString('imageUrl') ?? result.imageUrl,
+      description: readString('description'),
+      source: 'Audible',
+    }
+    const existingAudiobook = library.value.find(
+      (book) => book.asin?.trim().toUpperCase() === result.asin?.trim().toUpperCase(),
+    )
+    const audiobookId =
+      existingAudiobook?.id ??
+      (await apiService.addToLibrary(metadata, { monitored: false, autoSearch: false })).audiobook
+        .id
+    await libraryStore.fetchLibrary()
+    selectedExistingAudiobookId.value = audiobookId
+    applyExistingAudiobook()
+    useToast().success(
+      'Audiobook matched',
+      'Metadata is associated with the selected import files.',
+    )
+  } catch (error) {
+    metadataSearchError.value =
+      error instanceof Error ? error.message : 'Could not add this audiobook to the library.'
+  } finally {
+    metadataSearchLoading.value = false
+  }
+}
+
 const getQualityName = (id?: number | null) => {
   if (!id) return ''
   const found = (qualityProfiles.value || []).find(
@@ -600,6 +788,9 @@ const closeCellEditor = () => {
 
 const saveCellEditor = () => {
   if (cellEditorItems.value.length <= 0 || !cellEditorField.value) return closeCellEditor()
+  const editingAudiobook = cellEditorField.value === 'audiobook'
+  const selectedAudiobookId =
+    typeof cellEditorValue.value === 'number' ? cellEditorValue.value : null
   cellEditorItems.value.forEach((it) => {
     importFields.forEach((field) => {
       if (cellEditorField.value === field.key) {
@@ -608,21 +799,44 @@ const saveCellEditor = () => {
     })
     it.selected = true
   })
+  if (editingAudiobook) {
+    selectedExistingAudiobookId.value = selectedAudiobookId
+    void loadPreview()
+  }
   closeCellEditor()
 }
 
 onMounted(async () => {
   await libraryStore.fetchLibrary()
   await configurationStore.loadQualityProfiles()
+  const configuredAction = configurationStore.applicationSettings?.completedFileAction
+  if (
+    configuredAction === 'move' ||
+    configuredAction === 'copy' ||
+    configuredAction === 'hardlink/copy'
+  ) {
+    action.value = configuredAction
+  }
   loadRecentFolders()
 })
 
 watch(
+  () => props.initialPath,
+  (path) => {
+    if (!props.isOpen) selectedPath.value = path || ''
+  },
+)
+
+watch(
   () => props.isOpen,
   async (v) => {
-    // only auto-load preview when modal opens AND interactive preview mode is active
-    if (v && selectedPath.value && showPreview.value) {
-      await loadPreview()
+    if (v && props.initialPath) {
+      const pathChanged = selectedPath.value !== props.initialPath
+      selectedPath.value = props.initialPath
+      selectedExistingAudiobookId.value = props.initialAudiobookId ?? null
+      metadataSearchQuery.value = props.sourceTitle
+      showPreview.value = true
+      if (!pathChanged) await loadPreview()
     }
   },
 )
@@ -638,7 +852,15 @@ const loadPreview = async () => {
   if (!selectedPath.value) return
   loading.value = true
   try {
-    const resp = await apiService.previewManualImport(selectedPath.value)
+    const resp = await apiService.previewManualImport(
+      selectedPath.value,
+      selectedExistingAudiobookId.value,
+    )
+    const previouslySelectedPaths = new Set(
+      previewItems.value
+        .filter((item) => item.selected && item.fullPath)
+        .map((item) => item.fullPath),
+    )
     // resp.items expected to be an array of detected files with metadata
     const items = Array.isArray(resp?.items) ? (resp.items as unknown[]) : []
     // only include common audio file extensions
@@ -658,9 +880,14 @@ const loadPreview = async () => {
       const obj = i as Record<string, unknown>
       const it: PreviewItem = {
         relativePath: typeof obj.relativePath === 'string' ? obj.relativePath : '',
-        selected: false,
+        destinationPath: typeof obj.destinationPath === 'string' ? obj.destinationPath : null,
+        selected:
+          Boolean(selectedExistingAudiobookId.value) ||
+          previouslySelectedPaths.has(typeof obj.fullPath === 'string' ? obj.fullPath : ''),
         matchedAudiobookId:
-          typeof obj.matchedAudiobookId === 'number' ? obj.matchedAudiobookId : null,
+          typeof obj.matchedAudiobookId === 'number'
+            ? obj.matchedAudiobookId
+            : selectedExistingAudiobookId.value,
         releaseGroup: typeof obj.releaseGroup === 'string' ? obj.releaseGroup : null,
         qualityProfileId: typeof obj.qualityProfileId === 'number' ? obj.qualityProfileId : null,
         language: typeof obj.language === 'string' ? obj.language : null,
@@ -672,6 +899,10 @@ const loadPreview = async () => {
   } catch (err) {
     console.error('Failed to preview import:', err)
     previewItems.value = []
+    useToast().error(
+      'Preview failed',
+      err instanceof Error ? err.message : 'Could not inspect the selected download path.',
+    )
   } finally {
     loading.value = false
   }
@@ -692,11 +923,19 @@ const startAutomaticImport = async () => {
     const autoPayload: ManualImportRequest = { path: selectedPath.value, mode: 'automatic' }
     if (action.value !== '') autoPayload.action = action.value
     const resp = await apiService.startManualImport(autoPayload)
-    // resp should contain import summary
-    emit('imported', { imported: resp.importedCount ?? 0 })
-    close()
+    const imported = resp.importedCount ?? 0
+    if (imported > 0) {
+      emit('imported', { imported })
+      close()
+    } else {
+      useToast().error('Import failed', 'No files were imported. Source files were retained.')
+    }
   } catch (err) {
     console.error('Automatic import failed:', err)
+    useToast().error(
+      'Import failed',
+      err instanceof Error ? err.message : 'The download could not be imported.',
+    )
   } finally {
     loading.value = false
   }
@@ -735,10 +974,30 @@ const importSelected = async () => {
       action: action.value || 'hardlink/copy',
     }
     const resp = await apiService.startManualImport(manualPayload)
-    emit('imported', { imported: resp.importedCount ?? selected.length })
-    close()
+    const imported = resp.importedCount ?? 0
+    if (imported > 0) {
+      const failedCount = resp.results?.filter((result) => !result.success).length ?? 0
+      emit('imported', { imported })
+      if (failedCount > 0) {
+        useToast().warning(
+          'Import partially complete',
+          `${failedCount} file${failedCount === 1 ? '' : 's'} failed. The source download was retained.`,
+        )
+      }
+      close()
+    } else {
+      const firstFailure = resp.results?.find((result) => !result.success)
+      useToast().error(
+        'Import failed',
+        firstFailure?.error || 'No files were imported. Source files were retained.',
+      )
+    }
   } catch (err) {
     console.error('Manual import failed:', err)
+    useToast().error(
+      'Import failed',
+      err instanceof Error ? err.message : 'The selected files could not be imported.',
+    )
   } finally {
     loading.value = false
   }
@@ -1197,5 +1456,64 @@ const getItemIssues = (item: PreviewItem): string[] => {
 }
 .recent-item:hover {
   border-color: #444;
+}
+
+.manual-import-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+}
+
+.manual-import-match h3,
+.manual-import-match p,
+.manual-import-metadata-results {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.manual-import-metadata-search {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.manual-import-metadata-search .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.manual-import-metadata-results {
+  display: grid;
+  gap: 0.4rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.manual-import-metadata-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.55rem;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.planned-destination {
+  display: block;
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+  color: var(--text-muted, #aaa);
+}
+
+.manual-import-error {
+  color: var(--danger-color, #f66);
 }
 </style>

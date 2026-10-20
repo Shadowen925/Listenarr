@@ -36,13 +36,27 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             var seriesNumber = (audiobook.SeriesNumber ?? primaryMembership?.SeriesNumber)?.Trim();
             var queries = new List<string>();
 
-            AddQuery(queries, title, author, series);
             AddQuery(queries, title, author);
+            AddQuery(queries, title);
+            AddQuery(queries, NormalizeTitle(title), author);
+            AddQuery(queries, NormalizeTitle(title));
             AddQuery(queries, series, seriesNumber, author);
-            AddQuery(queries, title, series);
+            AddQuery(queries, series, seriesNumber);
             AddQuery(queries, audiobook.Asin);
 
             return queries;
+        }
+
+        private static string? NormalizeTitle(string? title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return null;
+            }
+
+            return System.Text.RegularExpressions.Regex
+                .Replace(title, @"[^\p{L}\p{N}]+", " ")
+                .Trim();
         }
 
         private static void AddQuery(List<string> queries, params string?[] parts)

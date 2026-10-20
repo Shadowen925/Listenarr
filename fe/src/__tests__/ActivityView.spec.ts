@@ -117,6 +117,11 @@ const mountActivityView = async () => {
       stubs: {
         CustomSelect: true,
         RouterLink: { template: '<a><slot /></a>' },
+        ManualImportModal: {
+          props: ['isOpen', 'initialPath', 'sourceTitle'],
+          template:
+            '<div data-testid="manual-import-modal" :data-open="isOpen" :data-path="initialPath" :data-title="sourceTitle" />',
+        },
       },
     },
   })
@@ -229,6 +234,64 @@ describe('ActivityView', () => {
       expect.arrayContaining(['d1', 'd2', 'd3', 'd4']),
     )
     expect(vm.filteredQueue).toHaveLength(4)
+    expect(wrapper.find('[data-testid="import-download-d1"]').exists()).toBe(false)
+  })
+
+  it('offers manual import for completed external downloads and resolves their Listenarr path', async () => {
+    mockSignalR()
+    mockApi({
+      getQueue: vi.fn(async () => ({
+        items: [
+          {
+            id: 'sab-1',
+            title: 'Project Hail Mary',
+            status: 'completed',
+            progress: 100,
+            size: 100,
+            downloaded: 100,
+            downloadSpeed: 0,
+            quality: '',
+            downloadClient: 'SABnzbd',
+            downloadClientId: 'sab-1',
+            downloadClientType: 'external',
+            addedAt: new Date().toISOString(),
+            canPause: false,
+            canRemove: true,
+            localPath: 'C:\\downloads\\Project Hail Mary',
+          },
+        ],
+        clients: [],
+        generatedAt: new Date().toISOString(),
+        hasStaleData: false,
+        hasUnavailableClients: false,
+      })),
+    })
+    mockConfigurationStore(true)
+    mockLibraryStore()
+    mockDownloadsStore({
+      completedDownloads: [
+        {
+          id: 'sab-1',
+          status: 'Completed',
+          progress: 100,
+          downloadClientId: 'sab-1',
+          startedAt: new Date().toISOString(),
+          title: 'Project Hail Mary',
+          downloadedSize: 100,
+          totalSize: 100,
+        },
+      ],
+    })
+
+    const wrapper = await mountActivityView()
+    const importButton = wrapper.get('[data-testid="import-download-sab-1"]')
+    await importButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="manual-import-modal"]').attributes('data-open')).toBe('true')
+    expect(wrapper.get('[data-testid="manual-import-modal"]').attributes('data-path')).toBe(
+      'C:\\downloads\\Project Hail Mary',
+    )
   })
 
   it('filters the unified activity list by text', async () => {

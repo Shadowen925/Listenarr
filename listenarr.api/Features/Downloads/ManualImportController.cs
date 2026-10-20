@@ -120,62 +120,6 @@ public partial class ManualImportController : ControllerBase
     }
 
     /// <summary>
-    /// Preview the files available for manual import from a directory.
-    /// </summary>
-    /// <param name="path">Absolute path to the directory to scan.</param>
-    /// <returns>List of files with relative paths, sizes, and tentative metadata.</returns>
-    [HttpGet("preview")]
-    public async Task<ActionResult<object>> Preview([FromQuery] string path)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path)) return BadRequest(new { error = "Path is required" });
-
-            var normalized = Path.GetFullPath(path);
-            if (!_fileSystem.DirectoryExists(normalized)) return NotFound(new { error = "Directory not found" });
-
-            var settings = await _configService.GetApplicationSettingsAsync();
-
-            var files = _fileSystem.EnumerateFiles(normalized, "*.*", SearchOption.AllDirectories)
-                .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
-                .Select(f => new
-                {
-                    relativePath = Path.GetRelativePath(normalized, f),
-                    fullPath = f,
-                    size = _fileSystem.GetFileLength(f),
-                    // Simple heuristics for sample metadata
-                    series = (string?)null,
-                    season = (string?)null,
-                    episodes = (string?)null,
-                    quality = (string?)null,
-                    languages = new string[] { "English" },
-                    releaseType = "Unknown"
-                })
-                .ToList();
-
-            var items = files.Select(f => new
-            {
-                relativePath = f.relativePath,
-                fullPath = f.fullPath,
-                size = FormatSize(f.size),
-                series = f.series,
-                season = f.season,
-                episodes = f.episodes,
-                quality = f.quality,
-                languages = f.languages,
-                releaseType = f.releaseType
-            }).ToList();
-
-            return Ok(new { items });
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-        {
-            _logger.LogError(ex, "Error previewing manual import for path {Path}", path);
-            return StatusCode(500, new { error = "Failed to preview import" });
-        }
-    }
-
-    /// <summary>
     /// Given a list of items, tries to import them all into the library
     /// </summary>
     /// <param name="request">Import configuration including source path, mode, import action (do nothing/copy/move/...), and selected file items.</param>
@@ -192,10 +136,13 @@ public partial class ManualImportController : ControllerBase
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var sourceDirectory = Path.GetFullPath(request.Path);
-        if (!_fileSystem.DirectoryExists(sourceDirectory))
+        var sourcePath = Path.GetFullPath(request.Path);
+        var sourceIsFile = _fileSystem.FileExists(sourcePath);
+        var sourceDirectory = sourceIsFile ? Path.GetDirectoryName(sourcePath) : sourcePath;
+        if (string.IsNullOrWhiteSpace(sourceDirectory)
+            || (!sourceIsFile && !_fileSystem.DirectoryExists(sourceDirectory)))
         {
-            return NotFound(new { error = "Directory not found" });
+            return NotFound(new { error = "Import source not found" });
         }
 
         if (request.Items == null || !request.Items.Any())
@@ -221,6 +168,16 @@ public partial class ManualImportController : ControllerBase
                 rootFolders,
                 "Source filesystem identity is unavailable.",
                 cancellationToken);
+            if (sourceIsFile
+                && (request.Items.Count != 1
+                    || request.Items[0].FullPath is not { Length: > 0 } selectedSourcePath
+                    || !sourceSemantics.Comparer.Equals(
+                        Path.GetFullPath(selectedSourcePath),
+                        sourcePath)))
+            {
+                return BadRequest(new { error = "A single-file import must select only the specified source file." });
+            }
+
             var orderedItems = ManualImportPathPlanner.BuildOrderedItems(
                 request.Items,
                 sourceSemantics.Comparer);
@@ -339,7 +296,8 @@ public partial class ManualImportController : ControllerBase
                             ApplyCompatibilityCleanupResult(results, cleanup);
                         }
 
-                        if (request.Action != FileAction.None
+                        if (!sourceIsFile
+                            && request.Action != FileAction.None
                             && request.CleanupEmptySourceFolders)
                         {
                             operationToken.ThrowIfCancellationRequested();

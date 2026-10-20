@@ -317,6 +317,27 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
 
         [Fact]
         [Trait("Method", "GetQueueItemAsync")]
+        [Trait("Scenario", "A stale completed content path is reported without throwing a filesystem exception")]
+        public async Task GetQueueItemAsync_MissingContentPath_DoesNotEnumerateMissingDirectory()
+        {
+            var missingRemotePath = FileUtils.GetAbsolutePath("downloads", "missing-completed-folder");
+            var adapter = (DownloadCLientAdapterMock)((DownloadClientGateway)downloadClientGateway).ResolveAdapter(client);
+            adapter.QueueItemMock = new QueueItemBuilder()
+                .WithContentPath(missingRemotePath)
+                .WithStatus("completed")
+                .Build();
+
+            var item = await downloadClientGateway.GetQueueItemAsync(
+                client,
+                new DownloadBuilder().Build(),
+                new QueueItem());
+
+            Assert.NotNull(item.SourceFiles);
+            Assert.Empty(item.SourceFiles);
+        }
+
+        [Fact]
+        [Trait("Method", "GetQueueItemAsync")]
         [Trait("Scenario", "Remote path mapping preserves whitespace-bearing path segments")]
         public async Task GetQueueItemAsync_PreservesWhitespaceAfterRemotePathMapping()
         {

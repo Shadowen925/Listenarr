@@ -83,6 +83,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             var submissionAttempts = new List<AutomaticSearchSubmissionAttempt>();
             var rejectionReasons = new List<string>();
             // Search for results
+            var rawSearchResults = new List<SearchResult>();
             var searchResults = new List<SearchResult>();
             var attemptedQueries = new List<string>();
             var successfulQueries = 0;
@@ -117,24 +118,11 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                         continue;
                     }
 
-                    var matchingResults = queryResults
-                        .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
-                        .ToList();
-                    var rejectedIdentityCount = queryResults.Count - matchingResults.Count;
-                    identityRejectedCount += rejectedIdentityCount;
-                    if (rejectedIdentityCount > 0)
+                    foreach (var result in queryResults)
                     {
-                        _logger.LogWarning(
-                            "Discarded {Count} automatic search result(s) with conflicting audiobook identity for '{Title}'",
-                            rejectedIdentityCount,
-                            audiobook.Title);
-                    }
-
-                    foreach (var result in matchingResults)
-                    {
-                        if (!searchResults.Any(existing => HaveSameRelease(existing, result)))
+                        if (!rawSearchResults.Any(existing => HaveSameRelease(existing, result)))
                         {
-                            searchResults.Add(result);
+                            rawSearchResults.Add(result);
                         }
                     }
                 }
@@ -173,6 +161,18 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 throw;
             }
             var searchedQuery = string.Join(" | ", attemptedQueries);
+            searchResults = rawSearchResults
+                .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
+                .ToList();
+            identityRejectedCount = rawSearchResults.Count - searchResults.Count;
+            if (identityRejectedCount > 0)
+            {
+                _logger.LogWarning(
+                    "Discarded {Count} distinct automatic search result(s) with conflicting audiobook identity for '{Title}'",
+                    identityRejectedCount,
+                    audiobook.Title);
+            }
+
             _logger.LogInformation(
                 "Found {Count} matching search results for audiobook '{Title}' using query '{Query}'",
                 searchResults.Count,
@@ -183,7 +183,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             try
             {
                 // Build a concise summary of up to 10 raw results
-                var rawSummaries = searchResults.Take(10).Select(r => new
+                var rawSummaries = rawSearchResults.Take(10).Select(r => new
                 {
                     title = r.Title,
                     asin = r.Asin,
@@ -197,7 +197,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 using var scope = _serviceScopeFactory.CreateScope();
                 var hub = scope.ServiceProvider.GetRequiredService<IHubContext<DownloadHub>>();
                 // Send structured payload with type and audiobookId so the UI can ignore automatic messages by default
-                await hub.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Automatic search query: {searchedQuery}", details = new { rawCount = totalIndexerResultCount, rawSamples = rawSummaries }, type = "automatic", audiobookId = audiobook.Id } });
+                await hub.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Automatic search query: {searchedQuery}", details = new { rawCount = totalIndexerResultCount, distinctRawCount = rawSearchResults.Count, identityRejectedCount, rawSamples = rawSummaries }, type = "automatic", audiobookId = audiobook.Id } });
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
@@ -280,7 +280,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
                 using var scope2 = _serviceScopeFactory.CreateScope();
                 var hub2 = scope2.ServiceProvider.GetRequiredService<IHubContext<DownloadHub>>();
-                await hub2.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Scored results for '{audiobook.Title}'", details = new { query = searchedQuery, resultCount = searchResults.Count, rejectedReleaseCount = releaseRejectionCount, eligibleCount = scoredResults.Count(s => !s.IsRejected), scoredCount = scoredResults.Count, scoredSamples = scoredSummaries }, type = "automatic", audiobookId = audiobook.Id } });
+                await hub2.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Scored results for '{audiobook.Title}'", details = new { query = searchedQuery, rawResultCount = totalIndexerResultCount, identityRejectedCount, resultCount = searchResults.Count, qualityRejectedCount = scoredResults.Count(s => s.IsRejected), duplicateExcludedCount = releaseRejectionCount, eligibleCount = scoredResults.Count(s => !s.IsRejected), scoredCount = scoredResults.Count, scoredSamples = scoredSummaries }, type = "automatic", audiobookId = audiobook.Id } });
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {

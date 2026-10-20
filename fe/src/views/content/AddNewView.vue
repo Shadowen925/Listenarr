@@ -645,6 +645,13 @@
                       : 'Quick Add'
                 }}
               </button>
+              <small
+                v-if="quickAddStates['asin-result']?.searchStatus"
+                class="quick-add-search-status"
+                role="status"
+              >
+                {{ getQuickAddSearchMessage(quickAddStates['asin-result']?.searchStatus) }}
+              </small>
             </div>
           </div>
         </div>
@@ -998,6 +1005,13 @@
                         : 'Quick Add'
                 }}
               </button>
+              <small
+                v-if="quickAddStates[book.key]?.searchStatus"
+                class="quick-add-search-status"
+                role="status"
+              >
+                {{ getQuickAddSearchMessage(quickAddStates[book.key]?.searchStatus) }}
+              </small>
               <button
                 :class="[
                   'btn',
@@ -1405,6 +1419,13 @@ const emptyStateTitleMessage = computed(() => {
   return 'No audiobooks found. Try refining your search terms.'
 })
 
+const notifyNoResults = () => {
+  const query = lastSubmittedSearchQuery.value
+  if (lastNoResultsNotification === searchOperationId) return
+  lastNoResultsNotification = searchOperationId
+  toast.info(`No results found for "${query}"`, 'Search')
+}
+
 // Pagination / candidate limits for advanced results
 const resultsPerPage = ref<number>(50)
 const currentAdvancedPage = ref<number>(1)
@@ -1481,9 +1502,24 @@ const errorMessage = ref('')
 const showAddLibraryModal = ref(false)
 const selectedBookForLibrary = ref<AudibleBookMetadata>({} as AudibleBookMetadata)
 const quickAddOptions = ref({ monitored: true, autoSearch: true })
+type QuickAddSearchStatus =
+  | 'queued'
+  | 'running'
+  | 'no-results'
+  | 'submitted'
+  | 'completed'
+  | 'error'
 const quickAddStates = ref<
-  Record<string, { status: 'adding' | 'added' | 'failed'; reason?: string }>
+  Record<
+    string,
+    {
+      status: 'adding' | 'added' | 'failed'
+      reason?: string
+      searchStatus?: QuickAddSearchStatus
+    }
+  >
 >({})
+const quickAddAddedAudiobookIds = ref<Record<string, number>>({})
 const selectedBulkKeys = ref<string[]>([])
 const bulkAddInProgress = ref(false)
 const bulkAddProgress = ref({
@@ -1494,6 +1530,9 @@ const bulkAddProgress = ref({
   skipped: 0,
 })
 const quickAddInFlightIdentities = ref(new Set<string>())
+const lastSubmittedSearchQuery = ref('')
+let searchOperationId = 0
+let lastNoResultsNotification: number | null = null
 const selectedBulkResults = computed(() =>
   titleResults.value.filter((book) => selectedBulkKeys.value.includes(book.key)),
 )
@@ -1722,7 +1761,7 @@ const handleAdvancedSearchResults = async (results: Array<Partial<SearchResult> 
     totalTitleResultsCount.value = 0
     searchStatus.value = ''
     await checkExistingInLibrary()
-    toast.info('No results found for the selected language', 'Search')
+    notifyNoResults()
     return
   }
 
@@ -1991,6 +2030,15 @@ const performAdvancedSearch = async () => {
       return
     }
 
+    const operationId = ++searchOperationId
+    const submittedQuery = [p.title, p.author, p.series, p.isbn, p.asin]
+      .filter((value) => Boolean(value?.trim()))
+      .join(' ')
+    lastSubmittedSearchQuery.value = submittedQuery
+    titleQuery.value = submittedQuery
+    asinQuery.value = submittedQuery
+    authorQuery.value = ''
+    if (isSearching.value) cancelSearch()
     advancedSearchError.value = ''
     clearBulkSearchSelection()
     isSearching.value = true
@@ -2023,6 +2071,7 @@ const performAdvancedSearch = async () => {
           }
           if (languageFilter) seriesSearchParams.language = languageFilter
           const resp = await apiService.advancedSearch(seriesSearchParams)
+          if (operationId !== searchOperationId) return
           // backend returns enriched SearchResult objects
           await handleAdvancedSearchResults(resp as Partial<SearchResult>[])
         } catch (e) {
@@ -2040,6 +2089,7 @@ const performAdvancedSearch = async () => {
       // If both author and series provided, author takes priority; perform author search then filter by series (no extra Audible series lookup)
       if (params.author && seriesName) {
         const results = (await apiService.advancedSearch(params)) as Partial<SearchResult>[]
+        if (operationId !== searchOperationId) return
 
         const filtered = results.filter((r) => {
           try {
@@ -2106,6 +2156,7 @@ const performAdvancedSearch = async () => {
       }
 
       const results = await apiService.advancedSearch(params)
+      if (operationId !== searchOperationId) return
       await handleAdvancedSearchResults(results)
 
       // Scroll to top of results after search
@@ -2117,10 +2168,12 @@ const performAdvancedSearch = async () => {
         }
       })
     } catch (err) {
-      advancedSearchError.value = err instanceof Error ? err.message : 'Search failed'
-      errorMessage.value = advancedSearchError.value
+      if (operationId === searchOperationId) {
+        advancedSearchError.value = err instanceof Error ? err.message : 'Search failed'
+        errorMessage.value = advancedSearchError.value
+      }
     } finally {
-      isSearching.value = false
+      if (operationId === searchOperationId) isSearching.value = false
     }
 
     return
@@ -2133,6 +2186,12 @@ const performAdvancedSearch = async () => {
     return
   }
 
+  const operationId = ++searchOperationId
+  lastSubmittedSearchQuery.value = query
+  titleQuery.value = query
+  asinQuery.value = query
+  authorQuery.value = ''
+  if (isSearching.value) cancelSearch()
   advancedSearchError.value = ''
   isSearching.value = true
   searchError.value = ''
@@ -2169,12 +2228,15 @@ const performAdvancedSearch = async () => {
     params.pagination = { page: 1, limit: resultsPerPage.value }
     currentAdvancedPage.value = 1
     const results = await apiService.advancedSearch(params)
+    if (operationId !== searchOperationId) return
     await handleAdvancedSearchResults(results)
   } catch (err) {
-    advancedSearchError.value = err instanceof Error ? err.message : 'Search failed'
-    errorMessage.value = advancedSearchError.value
+    if (operationId === searchOperationId) {
+      advancedSearchError.value = err instanceof Error ? err.message : 'Search failed'
+      errorMessage.value = advancedSearchError.value
+    }
   } finally {
-    isSearching.value = false
+    if (operationId === searchOperationId) isSearching.value = false
   }
 }
 
@@ -2288,7 +2350,7 @@ const handleUnifiedSearchResults = async (results: SearchResult[] | null | undef
 
     searchStatus.value = ''
     searchError.value = ''
-    toast.info('No results found', 'Search')
+    notifyNoResults()
     await scrollUnifiedSearchInputIntoView()
   } catch (e) {
     logger.debug('Error handling unified search results', e)
@@ -2297,7 +2359,14 @@ const handleUnifiedSearchResults = async (results: SearchResult[] | null | undef
 
 const performSearch = async () => {
   clearBulkSearchSelection()
+  const query = searchQuery.value.trim()
+  const operationId = ++searchOperationId
+  lastSubmittedSearchQuery.value = query
+  titleQuery.value = query
+  asinQuery.value = query
+  authorQuery.value = ''
   const results = await runSearch()
+  if (operationId !== searchOperationId || searchQuery.value.trim() !== query) return results
   await handleUnifiedSearchResults(results)
   return results
 }
@@ -3227,16 +3296,25 @@ async function quickAddTitleResult(
   if (quickAddInFlightIdentities.value.has(identity)) return false
 
   quickAddInFlightIdentities.value.add(identity)
+  const searchRequested = addOptions.monitored && addOptions.autoSearch
+  const searchRequestedAt = Date.now()
   quickAddStates.value = {
     ...quickAddStates.value,
-    [book.key]: { status: 'adding' },
+    [book.key]: { status: 'adding', searchStatus: searchRequested ? 'queued' : undefined },
   }
   try {
     const added = await selectTitleResult(book, true, addOptions)
+    const audiobookId = quickAddAddedAudiobookIds.value[identity]
+    const searchStatus =
+      added && searchRequested
+        ? audiobookId
+          ? await getQuickAddSearchStatus(audiobookId, searchRequestedAt)
+          : 'queued'
+        : undefined
     quickAddStates.value = {
       ...quickAddStates.value,
       [book.key]: added
-        ? { status: 'added' }
+        ? { status: 'added', searchStatus }
         : {
             status: 'failed',
             reason: 'The audiobook could not be added. See the error notification.',
@@ -3254,16 +3332,30 @@ async function quickAddAudibleResult(): Promise<void> {
   const identity = getQuickAddIdentity(result.asin, result.openLibraryId, 'asin-result')
   if (quickAddInFlightIdentities.value.has(identity)) return
   quickAddInFlightIdentities.value.add(identity)
+  const searchRequested = quickAddOptions.value.monitored && quickAddOptions.value.autoSearch
+  const searchRequestedAt = Date.now()
   quickAddStates.value = {
     ...quickAddStates.value,
-    'asin-result': { status: 'adding' },
+    'asin-result': {
+      status: 'adding',
+      searchStatus: searchRequested ? 'queued' : undefined,
+    },
   }
 
   try {
     const added = await addToLibrary(result, true, { ...quickAddOptions.value })
+    const audiobookId = quickAddAddedAudiobookIds.value[identity]
+    const searchStatus =
+      added && searchRequested
+        ? audiobookId
+          ? await getQuickAddSearchStatus(audiobookId, searchRequestedAt)
+          : 'queued'
+        : undefined
     quickAddStates.value = {
       ...quickAddStates.value,
-      'asin-result': added ? { status: 'added' } : { status: 'failed' },
+      'asin-result': added
+        ? { status: 'added', searchStatus }
+        : { status: 'failed', searchStatus: undefined },
     }
   } catch (error) {
     logger.error('Quick add failed for ASIN result', error)
@@ -3280,6 +3372,49 @@ async function quickAddAudibleResult(): Promise<void> {
     }
   } finally {
     quickAddInFlightIdentities.value.delete(identity)
+  }
+}
+
+async function getQuickAddSearchStatus(
+  audiobookId: number,
+  requestedAt: number,
+): Promise<QuickAddSearchStatus> {
+  try {
+    const history = await apiService.getAutomaticSearchHistory(audiobookId, 5)
+    const immediateSearch = history.find(
+      (entry) =>
+        entry.searchTrigger.toLowerCase() === 'immediate' &&
+        Date.parse(entry.searchTimestamp) >= requestedAt - 1000,
+    )
+    if (!immediateSearch) return 'queued'
+
+    const outcome = immediateSearch.finalOutcome.toLowerCase()
+    if (outcome === 'downloadqueued') return 'submitted'
+    if (outcome === 'noreleases' || outcome === 'nosuitablereleases') return 'no-results'
+    if (outcome.includes('failure')) return 'error'
+    return 'completed'
+  } catch (error) {
+    logger.warn('Could not load immediate-search diagnostics after Quick Add', error)
+    return 'queued'
+  }
+}
+
+function getQuickAddSearchMessage(status?: QuickAddSearchStatus): string {
+  switch (status) {
+    case 'queued':
+      return 'Immediate search queued; periodic retries remain enabled.'
+    case 'running':
+      return 'Immediate search is running.'
+    case 'no-results':
+      return 'Search completed without a suitable release; periodic retries remain enabled.'
+    case 'submitted':
+      return 'Release submitted to the download client.'
+    case 'error':
+      return 'Search failed; periodic retries remain enabled.'
+    case 'completed':
+      return 'Search completed; no download submission was confirmed.'
+    default:
+      return ''
   }
 }
 
@@ -3352,11 +3487,14 @@ const handleLibraryAdded = (audiobook: Audiobook) => {
   if (audiobook.asin) {
     logger.debug('Marking ASIN as added:', audiobook.asin)
     addedAsins.value.add(audiobook.asin)
+    quickAddAddedAudiobookIds.value[`asin:${audiobook.asin.trim().toUpperCase()}`] = audiobook.id
   }
   // Mark OpenLibrary ID as added when present
   if (audiobook.openLibraryId) {
     logger.debug('Marking OpenLibrary ID as added:', audiobook.openLibraryId)
     addedOpenLibraryIds.value.add(audiobook.openLibraryId)
+    quickAddAddedAudiobookIds.value[`openlibrary:${audiobook.openLibraryId.trim().toUpperCase()}`] =
+      audiobook.id
   }
 
   // Reset search if needed
@@ -3379,7 +3517,7 @@ const handleSimpleSearchResults = async (results: SearchResult[]) => {
     totalTitleResultsCount.value = 0
     searchStatus.value = ''
     await checkExistingInLibrary()
-    toast.info('No results found for the selected language', 'Search')
+    notifyNoResults()
     return
   }
 

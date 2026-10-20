@@ -415,6 +415,49 @@ namespace Listenarr.Tests.Features.Api.Features.Downloads
         }
 
         [Fact]
+        public async Task Preview_WithMatchedAudiobook_ReturnsPlannedDestinationPath()
+        {
+            var basePath = CreateTempDirectory("listenarr-manual-preview-destination");
+            var sourceDirectory = CreateTempDirectory("listenarr-manual-preview-source");
+            var sourceFile = Path.Join(sourceDirectory, "release.m4b");
+            await File.WriteAllTextAsync(sourceFile, "audio");
+            var audiobook = new Audiobook
+            {
+                Id = 431,
+                Title = "Preview Book",
+                Authors = ["Preview Author"],
+                BasePath = basePath
+            };
+            var settings = new ApplicationSettings
+            {
+                OutputPath = basePath,
+                FolderNamingPattern = "{Author}/{Title}",
+                FileNamingPattern = "{Title}"
+            };
+            var metadata = new Mock<IMetadataService>();
+            var controller = GetController(
+                audiobook,
+                settings,
+                metadataMock: metadata,
+                rootFolders:
+                [
+                    new RootFolder { Path = basePath, IsDefault = true }
+                ]);
+            metadata.Setup(service => service.ExtractFileMetadataAsync(sourceFile))
+                .ReturnsAsync(new AudioMetadata { Title = "Preview Book", Format = "m4b" });
+
+            var response = await controller.Preview(sourceDirectory, audiobook.Id);
+
+            var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(response.Result);
+            using var json = System.Text.Json.JsonDocument.Parse(
+                System.Text.Json.JsonSerializer.Serialize(ok.Value));
+            var item = json.RootElement.GetProperty("items")[0];
+            Assert.Equal(
+                Path.Join(basePath, "Preview Author", "Preview Book", "Preview Book.m4b"),
+                item.GetProperty("destinationPath").GetString());
+        }
+
+        [Fact]
         public async Task Start_MoveRecoveryCompletedBeforeItemLoop_ReturnsRecoveredSuccessWithoutRepublishing()
         {
             var basePath = CreateTempDirectory(

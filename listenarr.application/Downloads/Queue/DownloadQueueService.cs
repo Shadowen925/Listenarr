@@ -30,7 +30,8 @@ namespace Listenarr.Application.Downloads.Queue
         IDownloadRepository downloadRepository,
         DownloadQueueCandidateLoader candidateLoader,
         DownloadClientQueuePoller clientQueuePoller,
-        ILogger<DownloadQueueService> logger) : IDownloadQueueService
+        ILogger<DownloadQueueService> logger,
+        IDownloadClientGateway? clientGateway = null) : IDownloadQueueService
     {
         internal TimeSpan _clientQueueTimeout = TimeSpan.FromSeconds(15);
         internal TimeSpan _staleSnapshotMaxAge = TimeSpan.FromMinutes(3);
@@ -303,9 +304,36 @@ namespace Listenarr.Application.Downloads.Queue
                             continue;
                         }
 
-                        var clientCfg = enabledClients.FirstOrDefault(c => c.Id == download.DownloadClientId);
+                        var clientCfg = downloadClients.FirstOrDefault(c => c.Id == download.DownloadClientId);
                         var clientName = clientCfg?.Name ?? download.DownloadClientId ?? "External Client";
                         var clientType = clientCfg?.Type?.ToLowerInvariant() ?? "external";
+                        QueueItem? resolvedItem = null;
+                        if (clientGateway != null && clientCfg != null)
+                        {
+                            try
+                            {
+                                resolvedItem = await clientGateway.GetQueueItemAsync(
+                                    clientCfg,
+                                    download,
+                                    new QueueItem
+                                    {
+                                        Id = download.GetExternalId() ?? download.Id,
+                                        Title = download.Title ?? "Unknown",
+                                        Status = "completed",
+                                        ContentPath = string.IsNullOrWhiteSpace(download.FinalPath)
+                                            ? null
+                                            : download.FinalPath
+                                    });
+                            }
+                            catch (Exception exception) when (
+                                exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
+                            {
+                                logger.LogWarning(
+                                    "Could not resolve completed source path for download {DownloadId} ({FailureType})",
+                                    download.Id,
+                                    exception.GetType().Name);
+                            }
+                        }
 
                         queueItems.Add(new QueueItem
                         {
@@ -330,9 +358,9 @@ namespace Listenarr.Application.Downloads.Queue
                             CanPause = false,
                             CanRemove = true,
                             AudiobookId = download.AudiobookId,
-                            RemotePath = download.DownloadPath,
-                            LocalPath = download.FinalPath,
-                            ContentPath = download.FinalPath ?? download.DownloadPath
+                            RemotePath = resolvedItem?.RemotePath,
+                            LocalPath = resolvedItem?.LocalPath,
+                            ContentPath = resolvedItem?.ContentPath
                         });
 
                         existingIds.Add(download.Id);

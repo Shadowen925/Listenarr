@@ -1169,6 +1169,7 @@ const displaySeriesMemberships = computed<AudiobookSeriesMembership[]>(() => {
     .map((membership, index) => ({
       ...membership,
       seriesName: (membership.seriesName || '').trim(),
+      seriesId: membership.seriesId?.trim(),
       seriesNumber: membership.seriesNumber?.trim(),
       seriesAsin: membership.seriesAsin?.trim(),
       isPrimary: Boolean(membership.isPrimary),

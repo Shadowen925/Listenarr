@@ -580,8 +580,13 @@ describe('AddNewView pagination', () => {
 
   it('shows toast and scrolls to input when simple search returns no results', async () => {
     const apiModule = await import('@/services/api')
-    const apiService = apiModule.apiService as unknown as { searchAudibleByTitleAndAuthor?: Mock }
+    const apiService = apiModule.apiService as unknown as {
+      searchAudibleByTitleAndAuthor?: Mock
+      advancedSearch: Mock
+    }
     apiService.searchAudibleByTitleAndAuthor?.mockResolvedValue({ totalResults: 0, results: [] })
+    const originalAdvancedSearch = apiService.advancedSearch
+    apiService.advancedSearch = vi.fn().mockResolvedValue([])
 
     const router = createTestRouter()
     const wrapper = mount(AddNewView, { global: { plugins: [createPinia(), router] } })
@@ -589,23 +594,71 @@ describe('AddNewView pagination', () => {
       searchQuery?: string
       performSearch?: () => Promise<void>
     }
+    const toastSvc = (await import('@/services/toastService')).useToast()
+    toastSvc.toasts.splice(0)
 
     // Spy on window.scrollTo
     const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
 
-    vm.searchQuery = 'Nothing'
+    vm.searchQuery = '100%_match*'
     await vm.performSearch()
     await wrapper.vm.$nextTick()
     // allow microtasks to flush so the watch handler runs and any scroll is triggered
     await new Promise((r) => setTimeout(r, 10))
 
-    const toastSvc = (await import('@/services/toastService')).useToast()
     expect(toastSvc.toasts.length).toBeGreaterThan(0)
-    expect(toastSvc.toasts[0].title).toBe('No results found')
+    expect(toastSvc.toasts[0].title).toBe('No results found for "100%_match*"')
+    expect(toastSvc.toasts).toHaveLength(1)
+    expect(apiService.advancedSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '100%_match*' }),
+    )
 
     // Scroll behavior is executed in the browser and can be environment-dependent in jsdom;
     // assert the user-facing toast is shown which signals the empty-state handling.
     scrollSpy.mockRestore()
+    apiService.advancedSearch = originalAdvancedSearch
+  })
+
+  it('does not let an older title-search response overwrite a newer search', async () => {
+    const apiModule = await import('@/services/api')
+    let resolveFirst: ((value: unknown[]) => void) | undefined
+    let resolveSecond: ((value: unknown[]) => void) | undefined
+    const apiService = apiModule.apiService as unknown as {
+      advancedSearch: Mock
+    }
+    const originalAdvancedSearch = apiService.advancedSearch
+    apiService.advancedSearch = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<unknown[]>((resolve) => (resolveFirst = resolve)))
+      .mockImplementationOnce(() => new Promise<unknown[]>((resolve) => (resolveSecond = resolve)))
+
+    const router = createTestRouter()
+    const wrapper = mount(AddNewView, { global: { plugins: [createPinia(), router] } })
+    const vm = wrapper.vm as unknown as {
+      searchQuery: string
+      handleSearchInput: () => void
+      performSearch: () => Promise<unknown>
+      titleResults: Array<{ title: string }>
+    }
+
+    vm.searchQuery = 'first query'
+    const firstSearch = vm.performSearch()
+    vm.searchQuery = 'second query'
+    vm.handleSearchInput()
+    const secondSearch = vm.performSearch()
+
+    resolveSecond?.([])
+    await secondSearch
+    resolveFirst?.([{ id: 'stale', title: 'Stale result', artist: 'Author' }])
+    await firstSearch
+    await flushPromises()
+
+    expect(vm.titleResults).toEqual([])
+    expect(apiService.advancedSearch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ title: 'second query' }),
+    )
+    apiService.advancedSearch = originalAdvancedSearch
   })
 
   it('maps runtime from runtimeLengthMin (minutes) and keeps as minutes', async () => {
@@ -983,10 +1036,29 @@ describe('AddNewView pagination', () => {
 
   it('quick-adds enriched metadata with monitoring and immediate search enabled', async () => {
     const apiModule = await import('@/services/api')
-    const apiService = apiModule.apiService as unknown as { addToLibrary: Mock }
+    const apiService = apiModule.apiService as unknown as {
+      addToLibrary: Mock
+      getAutomaticSearchHistory: Mock
+    }
     apiService.addToLibrary = vi.fn().mockResolvedValue({
       audiobook: { id: 21, title: 'Dune', openLibraryId: 'OL123' },
     })
+    apiService.getAutomaticSearchHistory = vi.fn().mockResolvedValue([
+      {
+        id: 1,
+        audiobookId: 21,
+        searchTimestamp: new Date(Date.now() + 1000).toISOString(),
+        searchTrigger: 'Immediate',
+        indexersQueried: ['AudioBook Bay'],
+        resultsReturned: 1,
+        rejectionReasons: [],
+        submissionAttempts: [{ releaseTitle: 'Dune release', outcome: 'Submitted' }],
+        selectedRelease: 'Dune release',
+        downloadClient: 'SABnzbd',
+        finalOutcome: 'DownloadQueued',
+        nextRetryAt: null,
+      },
+    ])
 
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -1002,6 +1074,7 @@ describe('AddNewView pagination', () => {
     const vm = wrapper.vm as unknown as {
       quickAddTitleResult: (book: unknown) => Promise<boolean>
       quickAddOptions: { monitored: boolean; autoSearch: boolean }
+      quickAddStates: Record<string, { searchStatus?: string }>
     }
     const book = {
       key: 'dune',
@@ -1026,6 +1099,7 @@ describe('AddNewView pagination', () => {
       }),
       { monitored: true, autoSearch: true },
     )
+    expect(vm.quickAddStates.dune?.searchStatus).toBe('submitted')
   })
 
   it('quick-adds a direct Audible ASIN with the normal monitored and immediate-search defaults', async () => {

@@ -58,7 +58,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 downloadRepository,
                 candidateLoader,
                 clientQueuePoller,
-                NullLogger<DownloadQueueService>.Instance);
+                NullLogger<DownloadQueueService>.Instance,
+                clientGateway);
 
             service._clientQueueTimeout = (TimeSpan)(clientQueueTimeout == null ? service._clientQueueTimeout : clientQueueTimeout);
             service._staleSnapshotMaxAge = (TimeSpan)(staleSnapshotMaxAge == null ? service._staleSnapshotMaxAge : staleSnapshotMaxAge);

@@ -264,10 +264,42 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
 
-        Assert.Contains("Test Book Troy Ashford Mystic Seekers", fixture.SearchQueries);
+        Assert.Contains("Test Book Troy Ashford", fixture.SearchQueries);
+        Assert.Contains("Test Book", fixture.SearchQueries);
         Assert.Contains("Mystic Seekers 1 Troy Ashford", fixture.SearchQueries);
         Assert.Contains(fixture.Audiobook.Asin, fixture.SearchQueries);
         Assert.Equal(fixture.SearchQueries.Count, fixture.SearchQueries.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_ThreshingDay_UsesTitleOnlyAfterCompoundTitleAuthorQueryReturnsNothing()
+    {
+        using var fixture = new Fixture(("audiobook-bay-release", 100));
+        fixture.Audiobook.Title = "Threshing Day (Wing and Claw Collection)";
+        fixture.Audiobook.Authors = ["Rebecca Yarros"];
+        fixture.Results[0].Title = "Threshing Day (Wing and Claw Collection) - Rebecca Yarros";
+        fixture.Search.Setup(service => service.SearchAsync(
+                "Threshing Day (Wing and Claw Collection) Rebecca Yarros",
+                It.IsAny<string?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<SearchSortBy>(),
+                It.IsAny<SearchSortDirection>(),
+                true))
+            .ReturnsAsync([]);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        fixture.Search.Verify(service => service.SearchAsync(
+            "Threshing Day (Wing and Claw Collection) Rebecca Yarros",
+            It.IsAny<string?>(),
+            It.IsAny<List<string>?>(),
+            It.IsAny<SearchSortBy>(),
+            It.IsAny<SearchSortDirection>(),
+            true), Times.Once);
+        Assert.Contains("Threshing Day (Wing and Claw Collection)", fixture.SearchQueries);
+        Assert.Equal(["audiobook-bay-release"], fixture.SubmissionOrder);
+        Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
+        Assert.True(fixture.Diagnostics.Single().ResultsReturned > 0);
     }
 
     [Fact]
@@ -278,7 +310,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         fixture.Audiobook.Series = "Mystic Seekers";
         fixture.Audiobook.SeriesNumber = "1";
         fixture.Search.Setup(service => service.SearchAsync(
-                "Test Book Troy Ashford Mystic Seekers",
+                "Test Book Troy Ashford",
                 It.IsAny<string?>(),
                 It.IsAny<List<string>?>(),
                 It.IsAny<SearchSortBy>(),

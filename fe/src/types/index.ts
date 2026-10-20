@@ -1333,6 +1333,7 @@ export interface ManualImportPreviewItem {
   relativePath: string
   fullPath: string
   size: string
+  destinationPath?: string | null
   series?: string | null
   season?: string | null
   episodes?: string | null

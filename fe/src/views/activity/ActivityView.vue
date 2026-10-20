@@ -154,6 +154,14 @@
                 <PhX />
               </button>
               <button
+                v-if="canImportCompletedExternal(item)"
+                class="btn btn-secondary activity-import-button"
+                :data-testid="`import-download-${item.id}`"
+                @click="openManualImport(item)"
+              >
+                Import
+              </button>
+              <button
                 class="btn-icon"
                 data-testid="download-event-history"
                 @click="openDownloadEvents(item)"
@@ -200,6 +208,15 @@
       :error="removeError"
       @confirm="confirmRemove"
       @cancel="closeRemoveDialog"
+    />
+    <ManualImportModal
+      v-if="manualImportOpen"
+      :is-open="manualImportOpen"
+      :initial-path="manualImportPath"
+      :source-title="manualImportTitle"
+      :initial-audiobook-id="manualImportAudiobookId"
+      @close="manualImportOpen = false"
+      @imported="handleManualImportCompleted"
     />
     <div
       v-if="eventHistoryOpen"
@@ -272,6 +289,7 @@ import type {
   DownloadEvent,
 } from '@/types'
 import DownloadActionDialog from '@/components/domain/download/DownloadActionDialog.vue'
+import ManualImportModal from '@/components/feedback/ManualImportModal.vue'
 import { normalizeQueueSnapshot } from '@/utils/queueSnapshot'
 
 const downloadsStore = useDownloadsStore()
@@ -292,6 +310,10 @@ const eventHistoryOpen = ref(false)
 const eventHistoryLoading = ref(false)
 const eventHistoryError = ref('')
 const downloadEvents = ref<DownloadEvent[]>([])
+const manualImportOpen = ref(false)
+const manualImportPath = ref('')
+const manualImportTitle = ref('')
+const manualImportAudiobookId = ref<number | undefined>()
 let unsubscribeQueue: (() => void) | null = null
 let queueRefreshInterval: ReturnType<typeof setInterval> | null = null
 
@@ -669,6 +691,55 @@ const refreshQueue = async () => {
 const isDdlItem = (item: QueueItem): boolean =>
   (item.downloadClientId || '').toString().toUpperCase() === 'DDL' ||
   (item.downloadClientType || '').toString().toUpperCase() === 'DDL'
+
+const canImportCompletedExternal = (item: QueueItem): boolean =>
+  showCompletedExternalDownloads.value &&
+  item.status === 'completed' &&
+  !isDdlItem(item) &&
+  (item.downloadClientType || '').toLowerCase() !== 'move' &&
+  Boolean(item.downloadClientId)
+
+const openManualImport = async (item: QueueItem) => {
+  try {
+    const snapshot = normalizeQueueSnapshot(await apiService.getQueue())
+    const resolvedItem = snapshot.items.find((queueItem) => queueItem.id === item.id)
+    const path = resolvedItem?.localPath || item.localPath
+    if (!path) {
+      useToast().error(
+        'Import path unavailable',
+        'Listenarr could not resolve this completed download path. Check the client path mapping and refresh Activity.',
+      )
+      return
+    }
+
+    manualImportPath.value = path
+    manualImportTitle.value = item.title
+    manualImportAudiobookId.value = item.audiobookId
+    manualImportOpen.value = true
+  } catch (error) {
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'resolveManualImportPath',
+    })
+    useToast().error('Import unavailable', 'Could not resolve the completed download path.')
+  }
+}
+
+const handleManualImportCompleted = async (result: { imported?: number }) => {
+  const imported = result.imported ?? 0
+  if (imported > 0) {
+    useToast().success(
+      'Import complete',
+      `${imported} audio file${imported === 1 ? '' : 's'} imported.`,
+    )
+    await refreshQueue()
+  } else {
+    useToast().error(
+      'Import incomplete',
+      'No files were imported. The source download was retained.',
+    )
+  }
+}
 
 const removeFromQueue = async (item: QueueItem) => {
   itemToRemove.value = item

@@ -65,6 +65,7 @@ export function useSearch() {
   const isSearching = ref(false)
   const searchError = ref('')
   const searchStatus = ref('')
+  let searchGeneration = 0
 
   // Abort controller for cancelling searches
   const searchAbortController = ref<AbortController | null>(null)
@@ -114,6 +115,7 @@ export function useSearch() {
   }
 
   const handleSearchInput = () => {
+    searchGeneration += 1
     searchError.value = ''
     const query = searchQuery.value.trim()
 
@@ -139,6 +141,7 @@ export function useSearch() {
     }
 
     const query = searchQuery.value.trim()
+    const requestGeneration = ++searchGeneration
     logger.debug('performSearch called with query:', query)
 
     if (!query) {
@@ -171,13 +174,18 @@ export function useSearch() {
           const resp = await apiService.advancedSearch({ ...params })
           results = resp || []
         } catch (err) {
-          searchError.value = err instanceof Error ? err.message : 'Failed to search for audiobooks'
+          if (requestGeneration === searchGeneration) {
+            searchError.value =
+              err instanceof Error ? err.message : 'Failed to search for audiobooks'
+          }
           throw err
         } finally {
-          isSearching.value = false
-          setTimeout(() => {
-            searchStatus.value = ''
-          }, 1000)
+          if (requestGeneration === searchGeneration) {
+            isSearching.value = false
+            setTimeout(() => {
+              if (requestGeneration === searchGeneration) searchStatus.value = ''
+            }, 1000)
+          }
         }
       } else {
         results = await searchByISBN(query)
@@ -236,20 +244,25 @@ export function useSearch() {
         const resp = await apiService.advancedSearch({ ...params })
         results = resp || []
       } catch (err) {
-        searchError.value = err instanceof Error ? err.message : 'Failed to search for audiobooks'
+        if (requestGeneration === searchGeneration) {
+          searchError.value = err instanceof Error ? err.message : 'Failed to search for audiobooks'
+        }
         throw err
       } finally {
-        isSearching.value = false
-        setTimeout(() => {
-          searchStatus.value = ''
-        }, 1000)
+        if (requestGeneration === searchGeneration) {
+          isSearching.value = false
+          setTimeout(() => {
+            if (requestGeneration === searchGeneration) searchStatus.value = ''
+          }, 1000)
+        }
       }
     }
 
-    return results
+    return requestGeneration === searchGeneration ? results : null
   }
 
   const searchByAsin = async (asin: string) => {
+    const requestGeneration = searchGeneration
     logger.debug('searchByAsin called with:', asin)
 
     // Strip ASIN: prefix if present
@@ -361,18 +374,23 @@ export function useSearch() {
       return [mapped]
     } catch (error) {
       logger.error('ASIN search failed:', error)
-      searchError.value = error instanceof Error ? error.message : 'Failed to search for audiobook'
+      if (requestGeneration === searchGeneration) {
+        searchError.value =
+          error instanceof Error ? error.message : 'Failed to search for audiobook'
+      }
       throw error
     } finally {
-      isSearching.value = false
-      // Keep a brief 'done' status then clear
-      setTimeout(() => {
-        searchStatus.value = ''
-      }, 1200)
+      if (requestGeneration === searchGeneration) {
+        isSearching.value = false
+        setTimeout(() => {
+          if (requestGeneration === searchGeneration) searchStatus.value = ''
+        }, 1200)
+      }
     }
   }
 
   const searchByTitle = async (query: string) => {
+    const requestGeneration = searchGeneration
     logger.debug('searchByTitle called with:', query)
 
     isSearching.value = true
@@ -405,19 +423,22 @@ export function useSearch() {
     } catch (error) {
       if (error && (error as Error).name === 'AbortError') {
         logger.debug('Title search aborted by user')
-        searchError.value = 'Search cancelled'
+        if (requestGeneration === searchGeneration) searchError.value = 'Search cancelled'
       } else {
         logger.error('Title search failed:', error)
-        searchError.value =
-          error instanceof Error ? error.message : 'Failed to search for audiobooks'
+        if (requestGeneration === searchGeneration) {
+          searchError.value =
+            error instanceof Error ? error.message : 'Failed to search for audiobooks'
+        }
       }
       throw error
     } finally {
-      isSearching.value = false
-      // Clear status shortly after completion
-      setTimeout(() => {
-        searchStatus.value = ''
-      }, 1000)
+      if (requestGeneration === searchGeneration) {
+        isSearching.value = false
+        setTimeout(() => {
+          if (requestGeneration === searchGeneration) searchStatus.value = ''
+        }, 1000)
+      }
     }
   }
 
@@ -429,6 +450,7 @@ export function useSearch() {
   }
 
   const cancelSearch = () => {
+    searchGeneration += 1
     if (searchAbortController.value) {
       try {
         searchAbortController.value.abort()

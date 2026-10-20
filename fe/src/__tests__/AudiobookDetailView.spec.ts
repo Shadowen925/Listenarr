@@ -299,6 +299,68 @@ describe('AudiobookDetailView image recache behavior', () => {
     expect(routerPushMock).toHaveBeenCalledWith('/collection/series/MISTBORN-SERIES')
   })
 
+  it('uses the matching secondary series membership identity for a subtitle link', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 5,
+        title: 'The Alloy of Law',
+        subtitle: 'Mistborn',
+        seriesMemberships: [
+          {
+            seriesName: 'Wax and Wayne',
+            seriesNumber: '1',
+            seriesId: 'local:wax-and-wayne',
+            isPrimary: true,
+          },
+          {
+            seriesName: 'Mistborn',
+            seriesNumber: '4',
+            seriesAsin: 'ABS:MISTBORN',
+          },
+        ],
+        files: [],
+      },
+    ] as unknown as ReturnType<typeof useLibraryStore>['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    await wrapper.find('.subtitle-series-link').trigger('click')
+
+    expect(routerPushMock).toHaveBeenCalledWith('/collection/series/ABS%3AMISTBORN')
+  })
+
+  it('does not render a series subtitle link for whitespace-only identifiers', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useLibraryStore()
+    store.audiobooks = [
+      {
+        id: 5,
+        title: 'Book',
+        subtitle: 'Unlinked Series',
+        seriesMemberships: [
+          {
+            seriesName: 'Unlinked Series',
+            seriesId: '   ',
+          },
+        ],
+        files: [],
+      },
+    ] as unknown as ReturnType<typeof useLibraryStore>['audiobooks']
+    store.fetchLibrary = vi.fn(async () => undefined)
+
+    const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(wrapper.find('.subtitle-series-link').exists()).toBe(false)
+    expect(routerPushMock).not.toHaveBeenCalled()
+  })
+
   it('does not turn arbitrary subtitle text into a series link', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
