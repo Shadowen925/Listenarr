@@ -2664,6 +2664,9 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<int>("AudiobookId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("DistinctCandidateCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("DownloadClient")
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
@@ -2673,11 +2676,25 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("IdentityMatchCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IndexerOutcomes")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("IndexersQueried")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("QualityRejectedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("QueriesAttempted")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("RejectionReasons")

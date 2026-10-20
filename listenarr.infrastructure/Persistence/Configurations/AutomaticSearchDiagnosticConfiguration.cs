@@ -13,11 +13,20 @@ public sealed class AutomaticSearchDiagnosticConfiguration : IEntityTypeConfigur
         builder.HasKey(diagnostic => diagnostic.Id);
         builder.Property(diagnostic => diagnostic.SearchTrigger).IsRequired().HasMaxLength(20);
         builder.Property(diagnostic => diagnostic.ResultsReturned).IsRequired();
+        builder.Property(diagnostic => diagnostic.DistinctCandidateCount).IsRequired();
+        builder.Property(diagnostic => diagnostic.IdentityMatchCount).IsRequired();
+        builder.Property(diagnostic => diagnostic.QualityRejectedCount).IsRequired();
         builder.Property(diagnostic => diagnostic.SelectedRelease).HasMaxLength(500);
         builder.Property(diagnostic => diagnostic.DownloadClient).HasMaxLength(50);
         builder.Property(diagnostic => diagnostic.FinalOutcome).IsRequired().HasMaxLength(50);
         builder.Property(diagnostic => diagnostic.IndexersQueried)
             .HasConversion((ValueConverter<List<string>, string>)new JsonValueConverter<List<string>>())
+            .HasColumnType("TEXT");
+        builder.Property(diagnostic => diagnostic.QueriesAttempted)
+            .HasConversion((ValueConverter<List<string>, string>)new JsonValueConverter<List<string>>())
+            .HasColumnType("TEXT");
+        builder.Property(diagnostic => diagnostic.IndexerOutcomes)
+            .HasConversion((ValueConverter<List<AutomaticSearchIndexerOutcome>, string>)new JsonValueConverter<List<AutomaticSearchIndexerOutcome>>())
             .HasColumnType("TEXT");
         builder.Property(diagnostic => diagnostic.RejectionReasons)
             .HasConversion((ValueConverter<List<string>, string>)new JsonValueConverter<List<string>>())

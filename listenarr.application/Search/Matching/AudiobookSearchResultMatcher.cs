@@ -4,6 +4,12 @@ using System.Text.RegularExpressions;
 
 namespace Listenarr.Application.Search.Matching
 {
+    public sealed record AudiobookMatchEvidence(
+        bool IsAccepted,
+        int Confidence,
+        IReadOnlyList<string> PositiveEvidence,
+        IReadOnlyList<string> Conflicts);
+
     public static class AudiobookSearchResultMatcher
     {
         private static readonly HashSet<string> IgnoredTitleTokens =
@@ -14,53 +20,112 @@ namespace Listenarr.Application.Search.Matching
             || string.IsNullOrWhiteSpace(result.Asin)
             || string.Equals(audiobook.Asin.Trim(), result.Asin.Trim(), StringComparison.OrdinalIgnoreCase);
 
-        public static bool MatchesIdentity(Audiobook audiobook, SearchResult result)
+        public static bool MatchesIdentity(Audiobook audiobook, SearchResult result) =>
+            EvaluateIdentity(audiobook, result).IsAccepted;
+
+        public static AudiobookMatchEvidence EvaluateIdentity(Audiobook audiobook, SearchResult result)
         {
             ArgumentNullException.ThrowIfNull(audiobook);
             ArgumentNullException.ThrowIfNull(result);
 
-            if (!MatchesAsin(audiobook, result) || HasEditionConflict(audiobook, result))
+            var positiveEvidence = new List<string>();
+            var conflicts = new List<string>();
+            if (!MatchesAsin(audiobook, result))
             {
-                return false;
+                conflicts.Add("ConflictingAsin");
+            }
+            if (HasEditionConflict(audiobook, result))
+            {
+                conflicts.Add("IncompatibleEdition");
             }
 
-            if (HasExplicitAuthorMismatch(audiobook, result))
+            var titleMatches = MatchesTitle(audiobook, result);
+            if (titleMatches)
             {
-                return false;
+                positiveEvidence.Add("TitleMatch");
             }
 
-            if (!string.IsNullOrWhiteSpace(audiobook.Asin)
-                && !string.IsNullOrWhiteSpace(result.Asin))
+            var (seriesPositionMatches, wrongSeriesPosition) = EvaluateSeriesPosition(audiobook, result);
+            if (wrongSeriesPosition)
             {
-                return true;
+                conflicts.Add("ConflictingSeriesPosition");
+            }
+            else if (seriesPositionMatches)
+            {
+                positiveEvidence.Add("SeriesPositionMatch");
             }
 
-            var titleMatches = ContainsTitle(result.Title, audiobook.Title ?? string.Empty);
-            var seriesPositionMatches = MatchesSeriesPosition(audiobook, result);
-            if (titleMatches || seriesPositionMatches)
+            var asinMatches = !string.IsNullOrWhiteSpace(audiobook.Asin)
+                && !string.IsNullOrWhiteSpace(result.Asin)
+                && string.Equals(audiobook.Asin.Trim(), result.Asin.Trim(), StringComparison.OrdinalIgnoreCase);
+            if (asinMatches)
             {
-                return true;
+                positiveEvidence.Add("AsinMatch");
             }
 
-            return string.IsNullOrWhiteSpace(result.Title)
-                && string.IsNullOrWhiteSpace(result.Series)
-                && string.IsNullOrWhiteSpace(result.Artist);
+            var (authorMatches, authorConflict) = EvaluateAuthors(audiobook, result);
+            if (authorMatches)
+            {
+                positiveEvidence.Add("AuthorMatch");
+            }
+            else if (authorConflict)
+            {
+                conflicts.Add("ConflictingAuthor");
+            }
+
+            if (conflicts.Count > 0)
+            {
+                return new AudiobookMatchEvidence(false, 0, positiveEvidence, conflicts);
+            }
+
+            var accepted = titleMatches || seriesPositionMatches || asinMatches;
+            if (!accepted)
+            {
+                conflicts.Add("InsufficientIdentityEvidence");
+            }
+
+            var confidence = asinMatches ? 100
+                : seriesPositionMatches && authorMatches ? 95
+                : titleMatches && authorMatches ? 90
+                : seriesPositionMatches ? 85
+                : titleMatches ? 75
+                : 0;
+            return new AudiobookMatchEvidence(accepted, confidence, positiveEvidence, conflicts);
         }
 
-        private static bool HasExplicitAuthorMismatch(Audiobook audiobook, SearchResult result)
+        private static bool MatchesTitle(Audiobook audiobook, SearchResult result)
+        {
+            var candidate = string.Join(" ", result.Title, result.Subtitle, result.Album, result.Series);
+            return GetTitleVariants(audiobook.Title)
+                .Concat(GetTitleVariants(audiobook.Subtitle))
+                .Any(title => ContainsTitle(candidate, title));
+        }
+
+        private static (bool Matches, bool Conflicts) EvaluateAuthors(Audiobook audiobook, SearchResult result)
         {
             var expectedAuthors = audiobook.Authors?
                 .Where(author => !string.IsNullOrWhiteSpace(author))
                 .Select(Tokenize)
                 .Where(tokens => tokens.Count > 0)
                 .ToList() ?? [];
-            var actualAuthorTokens = Tokenize(result.Artist);
-            if (expectedAuthors.Count == 0 || actualAuthorTokens.Count == 0)
+            if (expectedAuthors.Count == 0)
             {
-                return false;
+                return (false, false);
             }
 
-            return !expectedAuthors.Any(expected => expected.All(actualAuthorTokens.Contains));
+            var candidateTokens = Tokenize(string.Join(
+                " ",
+                result.Artist,
+                result.Title,
+                result.Album,
+                result.Description,
+                result.Publisher));
+            if (expectedAuthors.Any(expected => expected.All(candidateTokens.Contains)))
+            {
+                return (true, false);
+            }
+
+            return (false, Tokenize(result.Artist).Count > 0);
         }
 
         private static bool HasEditionConflict(Audiobook audiobook, SearchResult result)
@@ -71,7 +136,9 @@ namespace Listenarr.Application.Search.Matching
                 return true;
             }
 
-            if (result.Abridged && !audiobook.Abridged)
+            if ((result.Abridged
+                    || HasAny(Normalize(string.Join(" ", result.Edition, result.Title, result.Description)), "abridged"))
+                && !audiobook.Abridged)
             {
                 return true;
             }
@@ -136,52 +203,140 @@ namespace Listenarr.Application.Search.Matching
             return expectedTokens.IsSubsetOf(candidateTokens);
         }
 
-        private static bool MatchesSeriesPosition(Audiobook audiobook, SearchResult result)
+        private static (bool Matches, bool Conflicts) EvaluateSeriesPosition(Audiobook audiobook, SearchResult result)
         {
-            var expectedSeries = audiobook.Series
-                ?? audiobook.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)?.SeriesName
-                ?? audiobook.SeriesMemberships?.FirstOrDefault()?.SeriesName;
-            var expectedNumber = audiobook.SeriesNumber
-                ?? audiobook.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)?.SeriesNumber
-                ?? audiobook.SeriesMemberships?.FirstOrDefault()?.SeriesNumber;
-            var candidateSeries = result.Series
-                ?? result.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)?.SeriesName
-                ?? result.SeriesMemberships?.FirstOrDefault()?.SeriesName;
-            var candidateNumber = result.SeriesNumber
-                ?? result.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)?.SeriesNumber
-                ?? result.SeriesMemberships?.FirstOrDefault()?.SeriesNumber;
-
-            if (string.IsNullOrWhiteSpace(expectedSeries)
-                || string.IsNullOrWhiteSpace(expectedNumber))
+            var expectedSeries = (audiobook.SeriesMemberships ?? [])
+                .Where(membership => !string.IsNullOrWhiteSpace(membership.SeriesName)
+                    && !string.IsNullOrWhiteSpace(membership.SeriesNumber))
+                .Select(membership => (membership.SeriesName!, membership.SeriesNumber!))
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(audiobook.Series)
+                && !string.IsNullOrWhiteSpace(audiobook.SeriesNumber))
             {
-                return false;
+                expectedSeries.Insert(0, (audiobook.Series, audiobook.SeriesNumber));
             }
 
-            var expectedSeriesTokens = Tokenize(expectedSeries)
+            var title = string.Join(" ", result.Title, result.Subtitle, result.Album);
+            var candidateMemberships = (result.SeriesMemberships ?? [])
+                .Where(membership => !string.IsNullOrWhiteSpace(membership.SeriesName))
+                .Select(membership => (membership.SeriesName!, membership.SeriesNumber))
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(result.Series))
+            {
+                candidateMemberships.Insert(0, (result.Series, result.SeriesNumber));
+            }
+
+            foreach (var (seriesName, seriesNumber) in expectedSeries.Distinct())
+            {
+                var seriesTokens = SignificantTokens(seriesName);
+                if (seriesTokens.Count == 0)
+                {
+                    continue;
+                }
+
+                var hasSeries = candidateMemberships.Any(candidate =>
+                        seriesTokens.SetEquals(SignificantTokens(candidate.Item1)))
+                    || ContainsTokenSequence(title, seriesTokens);
+                if (!hasSeries)
+                {
+                    continue;
+                }
+
+                var expectedPosition = ParsePosition(seriesNumber);
+                if (!expectedPosition.HasValue)
+                {
+                    continue;
+                }
+
+                var candidatePosition = candidateMemberships
+                    .Where(candidate => seriesTokens.SetEquals(SignificantTokens(candidate.Item1)))
+                    .Select(candidate => ParsePosition(candidate.Item2))
+                    .FirstOrDefault(position => position.HasValue);
+                candidatePosition ??= ParsePositionAfterSeries(title, seriesName);
+                if (candidatePosition.HasValue)
+                {
+                    return (
+                        candidatePosition.Value == expectedPosition.Value,
+                        candidatePosition.Value != expectedPosition.Value);
+                }
+            }
+
+            return (false, false);
+        }
+
+        private static IEnumerable<string> GetTitleVariants(string? title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                yield break;
+            }
+
+            var trimmed = title.Trim();
+            yield return trimmed;
+            var colon = trimmed.IndexOf(':');
+            if (colon > 0)
+            {
+                var core = trimmed[..colon].Trim();
+                if (!string.IsNullOrWhiteSpace(core))
+                {
+                    yield return core;
+                }
+            }
+        }
+
+        private static HashSet<string> SignificantTokens(string? value) =>
+            Tokenize(value)
                 .Where(token => !IgnoredTitleTokens.Contains(token))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (expectedSeriesTokens.Count == 0)
+
+        private static bool ContainsTokenSequence(string candidate, IReadOnlyCollection<string> expectedTokens)
+        {
+            var candidateTokens = Tokenize(candidate);
+            var expected = expectedTokens.ToArray();
+            for (var start = 0; expected.Length > 0 && start <= candidateTokens.Count - expected.Length; start++)
             {
-                return false;
+                if (expected.Select((token, index) =>
+                        string.Equals(token, candidateTokens[start + index], StringComparison.OrdinalIgnoreCase))
+                    .All(matches => matches))
+                {
+                    return true;
+                }
             }
 
-            var candidateSeriesTokens = Tokenize(candidateSeries);
-            var candidateTitleTokens = Tokenize(result.Title);
-            var hasSeries = expectedSeriesTokens.IsSubsetOf(candidateSeriesTokens)
-                || expectedSeriesTokens.IsSubsetOf(candidateTitleTokens.ToHashSet(StringComparer.OrdinalIgnoreCase));
-            if (!hasSeries)
+            return false;
+        }
+
+        private static decimal? ParsePosition(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
             {
-                return false;
+                return null;
             }
 
-            var expectedPosition = Tokenize(expectedNumber);
-            var candidatePosition = Tokenize(candidateNumber);
-            if (candidatePosition.Count == 0)
+            var match = Regex.Match(value, @"\d+(?:\.\d+)?", RegexOptions.CultureInvariant);
+            return match.Success && decimal.TryParse(
+                match.Value,
+                NumberStyles.Number,
+                CultureInfo.InvariantCulture,
+                out var position)
+                ? position
+                : null;
+        }
+
+        private static decimal? ParsePositionAfterSeries(string title, string series)
+        {
+            var tokens = Tokenize(series);
+            if (tokens.Count == 0)
             {
-                candidatePosition = candidateTitleTokens;
+                return null;
             }
 
-            return expectedPosition.Count > 0 && expectedPosition.All(candidatePosition.Contains);
+            var seriesPattern = string.Join(@"[\s\p{P}]+", tokens.Select(Regex.Escape));
+            var match = Regex.Match(
+                title,
+                $@"\b{seriesPattern}\b[\s\p{{P}}]*(?:book\s*|#\s*)?(\d+(?:\.\d+)?)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return match.Success ? ParsePosition(match.Groups[1].Value) : null;
         }
 
         private static List<string> Tokenize(string? value)

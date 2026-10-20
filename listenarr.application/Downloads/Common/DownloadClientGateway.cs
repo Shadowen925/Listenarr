@@ -20,6 +20,8 @@ using Listenarr.Application.Mapping;
 using Listenarr.Domain.Common;
 using Listenarr.Domain.Downloads.Exceptions;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Listenarr.Application.Downloads.Common
 {
@@ -36,6 +38,11 @@ namespace Listenarr.Application.Downloads.Common
         IFileSystemSemanticsResolver semanticsResolver,
         ILogger<DownloadClientGateway> logger) : IDownloadClientGateway
     {
+        private const int MaximumMissingSourceWarningKeys = 512;
+        private static readonly object MissingSourceWarningLock = new();
+        private static readonly HashSet<string> LoggedMissingSourceWarnings = new(StringComparer.Ordinal);
+        private static readonly Queue<string> MissingSourceWarningOrder = new();
+
         internal IDownloadClientAdapter ResolveAdapter(DownloadClientConfiguration client)
         {
             ArgumentNullException.ThrowIfNull(client);
@@ -233,6 +240,9 @@ namespace Listenarr.Application.Downloads.Common
         /// <returns></returns>
         private async Task<QueueItem> TranslateQueueItemPathsAsync(DownloadClientConfiguration client, QueueItem item)
         {
+            item.SourcePathUnavailable = false;
+            item.SourcePathUnavailableReason = null;
+
             if (!string.IsNullOrEmpty(item.RemotePath))
             {
                 item.LocalPath = await remotePathMappingService.TranslatePathAsync(client, item.RemotePath);
@@ -261,6 +271,13 @@ namespace Listenarr.Application.Downloads.Common
                     sourceFiles.Add(sourceFile);
                 }
                 item.SourceFiles = sourceFiles;
+                if (IsImportSourceExpectedStatus(item.Status)
+                    && !sourceFiles.Any(fileSystem.FileExists))
+                {
+                    item.SourcePathUnavailable = true;
+                    item.SourcePathUnavailableReason = "The completed source files are no longer available.";
+                    LogMissingSourceFiles(client, item, "reported source files do not exist", null);
+                }
             }
             else if (!string.IsNullOrEmpty(item.ContentPath))
             {
@@ -269,17 +286,15 @@ namespace Listenarr.Application.Downloads.Common
                 // ContentPath null until a reliable file or completed storage directory exists.
                 if (fileSystem.FileExists(item.ContentPath))
                 {
-                    item.SourceFiles = [item.ContentPath];
+                    item.SourceFiles = [FileUtils.NormalizeStoredPath(item.ContentPath)];
                 }
                 else
                 {
                     if (!fileSystem.DirectoryExists(item.ContentPath))
                     {
-                        LogMissingSourceFiles(
-                            client,
-                            item,
-                            $"content path does not exist: {item.ContentPath}",
-                            null);
+                        item.SourcePathUnavailable = true;
+                        item.SourcePathUnavailableReason = "The completed source path is no longer available.";
+                        LogMissingSourceFiles(client, item, "content path does not exist", null);
                         item.SourceFiles = [];
                     }
                     else
@@ -291,13 +306,21 @@ namespace Listenarr.Application.Downloads.Common
                             item.SourceFiles = [.. fileSystem
                                 .EnumerateFiles(item.ContentPath, "*.*", SearchOption.AllDirectories)
                                 .Select(f => FileUtils.NormalizeStoredPath(f))];
+                            if (item.SourceFiles.Count == 0 && IsImportSourceExpectedStatus(item.Status))
+                            {
+                                item.SourcePathUnavailable = true;
+                                item.SourcePathUnavailableReason = "The completed source directory contains no files.";
+                                LogMissingSourceFiles(client, item, "completed directory contains no files", null);
+                            }
                         }
                         catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
                         {
+                            item.SourcePathUnavailable = true;
+                            item.SourcePathUnavailableReason = "The completed source directory could not be inspected.";
                             LogMissingSourceFiles(
                                 client,
                                 item,
-                                $"content path scanning failed with path {item.ContentPath}",
+                                "content path scanning failed",
                                 exception);
                             item.SourceFiles = [];
                         }
@@ -308,6 +331,8 @@ namespace Listenarr.Application.Downloads.Common
             {
                 if (IsImportSourceExpectedStatus(item.Status))
                 {
+                    item.SourcePathUnavailable = true;
+                    item.SourcePathUnavailableReason = "The completed download did not report a source path.";
                     LogMissingSourceFiles(client, item, "no content path", null);
                 }
 
@@ -382,12 +407,42 @@ namespace Listenarr.Application.Downloads.Common
                 return;
             }
 
+            var warningKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                string.Join('\0', client.Id, item.Id, reason))));
+            if (!ShouldLogMissingSourceWarning(warningKey))
+            {
+                logger.LogDebug(
+                    "Suppressing repeated missing-source warning for completed item {ItemId} from client {ClientId}",
+                    item.Id,
+                    client.Id);
+                return;
+            }
+
             logger.LogWarning(
                 exception,
                 "Download client {ClientId} reported no source files and {Reason} for item {Title}",
                 client.Id,
                 reason,
                 item.Title);
+        }
+
+        internal static bool ShouldLogMissingSourceWarning(string warningKey)
+        {
+            lock (MissingSourceWarningLock)
+            {
+                if (!LoggedMissingSourceWarnings.Add(warningKey))
+                {
+                    return false;
+                }
+
+                MissingSourceWarningOrder.Enqueue(warningKey);
+                while (MissingSourceWarningOrder.Count > MaximumMissingSourceWarningKeys)
+                {
+                    LoggedMissingSourceWarnings.Remove(MissingSourceWarningOrder.Dequeue());
+                }
+
+                return true;
+            }
         }
 
         internal static bool IsImportSourceExpectedStatus(string? status)

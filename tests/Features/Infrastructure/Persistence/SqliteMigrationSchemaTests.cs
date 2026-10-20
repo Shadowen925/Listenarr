@@ -215,10 +215,42 @@ public class SqliteMigrationSchemaTests : BaseTests
                 DownloadAuditMigrationId,
                 AudiobookshelfSeriesIdentityMigrationId,
                 AutomaticSearchIntervalMigrationId,
-                "20261019193216_AddAutomaticSearchDiagnosticsAndEditionClassification"
+                "20261019193216_AddAutomaticSearchDiagnosticsAndEditionClassification",
+                "20261020034015_AddAutomaticSearchQueryDiagnostics"
             ],
             postCanary);
         Assert.Contains("20251124102000_AddMoveJobSourcePath", applied);
+    }
+
+    [Fact]
+    [Trait("Scenario", "AutomaticSearchDiagnosticsUpgradePreservesExistingRows")]
+    public async Task AutomaticSearchDiagnosticsMigration_PreservesExistingRowsWithEmptyNewFields()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        await using var context = new ListenArrDbContext(CreateOptions(connection));
+
+        await context.GetService<IMigrator>().MigrateAsync(
+            "20261019193216_AddAutomaticSearchDiagnosticsAndEditionClassification");
+        await ExecuteNonQueryAsync(
+            connection,
+            """
+            INSERT INTO "AutomaticSearchDiagnostics"
+                ("AudiobookId", "SearchTimestamp", "SearchTrigger", "IndexersQueried",
+                 "ResultsReturned", "RejectionReasons", "SubmissionAttempts", "FinalOutcome")
+            VALUES
+                (17, '2026-10-19T00:00:00Z', 'Immediate', '["Indexer"]',
+                 0, '[]', '[]', 'NoReleases');
+            """);
+
+        await context.Database.MigrateAsync();
+
+        var diagnostic = await context.AutomaticSearchDiagnostics.SingleAsync();
+        Assert.Empty(diagnostic.QueriesAttempted);
+        Assert.Empty(diagnostic.IndexerOutcomes);
+        Assert.Equal(0, diagnostic.DistinctCandidateCount);
+        Assert.Equal(0, diagnostic.IdentityMatchCount);
+        Assert.Equal(0, diagnostic.QualityRejectedCount);
     }
 
     [Fact]

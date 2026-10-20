@@ -200,6 +200,8 @@ export interface QueueItem {
   downloadClientType: string
   addedAt: string
   errorMessage?: string
+  sourcePathUnavailable?: boolean
+  sourcePathUnavailableReason?: string
   isStaleSnapshot?: boolean
   snapshotState?: string
   snapshotFailureReason?: string
@@ -1032,13 +1034,26 @@ export interface AutomaticSearchSubmissionAttempt {
   failureReason?: string | null
 }
 
+export interface AutomaticSearchIndexerOutcome {
+  query: string
+  indexerName: string
+  outcome: string
+  resultsReturned: number
+  failureReason?: string | null
+}
+
 export interface AutomaticSearchDiagnosticHistoryItem {
   id: number
   audiobookId: number
   searchTimestamp: string
   searchTrigger: 'Manual' | 'Immediate' | 'Periodic' | 'Replacement' | string
+  queriesAttempted?: string[]
   indexersQueried: string[]
   resultsReturned: number
+  distinctCandidateCount?: number
+  identityMatchCount?: number
+  qualityRejectedCount?: number
+  indexerOutcomes?: AutomaticSearchIndexerOutcome[]
   rejectionReasons: string[]
   submissionAttempts: AutomaticSearchSubmissionAttempt[]
   selectedRelease?: string | null

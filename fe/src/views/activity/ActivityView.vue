@@ -42,13 +42,21 @@
       </div>
     </div>
 
-    <div v-if="queueHealthClients.length > 0" class="queue-health-banner">
-      <PhWarningCircle />
-      <div class="queue-health-copy">
+    <details class="queue-health-details" :class="{ 'has-warning': queueHealthClients.length > 0 }">
+      <summary :aria-label="`Download client health: ${queueHealthSummary}`">
+        <PhWarningCircle v-if="queueHealthClients.length > 0" aria-hidden="true" />
+        <PhCheckCircle v-else aria-hidden="true" />
+        <span>{{ queueHealthSummary }}</span>
+      </summary>
+      <div class="queue-health-panel">
         <strong>{{ queueHealthTitle }}</strong>
-        <span>{{ queueHealthMessage }}</span>
+        <span v-if="queueHealthClients.length > 0">{{ queueHealthMessage }}</span>
+        <span v-else-if="queueClientStatuses.length > 0">
+          All configured download clients are reporting live queue data.
+        </span>
+        <span v-else>No download-client status was included in the latest queue snapshot.</span>
       </div>
-    </div>
+    </details>
 
     <!-- Queue Grid -->
     <div
@@ -142,6 +150,13 @@
                 :title="getSnapshotStatusTitle(item)"
               >
                 Cached
+              </span>
+              <span
+                v-if="item.sourcePathUnavailable"
+                class="stale-badge source-unavailable-badge"
+                :title="item.sourcePathUnavailableReason || 'Completed source path is unavailable'"
+              >
+                Source unavailable
               </span>
             </div>
             <div class="col-actions">
@@ -267,6 +282,7 @@ import {
   PhArrowClockwise,
   PhX,
   PhQueue,
+  PhCheckCircle,
   PhWarningCircle,
   PhMagnifyingGlass,
   PhClock,
@@ -395,9 +411,23 @@ const queueHealthClients = computed(() => {
 })
 
 const queueHealthTitle = computed(() => {
-  return queueHealthClients.value.some((client) => client.isUnavailable)
-    ? 'Some queue data is unavailable'
-    : 'Using cached queue data'
+  if (queueHealthClients.value.some((client) => client.isUnavailable)) {
+    return 'Some queue data is unavailable'
+  }
+  if (queueHealthClients.value.length > 0) {
+    return 'Using cached queue data'
+  }
+  return queueClientStatuses.value.length > 0
+    ? 'All download clients healthy'
+    : 'No download client status is available'
+})
+
+const queueHealthSummary = computed(() => {
+  const count = queueHealthClients.value.length
+  if (count === 0) {
+    return queueClientStatuses.value.length > 0 ? 'Clients healthy' : 'Client status unavailable'
+  }
+  return `${count} client${count === 1 ? '' : 's'} need attention`
 })
 
 const queueHealthMessage = computed(() => {
@@ -696,6 +726,7 @@ const canImportCompletedExternal = (item: QueueItem): boolean =>
   showCompletedExternalDownloads.value &&
   item.status === 'completed' &&
   !isDdlItem(item) &&
+  !item.sourcePathUnavailable &&
   (item.downloadClientType || '').toLowerCase() !== 'move' &&
   Boolean(item.downloadClientId)
 
@@ -824,6 +855,7 @@ const detailsLine = (item: QueueItem): string => {
   if (item.replacementAttempts) parts.push(`replacements ${item.replacementAttempts}`)
   const err = item.replacementError || item.stallReason || item.errorMessage
   if (err) parts.push(err)
+  if (item.sourcePathUnavailableReason) parts.push(item.sourcePathUnavailableReason)
   return parts.join(' · ')
 }
 
@@ -1022,32 +1054,63 @@ onUnmounted(() => {
   height: 14px;
 }
 
-/* Queue health banner */
-.queue-health-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.9rem 1rem;
-  margin-bottom: 1rem;
-  border: 1px solid rgba(217, 119, 6, 0.28);
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--color-text, #1f2937);
-  border-radius: 0.85rem;
+/* Keep the client health status compact so queue updates cannot move the table. */
+.queue-health-details {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 2;
 }
 
-.queue-health-copy {
+.queue-health-details summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+  color: var(--color-text-muted, #94a3b8);
+  cursor: pointer;
+  font-size: 0.8rem;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.queue-health-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.queue-health-details summary:focus-visible {
+  outline: 2px solid var(--color-primary, #2196f3);
+  outline-offset: 2px;
+}
+
+.queue-health-details.has-warning summary {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--color-text, #f8fafc);
+}
+
+.queue-health-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.3rem;
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.75rem;
+  background: var(--color-surface, #1e1e1e);
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.28);
+  color: var(--color-text, #f8fafc);
 }
 
-.queue-health-copy strong {
-  font-size: 0.95rem;
-}
-
-.queue-health-copy span {
-  font-size: 0.88rem;
-  opacity: 0.86;
+.queue-health-panel span {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 /* Grid container with virtual scrolling */

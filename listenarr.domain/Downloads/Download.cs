@@ -341,6 +341,8 @@ namespace Listenarr.Domain.Downloads
         public string DownloadClientType { get; set; } = string.Empty; // qbittorrent, transmission, etc
         public DateTime AddedAt { get; set; } = DateTime.UtcNow;
         public string? ErrorMessage { get; set; }
+        public bool SourcePathUnavailable { get; set; }
+        public string? SourcePathUnavailableReason { get; set; }
         public bool IsStaleSnapshot { get; set; }
         public string? SnapshotState { get; set; } // live, cached
         public string? SnapshotFailureReason { get; set; } // timeout, error, canceled

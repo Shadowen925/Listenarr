@@ -29,6 +29,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
         public IReadOnlyList<string> BuildSearchQueries(Audiobook audiobook)
         {
             var title = audiobook.Title?.Trim();
+            var coreTitle = GetCoreTitle(title);
             var author = audiobook.Authors?.FirstOrDefault()?.Trim();
             var primaryMembership = audiobook.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)
                 ?? audiobook.SeriesMemberships?.FirstOrDefault();
@@ -36,15 +37,26 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             var seriesNumber = (audiobook.SeriesNumber ?? primaryMembership?.SeriesNumber)?.Trim();
             var queries = new List<string>();
 
-            AddQuery(queries, title, author);
             AddQuery(queries, title);
-            AddQuery(queries, NormalizeTitle(title), author);
-            AddQuery(queries, NormalizeTitle(title));
-            AddQuery(queries, series, seriesNumber, author);
+            AddQuery(queries, coreTitle);
+            AddQuery(queries, coreTitle, author);
             AddQuery(queries, series, seriesNumber);
+            AddQuery(queries, series, seriesNumber, author);
+            AddQuery(queries, NormalizeTitle(coreTitle));
             AddQuery(queries, audiobook.Asin);
 
-            return queries;
+            return queries.Take(7).ToArray();
+        }
+
+        private static string? GetCoreTitle(string? title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return null;
+            }
+
+            var colon = title.IndexOf(':');
+            return colon > 0 ? title[..colon].Trim() : title.Trim();
         }
 
         private static string? NormalizeTitle(string? title)
@@ -54,8 +66,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 return null;
             }
 
-            return System.Text.RegularExpressions.Regex
-                .Replace(title, @"[^\p{L}\p{N}]+", " ")
+            return System.Text.RegularExpressions.Regex.Replace(title, @"[^\p{L}\p{N}]+", " ")
                 .Trim();
         }
 

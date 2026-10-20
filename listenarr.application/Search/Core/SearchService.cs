@@ -22,7 +22,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Listenarr.Application.Search.Core
 {
-    public partial class SearchService : ISearchService
+    public partial class SearchService : ISearchService, IAutomaticIndexerSearchService
     {
         private readonly IConfigurationService _configurationService;
         private readonly ILogger<SearchService> _logger;
@@ -154,6 +154,21 @@ namespace Listenarr.Application.Search.Core
         public async Task<List<IndexerSearchResult>> SearchIndexersAsync(string query, string? category = null, SearchSortBy sortBy = SearchSortBy.Seeders, SearchSortDirection sortDirection = SearchSortDirection.Descending, bool isAutomaticSearch = false, SearchRequest? request = null)
         {
             return await _indexerSearchWorkflow.SearchIndexersAsync(query, category, sortBy, sortDirection, isAutomaticSearch, request);
+        }
+
+        public async Task<AutomaticIndexerSearchResponse> SearchAutomaticQueryAsync(string query)
+        {
+            var batch = await _indexerSearchWorkflow.SearchIndexersWithDiagnosticsAsync(
+                query,
+                isAutomaticSearch: true);
+            var results = batch.Results
+                .Select(SearchResultConverters.ToSearchResult)
+                .ToList();
+            results = await _searchResultSorting.ApplySortingAsync(
+                results,
+                SearchSortBy.Seeders,
+                SearchSortDirection.Descending);
+            return new AutomaticIndexerSearchResponse(results, batch.IndexerOutcomes);
         }
 
     }

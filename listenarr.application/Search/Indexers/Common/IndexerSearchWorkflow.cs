@@ -56,7 +56,24 @@ public class IndexerSearchWorkflow
         bool isAutomaticSearch = false,
         SearchRequest? request = null)
     {
-        var results = new List<IndexerSearchResult>();
+        var batch = await SearchIndexersWithDiagnosticsAsync(query, category, isAutomaticSearch, request);
+        if (isAutomaticSearch
+            && batch.IndexerOutcomes.Count > 0
+            && batch.IndexerOutcomes.All(outcome => outcome.Status == "Failed"))
+        {
+            throw new InvalidOperationException(
+                $"All {batch.IndexerOutcomes.Count} enabled indexer(s) failed while searching.");
+        }
+
+        return OrderResults(batch.Results);
+    }
+
+    public async Task<IndexerSearchBatch> SearchIndexersWithDiagnosticsAsync(
+        string query,
+        string? category = null,
+        bool isAutomaticSearch = false,
+        SearchRequest? request = null)
+    {
         var indexers = await _indexerRepository.GetEnabledAsync(isAutomaticSearch);
 
         _logger.LogInformation("Searching {Count} enabled indexers for query: {Query}", indexers.Count, query);
@@ -66,7 +83,9 @@ public class IndexerSearchWorkflow
             _logger.LogWarning(
                 "No indexers configured for query: {Query}; automatic search will not create synthetic releases",
                 query);
-            return isAutomaticSearch ? results : GenerateMockIndexerResults(query);
+            return new IndexerSearchBatch(
+                isAutomaticSearch ? [] : GenerateMockIndexerResults(query),
+                []);
         }
 
         var searchTasks = indexers.Select(async indexer =>
@@ -78,7 +97,14 @@ public class IndexerSearchWorkflow
 
                 var indexerResults = await SearchIndexerAsync(indexer, query, category, perIndexerRequest);
                 _logger.LogInformation("Found {Count} results from indexer {Name}", indexerResults.Count, indexer.Name);
-                return (Results: indexerResults, Failed: false);
+                return (
+                    Results: (IReadOnlyList<IndexerSearchResult>)indexerResults,
+                    Outcome: new AutomaticIndexerQueryOutcome(
+                        IndexerQuerySanitizer.Sanitize(query),
+                        indexer.Name ?? indexer.Implementation ?? "Indexer",
+                        "Succeeded",
+                        indexerResults.Count,
+                        null));
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
@@ -87,25 +113,26 @@ public class IndexerSearchWorkflow
                     indexer.Name,
                     LogRedaction.SanitizeText(query),
                     ex.GetType().Name);
-                return (Results: new List<IndexerSearchResult>(), Failed: true);
+                return (
+                    Results: (IReadOnlyList<IndexerSearchResult>)Array.Empty<IndexerSearchResult>(),
+                    Outcome: new AutomaticIndexerQueryOutcome(
+                        IndexerQuerySanitizer.Sanitize(query),
+                        indexer.Name ?? indexer.Implementation ?? "Indexer",
+                        "Failed",
+                        0,
+                        ex is UnsupportedIndexerProviderException
+                            ? "UnsupportedIndexerImplementation"
+                            : ex.GetType().Name));
             }
         }).ToList();
 
         var indexerResults = await Task.WhenAll(searchTasks);
-        if (isAutomaticSearch && indexerResults.Length > 0 && indexerResults.All(result => result.Failed))
-        {
-            throw new InvalidOperationException(
-                $"All {indexerResults.Length} enabled indexer(s) failed while searching.");
-        }
+        var results = indexerResults.SelectMany(result => result.Results).ToArray();
+        _logger.LogInformation("Total {Count} results from all indexers for query: {Query}", results.Length, query);
 
-        foreach (var indexerResult in indexerResults)
-        {
-            results.AddRange(indexerResult.Results);
-        }
-
-        _logger.LogInformation("Total {Count} results from all indexers for query: {Query}", results.Count, query);
-
-        return results.OrderByDescending(r => r.Seeders ?? 0).ThenByDescending(r => r.PublishedDate).ToList();
+        return new IndexerSearchBatch(
+            results,
+            indexerResults.Select(result => result.Outcome).ToArray());
     }
 
     public async Task<List<SearchResult>> SearchByApiAsync(string apiId, string query, string? category = null)
@@ -235,8 +262,7 @@ public class IndexerSearchWorkflow
         if (provider == null)
         {
             _logger.LogWarning("No provider found for indexer type: {Implementation}", indexer.Implementation);
-            throw new InvalidOperationException(
-                $"No search provider is registered for indexer type {indexer.Implementation}.");
+            throw new UnsupportedIndexerProviderException(indexer.Implementation ?? "unknown");
         }
 
         var providerResults = await provider.SearchAsync(indexer, query, category, request);
@@ -247,6 +273,11 @@ public class IndexerSearchWorkflow
 
         return providerResults;
     }
+
+    private static List<IndexerSearchResult> OrderResults(IEnumerable<IndexerSearchResult> results) =>
+        results.OrderByDescending(result => result.Seeders ?? 0)
+            .ThenByDescending(result => result.PublishedDate)
+            .ToList();
 
     private static string GetFallbackIndexerName(Indexer indexer)
     {

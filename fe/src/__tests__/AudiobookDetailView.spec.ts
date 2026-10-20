@@ -96,8 +96,21 @@ describe('AudiobookDetailView image recache behavior', () => {
         audiobookId: 5,
         searchTimestamp: '2026-05-22T10:00:00Z',
         searchTrigger: 'Periodic',
+        queriesAttempted: ['Dune Frank Herbert'],
         indexersQueried: ['Indexer A'],
         resultsReturned: 2,
+        distinctCandidateCount: 1,
+        identityMatchCount: 1,
+        qualityRejectedCount: 0,
+        indexerOutcomes: [
+          {
+            query: 'Dune Frank Herbert',
+            indexerName: 'Indexer A',
+            outcome: 'Succeeded',
+            resultsReturned: 2,
+            failureReason: null,
+          },
+        ],
         rejectionReasons: ['BelowQuality'],
         submissionAttempts: [
           {
@@ -129,6 +142,10 @@ describe('AudiobookDetailView image recache behavior', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(wrapper.find('.search-history-list').text()).toContain('Periodic — AllSubmissionsFailed')
+    expect(wrapper.find('.search-history-list').text()).toContain('Queries: Dune Frank Herbert')
+    expect(wrapper.find('.search-history-list').text()).toContain(
+      'Indexer A / Dune Frank Herbert: Succeeded',
+    )
     expect(wrapper.text()).toContain('ClientUnavailable')
     expect(apiService.getAutomaticSearchHistory).toHaveBeenCalledWith(5, 25)
 
@@ -143,6 +160,7 @@ describe('AudiobookDetailView image recache behavior', () => {
       reader.readAsText(exportedBlob)
     })
     expect(exportedText).toContain('Dune audiobook')
+    expect(exportedText).toContain('Dune Frank Herbert')
     expect(exportedText).not.toContain('torrentUrl')
     expect(exportedText).not.toContain('magnet:')
     wrapper.unmount()

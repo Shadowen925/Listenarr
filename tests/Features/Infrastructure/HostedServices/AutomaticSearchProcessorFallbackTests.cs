@@ -26,11 +26,22 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         public Mock<IReleaseRejectionRepository> Rejections { get; } = new();
         public Mock<IDownloadService> Downloads { get; } = new();
         public Mock<ISearchService> Search { get; } = new();
+        public Mock<IAutomaticIndexerSearchService>? AutomaticIndexerSearch { get; private set; }
+        public Mock<IQualityProfileService> QualityProfileService { get; } = new();
         public List<string> SearchQueries { get; } = [];
         public AutomaticSearchProcessor Processor { get; }
 
         public Fixture(params (string Id, int Score)[] results)
+            : this(results, useAutomaticIndexerSearch: false)
         {
+        }
+
+        public Fixture((string Id, int Score)[] results, bool useAutomaticIndexerSearch)
+        {
+            if (useAutomaticIndexerSearch)
+            {
+                AutomaticIndexerSearch = Search.As<IAutomaticIndexerSearchService>();
+            }
             Results = results.Select(result => new SearchResult
             {
                 Id = result.Id,
@@ -68,8 +79,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                     (query, _, _, _, _, _) => SearchQueries.Add(query))
                 .ReturnsAsync(Results);
 
-            var qualityProfileService = new Mock<IQualityProfileService>();
-            qualityProfileService.Setup(service =>
+            QualityProfileService.Setup(service =>
                     service.ScoreSearchResults(Results, Audiobook.QualityProfile!))
                 .ReturnsAsync(results.Select((result, index) => new QualityScore
                 {
@@ -143,7 +153,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
             services.AddSingleton(downloadRepository.Object);
             services.AddSingleton(audiobookFileRepository.Object);
             services.AddSingleton(Search.Object);
-            services.AddSingleton(qualityProfileService.Object);
+            services.AddSingleton(QualityProfileService.Object);
             services.AddSingleton(Downloads.Object);
             services.AddSingleton(Rejections.Object);
             services.AddSingleton(configurationService.Object);
@@ -272,14 +282,108 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
     }
 
     [Fact]
+    public async Task SearchAudiobookAsync_AcceptsHeartOfRadianceSeriesFirstCoauthoredRelease()
+    {
+        using var fixture = new Fixture(("aetherforged-book-3", 100));
+        fixture.Audiobook.Title = "Heart of Radiance: A LitRPG Progression Fantasy";
+        fixture.Audiobook.Authors = ["Luke Chmilenko"];
+        fixture.Audiobook.Series = "Aetherforged";
+        fixture.Audiobook.SeriesNumber = "3";
+        fixture.Audiobook.Asin = "B0H493MK1M";
+        fixture.Results[0].Asin = null;
+        fixture.Results[0].Title = "Aetherforged, Book 3 - Heart of Radiance - Luke Chmilenko, Harmon Cooper [M4B] [128 Kbps]";
+        fixture.Results[0].Artist = "Harmon Cooper";
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        Assert.Contains("Heart of Radiance", fixture.SearchQueries);
+        Assert.Equal(["aetherforged-book-3"], fixture.SubmissionOrder);
+        Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_ContinuesWithTitleOnlyWhenLongTitleQueryReturnsNoResults()
+    {
+        using var fixture = new Fixture(("title-only-release", 100));
+        fixture.Audiobook.Title = "Heart of Radiance: A LitRPG Progression Fantasy";
+        fixture.Audiobook.Authors = ["Luke Chmilenko"];
+        fixture.Results[0].Title = "Heart of Radiance - Luke Chmilenko";
+        fixture.Search.Setup(service => service.SearchAsync(
+                "Heart of Radiance: A LitRPG Progression Fantasy",
+                It.IsAny<string?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<SearchSortBy>(),
+                It.IsAny<SearchSortDirection>(),
+                true))
+            .ReturnsAsync([]);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        Assert.Contains("Heart of Radiance", fixture.SearchQueries);
+        Assert.Equal(["title-only-release"], fixture.SubmissionOrder);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_ReportsQualityRejectionAfterIdentityAcceptance()
+    {
+        using var fixture = new Fixture(("correct-low-quality", 0));
+        fixture.QualityProfileService.Setup(service =>
+                service.ScoreSearchResults(fixture.Results, fixture.Audiobook.QualityProfile!))
+            .ReturnsAsync([
+                new QualityScore
+                {
+                    SearchResult = fixture.Results[0],
+                    TotalScore = 0,
+                    RejectionReasons = ["Quality profile rejected release"]
+                }
+            ]);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        var diagnostic = Assert.Single(fixture.Diagnostics);
+        Assert.Equal("NoSuitableReleases", diagnostic.FinalOutcome);
+        Assert.Contains("Quality profile rejected release", diagnostic.RejectionReasons);
+        Assert.Empty(fixture.SubmissionOrder);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_PersistsQueryAndPerIndexerDiagnostics()
+    {
+        using var fixture = new Fixture([("release", 100)], useAutomaticIndexerSearch: true);
+        var automaticSearch = fixture.AutomaticIndexerSearch!;
+        automaticSearch.Setup(service => service.SearchAutomaticQueryAsync(It.IsAny<string>()))
+            .ReturnsAsync((string query) => new AutomaticIndexerSearchResponse(
+                fixture.Results,
+                [
+                    new AutomaticIndexerQueryOutcome(
+                        query,
+                        "Test indexer",
+                        "Succeeded",
+                        fixture.Results.Count,
+                        null)
+                ]));
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        var diagnostic = Assert.Single(fixture.Diagnostics);
+        Assert.Contains("Test Book", diagnostic.QueriesAttempted);
+        Assert.Contains("Test indexer", diagnostic.IndexersQueried);
+        Assert.All(diagnostic.IndexerOutcomes, outcome => Assert.Equal("Succeeded", outcome.Outcome));
+        Assert.Equal(1, diagnostic.DistinctCandidateCount);
+        Assert.Equal(1, diagnostic.IdentityMatchCount);
+        Assert.Equal(0, diagnostic.QualityRejectedCount);
+    }
+
+    [Fact]
     public async Task SearchAudiobookAsync_ThreshingDay_UsesTitleOnlyAfterCompoundTitleAuthorQueryReturnsNothing()
     {
         using var fixture = new Fixture(("audiobook-bay-release", 100));
-        fixture.Audiobook.Title = "Threshing Day (Wing and Claw Collection)";
+        fixture.Audiobook.Title = "Threshing Day: Wing and Claw Collection";
         fixture.Audiobook.Authors = ["Rebecca Yarros"];
-        fixture.Results[0].Title = "Threshing Day (Wing and Claw Collection) - Rebecca Yarros";
+        fixture.Results[0].Title = "Threshing Day - Rebecca Yarros";
         fixture.Search.Setup(service => service.SearchAsync(
-                "Threshing Day (Wing and Claw Collection) Rebecca Yarros",
+                It.Is<string>(query => query.Contains("Wing and Claw", StringComparison.Ordinal)
+                    || query.Contains("Rebecca Yarros", StringComparison.Ordinal)),
                 It.IsAny<string?>(),
                 It.IsAny<List<string>?>(),
                 It.IsAny<SearchSortBy>(),
@@ -290,13 +394,14 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
 
         fixture.Search.Verify(service => service.SearchAsync(
-            "Threshing Day (Wing and Claw Collection) Rebecca Yarros",
+            It.Is<string>(query => query.Contains("Wing and Claw", StringComparison.Ordinal)
+                || query.Contains("Rebecca Yarros", StringComparison.Ordinal)),
             It.IsAny<string?>(),
             It.IsAny<List<string>?>(),
             It.IsAny<SearchSortBy>(),
             It.IsAny<SearchSortDirection>(),
-            true), Times.Once);
-        Assert.Contains("Threshing Day (Wing and Claw Collection)", fixture.SearchQueries);
+            true), Times.AtLeastOnce);
+        Assert.Contains("Threshing Day", fixture.SearchQueries);
         Assert.Equal(["audiobook-bay-release"], fixture.SubmissionOrder);
         Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
         Assert.True(fixture.Diagnostics.Single().ResultsReturned > 0);

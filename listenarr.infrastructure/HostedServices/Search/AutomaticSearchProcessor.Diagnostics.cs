@@ -20,7 +20,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             IReadOnlyList<string>? rejectionReasons = null,
             IReadOnlyList<AutomaticSearchSubmissionAttempt>? submissionAttempts = null,
             string? downloadClient = null,
-            DateTime? nextRetryAt = null)
+            DateTime? nextRetryAt = null,
+            IReadOnlyList<string>? queriesAttempted = null,
+            IReadOnlyList<AutomaticSearchIndexerOutcome>? indexerOutcomes = null,
+            int distinctCandidateCount = 0,
+            int identityMatchCount = 0,
+            int qualityRejectedCount = 0)
         {
             using var scope = _serviceScopeFactory.CreateScope();
             try
@@ -31,13 +36,34 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     AudiobookId = audiobook.Id,
                     SearchTimestamp = DateTime.UtcNow,
                     SearchTrigger = searchTrigger.ToString(),
-                    IndexersQueried = (indexersQueried ?? Array.Empty<string>())
+                    QueriesAttempted = (queriesAttempted ?? Array.Empty<string>())
+                        .Select(SanitizeDiagnosticText)
+                        .Where(value => value.Length > 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(100)
+                        .ToList(),
+                    IndexersQueried = (indexerOutcomes?.Select(outcome => outcome.IndexerName)
+                        ?? indexersQueried
+                        ?? Array.Empty<string>())
                         .Select(SanitizeDiagnosticText)
                         .Where(value => value.Length > 0)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Take(100)
                         .ToList(),
                     ResultsReturned = Math.Max(0, resultCount),
+                    DistinctCandidateCount = Math.Max(0, distinctCandidateCount),
+                    IdentityMatchCount = Math.Max(0, identityMatchCount),
+                    QualityRejectedCount = Math.Max(0, qualityRejectedCount),
+                    IndexerOutcomes = (indexerOutcomes ?? Array.Empty<AutomaticSearchIndexerOutcome>())
+                        .Take(500)
+                        .Select(outcome => outcome with
+                        {
+                            Query = SanitizeDiagnosticText(outcome.Query),
+                            IndexerName = SanitizeDiagnosticText(outcome.IndexerName),
+                            Outcome = SanitizeDiagnosticText(outcome.Outcome),
+                            FailureReason = SanitizeNullableDiagnosticText(outcome.FailureReason)
+                        })
+                        .ToList(),
                     RejectionReasons = (rejectionReasons ?? Array.Empty<string>())
                         .Select(SanitizeDiagnosticText)
                         .Where(value => value.Length > 0)
@@ -85,6 +111,17 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                                 resultCount,
                                 eligibleCount,
                                 rejectedCount,
+                                queriesAttempted = queriesAttempted?.Select(SanitizeDiagnosticText).ToArray(),
+                                distinctCandidateCount,
+                                identityMatchCount,
+                                qualityRejectedCount,
+                                indexerOutcomes = indexerOutcomes?.Select(indexerOutcome => indexerOutcome with
+                                {
+                                    Query = SanitizeDiagnosticText(indexerOutcome.Query),
+                                    IndexerName = SanitizeDiagnosticText(indexerOutcome.IndexerName),
+                                    Outcome = SanitizeDiagnosticText(indexerOutcome.Outcome),
+                                    FailureReason = SanitizeNullableDiagnosticText(indexerOutcome.FailureReason)
+                                }).ToArray(),
                                 selectedRelease = SanitizeNullableDiagnosticText(selectedRelease),
                                 searchTrigger = searchTrigger.ToString(),
                                 indexersQueried = indexersQueried?.Select(SanitizeDiagnosticText).ToArray(),

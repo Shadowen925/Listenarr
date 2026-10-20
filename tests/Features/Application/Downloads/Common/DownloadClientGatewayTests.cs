@@ -217,6 +217,33 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
         }
 
         [Fact]
+        public async Task GetQueueItemAsync_CompletedItemWithoutContentPath_IsUnavailable()
+        {
+            var adapter = (DownloadCLientAdapterMock)((DownloadClientGateway)downloadClientGateway).ResolveAdapter(client);
+            adapter.QueueItemMock = new QueueItemBuilder()
+                .WithStatus("completed")
+                .Build();
+
+            var item = await downloadClientGateway.GetQueueItemAsync(
+                client,
+                new DownloadBuilder().Build(),
+                new QueueItem());
+
+            Assert.Empty(item.SourceFiles);
+            Assert.True(item.SourcePathUnavailable);
+            Assert.Equal("The completed download did not report a source path.", item.SourcePathUnavailableReason);
+        }
+
+        [Fact]
+        public void ShouldLogMissingSourceWarning_DeduplicatesRepeatedWarningFingerprint()
+        {
+            var warningKey = $"gateway-warning-{Guid.NewGuid():N}";
+
+            Assert.True(DownloadClientGateway.ShouldLogMissingSourceWarning(warningKey));
+            Assert.False(DownloadClientGateway.ShouldLogMissingSourceWarning(warningKey));
+        }
+
+        [Fact]
         [Trait("Method", "GetQueueItemAsync")]
         [Trait("Scenario", "Check empty ContentPath is treated as missing instead of scanned")]
         public async Task GetQueueItemAsync_EmptyContentPath_DoesNotScanFilesystem()
@@ -253,6 +280,15 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
         }
 
         [Fact]
+        public void MissingSourceWarning_IsDeduplicatedByFingerprint()
+        {
+            var key = $"missing-source-test-{Guid.NewGuid():N}";
+
+            Assert.True(DownloadClientGateway.ShouldLogMissingSourceWarning(key));
+            Assert.False(DownloadClientGateway.ShouldLogMissingSourceWarning(key));
+        }
+
+        [Fact]
         [Trait("Method", "GetQueueItemAsync")]
         [Trait("Scenario", "Check SourceFiles is filled using content path file")]
         public async Task GetQueueItemAsync_UseContentPath_File()
@@ -285,6 +321,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
             var downloadCLientAdapterMock = (DownloadCLientAdapterMock)((DownloadClientGateway)downloadClientGateway).ResolveAdapter(client);
             downloadCLientAdapterMock.QueueItemMock = new QueueItemBuilder()
                 .WithContentPath(sourceDirectory)
+                .WithStatus("completed")
                 .Build();
 
             var item = await downloadClientGateway.GetQueueItemAsync(client, new DownloadBuilder().Build(), new QueueItem());
@@ -306,6 +343,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
             var downloadCLientAdapterMock = (DownloadCLientAdapterMock)((DownloadClientGateway)downloadClientGateway).ResolveAdapter(client);
             downloadCLientAdapterMock.QueueItemMock = new QueueItemBuilder()
                 .WithContentPath(sourceDirectory)
+                .WithStatus("completed")
                 .Build();
 
             var item = await downloadClientGateway.GetQueueItemAsync(client, new DownloadBuilder().Build(), new QueueItem());
@@ -313,6 +351,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
             Assert.NotNull(item);
             Assert.NotNull(item.SourceFiles);
             Assert.Empty(item.SourceFiles);
+            Assert.True(item.SourcePathUnavailable);
+            Assert.Equal("The completed source directory contains no files.", item.SourcePathUnavailableReason);
         }
 
         [Fact]
@@ -334,6 +374,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
 
             Assert.NotNull(item.SourceFiles);
             Assert.Empty(item.SourceFiles);
+            Assert.True(item.SourcePathUnavailable);
+            Assert.Equal("The completed source path is no longer available.", item.SourcePathUnavailableReason);
         }
 
         [Fact]
@@ -434,6 +476,56 @@ namespace Listenarr.Tests.Features.Application.Downloads.Common
                 new QueueItem());
 
             Assert.Equal(expectedCount, result.SourceFiles.Count);
+        }
+
+        [Fact]
+        public async Task GetQueueItemAsync_UsesExistingSingleFileContentPathAsSource()
+        {
+            var root = Path.Join(Path.GetTempPath(), "listenarr-gateway-single-file-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            var sourceFile = Path.Join(root, "book.m4b");
+            await File.WriteAllTextAsync(sourceFile, "audio");
+
+            try
+            {
+                var item = new QueueItemBuilder()
+                    .WithContentPath(sourceFile)
+                    .WithStatus("completed")
+                    .Build();
+                var adapter = new Mock<IDownloadClientAdapter>();
+                adapter.Setup(service => service.GetImportItemAsync(
+                        It.IsAny<DownloadClientConfiguration>(),
+                        It.IsAny<Download>(),
+                        It.IsAny<QueueItem>(),
+                        It.IsAny<QueueItem?>(),
+                        It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(item);
+                var factory = new Mock<IDownloadClientAdapterFactory>();
+                factory.Setup(service => service.GetByType("mock")).Returns(adapter.Object);
+                var mapping = new Mock<IRemotePathMappingService>();
+                mapping.Setup(service => service.TranslatePathAsync(
+                        It.IsAny<DownloadClientConfiguration>(),
+                        It.IsAny<string>()))
+                    .ReturnsAsync((DownloadClientConfiguration _, string path) => path);
+                var gateway = new DownloadClientGateway(
+                    mapping.Object,
+                    factory.Object,
+                    _provider.GetRequiredService<IFileSystem>(),
+                    _provider.GetRequiredService<IFileSystemSemanticsResolver>(),
+                    _provider.GetRequiredService<ILogger<DownloadClientGateway>>());
+
+                var result = await gateway.GetQueueItemAsync(
+                    new DownloadClientConfiguration { Type = "mock", Name = "mock" },
+                    new DownloadBuilder().Build(),
+                    new QueueItem());
+
+                Assert.Equal([FileUtils.NormalizeStoredPath(sourceFile)], result.SourceFiles);
+                Assert.False(result.SourcePathUnavailable);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
         }
 
         [LinuxFact]

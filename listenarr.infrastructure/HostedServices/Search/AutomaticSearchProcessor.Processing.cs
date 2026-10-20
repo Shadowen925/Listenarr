@@ -82,51 +82,25 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
             var submissionAttempts = new List<AutomaticSearchSubmissionAttempt>();
             var rejectionReasons = new List<string>();
-            // Search for results
             var rawSearchResults = new List<SearchResult>();
             var searchResults = new List<SearchResult>();
             var attemptedQueries = new List<string>();
             var successfulQueries = 0;
             var totalIndexerResultCount = 0;
             var identityRejectedCount = 0;
+            var identityMatchCount = 0;
+            var qualityRejectedCount = 0;
+            var indexerOutcomes = new List<AutomaticSearchIndexerOutcome>();
             Exception? lastSearchException = null;
             try
             {
-                foreach (var query in searchQueries)
-                {
-                    attemptedQueries.Add(query);
-                    List<SearchResult> queryResults;
-                    try
-                    {
-                        queryResults = await searchService.SearchAsync(query, isAutomaticSearch: true);
-                        successfulQueries++;
-                        totalIndexerResultCount += queryResults.Count;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception exception) when (
-                        exception is not OutOfMemoryException
-                        && exception is not StackOverflowException)
-                    {
-                        lastSearchException = exception;
-                        _logger.LogWarning(
-                            "Automatic search query failed for audiobook {AudiobookId} ({FailureType}); trying remaining query variants",
-                            audiobook.Id,
-                            exception.GetType().Name);
-                        continue;
-                    }
-
-                    foreach (var result in queryResults)
-                    {
-                        if (!rawSearchResults.Any(existing => HaveSameRelease(existing, result)))
-                        {
-                            rawSearchResults.Add(result);
-                        }
-                    }
-                }
-
+                var collected = await CollectSearchResultsAsync(searchService, searchQueries, audiobook.Id);
+                rawSearchResults = collected.Results;
+                attemptedQueries = collected.QueriesAttempted;
+                successfulQueries = collected.SuccessfulQueryCount;
+                totalIndexerResultCount = collected.RawResultCount;
+                indexerOutcomes = collected.IndexerOutcomes;
+                lastSearchException = collected.LastFailure;
                 if (successfulQueries == 0 && lastSearchException != null)
                 {
                     throw new InvalidOperationException(
@@ -157,13 +131,16 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     rejectedCount: 0,
                     searchTrigger,
                     indexersQueried,
-                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
+                    queriesAttempted: attemptedQueries,
+                    indexerOutcomes: indexerOutcomes);
                 throw;
             }
             var searchedQuery = string.Join(" | ", attemptedQueries);
             searchResults = rawSearchResults
                 .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
                 .ToList();
+            identityMatchCount = searchResults.Count;
             identityRejectedCount = rawSearchResults.Count - searchResults.Count;
             if (identityRejectedCount > 0)
             {
@@ -231,12 +208,18 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     searchTrigger,
                     indexersQueried,
                     rejectionReasons: rejectionReasons,
-                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
+                    queriesAttempted: attemptedQueries,
+                    indexerOutcomes: indexerOutcomes,
+                    distinctCandidateCount: rawSearchResults.Count,
+                    identityMatchCount: identityMatchCount,
+                    qualityRejectedCount: qualityRejectedCount);
                 return 0;
             }
 
             // Score results against quality profile
             var scoredResults = await qualityProfileService.ScoreSearchResults(searchResults, audiobook.QualityProfile);
+            qualityRejectedCount = scoredResults.Count(result => result.IsRejected);
             var rejectedReleases = new ReleaseRejectionSet();
             foreach (var rejection in await releaseRejections.ListAsync(audiobook.Id, 1000, stoppingToken))
             {
@@ -325,7 +308,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     searchTrigger,
                     indexersQueried,
                     rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
-                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                    nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
+                    queriesAttempted: attemptedQueries,
+                    indexerOutcomes: indexerOutcomes,
+                    distinctCandidateCount: rawSearchResults.Count,
+                    identityMatchCount: identityMatchCount,
+                    qualityRejectedCount: qualityRejectedCount);
                 return 0;
             }
 
@@ -372,7 +360,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                             rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
                             submissionAttempts: submissionAttempts,
                             downloadClient: clientType,
-                            nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                            nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
+                            queriesAttempted: attemptedQueries,
+                            indexerOutcomes: indexerOutcomes,
+                            distinctCandidateCount: rawSearchResults.Count,
+                            identityMatchCount: identityMatchCount,
+                            qualityRejectedCount: qualityRejectedCount);
                         return 0;
                     }
 
@@ -398,7 +391,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                         selectedRelease: result.Title,
                         rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
                         submissionAttempts: submissionAttempts,
-                        downloadClient: clientType);
+                        downloadClient: clientType,
+                        queriesAttempted: attemptedQueries,
+                        indexerOutcomes: indexerOutcomes,
+                        distinctCandidateCount: rawSearchResults.Count,
+                        identityMatchCount: identityMatchCount,
+                        qualityRejectedCount: qualityRejectedCount);
                     return 1;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
@@ -458,7 +456,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 rejectionReasons: rejectionReasons.Distinct(StringComparer.Ordinal).Take(100).ToArray(),
                 submissionAttempts: submissionAttempts,
                 downloadClient: submissionAttempts.LastOrDefault()?.ClientType,
-                nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours));
+                nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
+                queriesAttempted: attemptedQueries,
+                indexerOutcomes: indexerOutcomes,
+                distinctCandidateCount: rawSearchResults.Count,
+                identityMatchCount: identityMatchCount,
+                qualityRejectedCount: qualityRejectedCount);
             return 0;
         }
     }

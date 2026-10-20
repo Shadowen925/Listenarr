@@ -276,8 +276,24 @@
               </time>
               <strong>{{ entry.searchTrigger }} — {{ entry.finalOutcome }}</strong>
               <span>
-                {{ entry.resultsReturned }} results; indexers:
+                {{ entry.resultsReturned }} raw results;
+                {{ entry.distinctCandidateCount ?? 0 }} distinct;
+                {{ entry.identityMatchCount ?? 0 }} identity matches;
+                {{ entry.qualityRejectedCount ?? 0 }} quality rejected; indexers:
                 {{ entry.indexersQueried.join(', ') || 'none recorded' }}
+              </span>
+              <span v-if="entry.queriesAttempted?.length">
+                Queries: {{ (entry.queriesAttempted ?? []).join(' · ') }}
+              </span>
+              <span
+                v-for="(outcome, index) in entry.indexerOutcomes ?? []"
+                :key="`${outcome.query}-${outcome.indexerName}-${index}`"
+              >
+                {{ outcome.indexerName }} / {{ outcome.query }}: {{ outcome.outcome }} ({{
+                  outcome.resultsReturned
+                }}
+                results)
+                <template v-if="outcome.failureReason"> — {{ outcome.failureReason }}</template>
               </span>
               <span v-if="entry.selectedRelease">Selected: {{ entry.selectedRelease }}</span>
               <span v-if="entry.downloadClient">Client: {{ entry.downloadClient }}</span>
@@ -1664,8 +1680,13 @@ function exportAutomaticSearchDiagnostics() {
       id: entry.id,
       searchTimestamp: entry.searchTimestamp,
       searchTrigger: entry.searchTrigger,
+      queriesAttempted: entry.queriesAttempted ?? [],
       indexersQueried: entry.indexersQueried,
       resultsReturned: entry.resultsReturned,
+      distinctCandidateCount: entry.distinctCandidateCount ?? 0,
+      identityMatchCount: entry.identityMatchCount ?? 0,
+      qualityRejectedCount: entry.qualityRejectedCount ?? 0,
+      indexerOutcomes: entry.indexerOutcomes ?? [],
       rejectionReasons: entry.rejectionReasons,
       submissionAttempts: entry.submissionAttempts.map((attempt) => ({
         releaseTitle: attempt.releaseTitle,

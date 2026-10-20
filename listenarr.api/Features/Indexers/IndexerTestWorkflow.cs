@@ -42,17 +42,25 @@ namespace Listenarr.Api.Features.Indexers
 
                 var implName = (indexer.Implementation ?? string.Empty).Trim().ToLowerInvariant();
                 var isNewznabStyle = implName == "newznab" || implName == "torznab";
+                var isGenericStyle = implName == "generic";
+                if (!isNewznabStyle && !isGenericStyle)
+                {
+                    var message = $"Unsupported indexer implementation '{indexer.Implementation}'. "
+                        + "For Prowlarr, use Newznab for Usenet protocol or Torznab for torrent protocol.";
+                    await SaveTestResultAsync(indexer, persist, false, message);
+                    return IndexerTestWorkflowResult.Failure(message);
+                }
 
+                if (isNewznabStyle && string.IsNullOrWhiteSpace(indexer.ApiKey))
+                {
+                    await SaveTestResultAsync(indexer, persist, false, "API key is required for Newznab/Torznab indexers");
+                    return IndexerTestWorkflowResult.Failure("API key is required for Newznab/Torznab indexers");
+                }
+
+                var separator = testUrl.Contains('?') ? '&' : '?';
+                testUrl = testUrl + separator + "t=search&limit=1&offset=0";
                 if (isNewznabStyle)
                 {
-                    if (string.IsNullOrWhiteSpace(indexer.ApiKey))
-                    {
-                        await SaveTestResultAsync(indexer, persist, false, "API key is required for Newznab/Torznab indexers");
-                        return IndexerTestWorkflowResult.Failure("API key is required for Newznab/Torznab indexers");
-                    }
-
-                    var separator = testUrl.Contains('?') ? '&' : '?';
-                    testUrl = testUrl + separator + "t=search&limit=1&offset=0";
                     testUrl = testUrl + "&apikey=" + WebUtility.UrlEncode(indexer.ApiKey);
                 }
 

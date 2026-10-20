@@ -12,7 +12,9 @@ public sealed class EfAutomaticSearchDiagnosticRepository(ListenArrDbContext db)
         AutomaticSearchDiagnostic diagnostic,
         CancellationToken cancellationToken = default)
     {
+        diagnostic.QueriesAttempted = diagnostic.QueriesAttempted.Take(100).ToList();
         diagnostic.IndexersQueried = diagnostic.IndexersQueried.Take(100).ToList();
+        diagnostic.IndexerOutcomes = diagnostic.IndexerOutcomes.Take(500).ToList();
         diagnostic.RejectionReasons = diagnostic.RejectionReasons.Take(100).ToList();
         diagnostic.SubmissionAttempts = diagnostic.SubmissionAttempts.Take(100).ToList();
         db.AutomaticSearchDiagnostics.Add(diagnostic);

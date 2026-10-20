@@ -36,6 +36,7 @@ type ActivityViewVm = {
   showRemoveModal: boolean
   clientHasQueueEntry: boolean | null
   queueHealthClients: Array<{ name: string; isUnavailable?: boolean }>
+  applyQueueSnapshot: (payload: unknown) => void
   removeFromQueue: (item: ActivityItem) => Promise<void> | void
   removeError: string
   confirmRemove: (mode?: string) => Promise<void>
@@ -584,6 +585,92 @@ describe('ActivityView', () => {
     expect(vm.queueHealthClients[0]?.name).toBe('qBittorrent')
     expect(wrapper.text()).toContain('Some queue data is unavailable')
     expect(wrapper.text()).toContain('qBittorrent unavailable after a timeout')
+  })
+
+  it('keeps client health in a fixed-position expandable status control across recovery', async () => {
+    mockSignalR()
+    mockApi({
+      getQueue: vi.fn(async () => ({
+        items: [
+          {
+            id: 'q1',
+            title: 'Test audiobook',
+            status: 'downloading',
+            progress: 40,
+            size: 1000,
+            downloaded: 400,
+            downloadClient: 'Deluge',
+            downloadClientId: 'deluge-1',
+            isStaleSnapshot: true,
+            snapshotAgeSeconds: 5,
+            snapshotFailureReason: 'client-error',
+          },
+        ],
+        clients: [
+          {
+            clientId: 'deluge-1',
+            clientName: 'Deluge',
+            clientType: 'deluge',
+            snapshotState: 'cached',
+            isStaleSnapshot: true,
+            isUnavailable: false,
+            snapshotAgeSeconds: 5,
+            snapshotFailureReason: 'client-error',
+            itemCount: 1,
+          },
+        ],
+        generatedAt: new Date().toISOString(),
+        hasStaleData: true,
+        hasUnavailableClients: false,
+      })),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+    const vm = wrapper.vm as unknown as ActivityViewVm
+    const status = wrapper.get('.queue-health-details')
+    const queue = wrapper.get('.queue-grid-container')
+
+    expect(status.element.tagName).toBe('DETAILS')
+    expect(wrapper.find('.queue-health-banner').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Deluge using cached data 5s old after a client error')
+
+    vm.applyQueueSnapshot({
+      items: [
+        {
+          id: 'q1',
+          title: 'Test audiobook',
+          status: 'downloading',
+          progress: 40,
+          size: 1000,
+          downloaded: 400,
+          downloadClient: 'Deluge',
+          downloadClientId: 'deluge-1',
+        },
+      ],
+      clients: [
+        {
+          clientId: 'deluge-1',
+          clientName: 'Deluge',
+          clientType: 'deluge',
+          snapshotState: 'live',
+          isStaleSnapshot: false,
+          isUnavailable: false,
+          itemCount: 1,
+        },
+      ],
+      generatedAt: new Date().toISOString(),
+      hasStaleData: false,
+      hasUnavailableClients: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.queue-health-details').element).toBe(status.element)
+    expect(wrapper.get('.queue-grid-container').element).toBe(queue.element)
+    expect(wrapper.text()).toContain('All download clients healthy')
+    expect(wrapper.find('.queue-health-banner').exists()).toBe(false)
   })
 
   it('prefers the queue snapshot over a DDL active download with the same tracked id', async () => {
