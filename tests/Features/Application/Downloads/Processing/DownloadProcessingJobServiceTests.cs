@@ -54,6 +54,37 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
             Assert.Equal(ProcessingJobStatus.Pending, pendingJob!.Status);
         }
 
+        [Fact]
+        public async Task GetNextJobAsync_WhenNoJobIsAvailable_ReturnsNull()
+        {
+            var service = _provider.GetRequiredService<IDownloadProcessingJobService>();
+
+            var job = await service.GetNextJobAsync();
+
+            Assert.Null(job);
+        }
+
+        [Fact]
+        public async Task GetNextJobAsync_WhenRepositoryFails_PropagatesFailure()
+        {
+            var repository = new Mock<IDownloadProcessingJobRepository>(MockBehavior.Strict);
+            repository
+                .Setup(repo => repo.GetJobsByStatusAsync(
+                    ProcessingJobStatus.Pending,
+                    It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("Database unavailable"));
+            var service = new DownloadProcessingJobService(
+                repository.Object,
+                NullLogger<DownloadProcessingJobService>.Instance,
+                TimeProvider.System);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.GetNextJobAsync());
+
+            Assert.Equal("Database unavailable", exception.Message);
+            repository.VerifyAll();
+        }
+
         [Theory]
         [InlineData("qbittorrent")]
         [InlineData("transmission")]

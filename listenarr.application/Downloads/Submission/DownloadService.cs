@@ -214,6 +214,7 @@ namespace Listenarr.Application.Downloads.Submission
 
             // Send to download client with audiobookId for proper metadata linking
             var downloadId2 = await SendToDownloadClientAsync(candidate, downloadClientId, audiobookId);
+            if (string.IsNullOrWhiteSpace(downloadId2)) return new() { Success = false, Message = "A download is already tracked for this audiobook." };
 
             // Log to history
             await LogDownloadHistory(audiobook, "Search", topResult.SearchResult);

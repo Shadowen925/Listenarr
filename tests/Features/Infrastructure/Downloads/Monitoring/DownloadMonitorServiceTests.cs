@@ -76,6 +76,31 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
         }
 
         [Fact]
+        public async Task TriggerCallbacks_CompletedDownloadWithoutExistingJob_QueuesImportOnRepeatedCompletion()
+        {
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithCompletedStatus(DateTime.UtcNow)
+                .WithExternalId("client-download-1")
+                .WithDownloadClientConfiguration(client)
+                .Build());
+            var triggerCallbacks = typeof(DownloadMonitorProcessor).GetMethod(
+                "TriggerCallbacks",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(triggerCallbacks);
+
+            var monitorProcessor = _provider.GetRequiredService<IDownloadMonitorProcessor>();
+            var callbackTask = triggerCallbacks!.Invoke(
+                monitorProcessor,
+                [client, download, download.Clone(), CancellationToken.None]) as Task;
+            Assert.NotNull(callbackTask);
+            await callbackTask!;
+
+            var job = await _provider.GetRequiredService<IDownloadProcessingJobService>().GetNextJobAsync();
+            Assert.NotNull(job);
+            Assert.Equal(download.Id, job!.DownloadId);
+        }
+
+        [Fact]
         [Trait("Method", "MonitorDownloadsAsync")]
         public async Task MonitorDownloadsAsync_DownloadingBecomesCompleted()
         {

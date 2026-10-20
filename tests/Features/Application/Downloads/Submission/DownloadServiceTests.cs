@@ -172,6 +172,65 @@ namespace Listenarr.Tests.Features.Application.Downloads.Submission
         }
 
         [Fact]
+        public async Task SearchAndDownloadAsync_WhenDuplicateIsAlreadyTracked_DoesNotReportSuccess()
+        {
+            var searchResult = new SearchResult
+            {
+                Id = "release-duplicate",
+                Title = "Dune - Frank Herbert",
+                Artist = "Frank Herbert",
+                Source = "test-indexer",
+                DownloadType = "Torrent",
+                MagnetLink = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                Size = 123456789
+            };
+            var searchService = new Mock<ISearchService>(MockBehavior.Strict);
+            searchService
+                .Setup(service => service.SearchAsync(
+                    It.IsAny<string>(),
+                    null,
+                    null,
+                    SearchSortBy.Seeders,
+                    SearchSortDirection.Descending,
+                    true))
+                .ReturnsAsync([searchResult]);
+            var qualityProfileService = new Mock<IQualityProfileService>(MockBehavior.Strict);
+            qualityProfileService
+                .Setup(service => service.ScoreSearchResults(
+                    It.IsAny<List<SearchResult>>(),
+                    It.IsAny<QualityProfile>()))
+                .ReturnsAsync((List<SearchResult> results, QualityProfile _) =>
+                [
+                    new QualityScore { SearchResult = results[0], TotalScore = 10 }
+                ]);
+            var gateway = new Mock<IDownloadClientGateway>(MockBehavior.Strict);
+            _services.AddSingleton(searchService.Object);
+            _services.AddSingleton(qualityProfileService.Object);
+            _services.AddSingleton(gateway.Object);
+
+            Init();
+            await InitData();
+
+            _audiobook.Title = "Dune";
+            _audiobook.Authors = ["Frank Herbert"];
+            var profile = await _qualityProfileRepository.AddAsync(new QualityProfile { Name = "Test profile" });
+            _audiobook.QualityProfileId = profile.Id;
+            _audiobook.QualityProfile = profile;
+            await _audiobookRepository.UpdateAsync(_audiobook);
+
+            var result = await _provider
+                .GetRequiredService<DownloadService>()
+                .SearchAndDownloadAsync(_audiobook.Id);
+
+            Assert.False(result.Success);
+            Assert.Null(result.DownloadId);
+            Assert.Contains("already tracked", result.Message, StringComparison.OrdinalIgnoreCase);
+            gateway.VerifyNoOtherCalls();
+            searchService.VerifyAll();
+            qualityProfileService.VerifyAll();
+        }
+
+        [Fact]
         public async Task SendToDownloadClientAsync_DerivesTorrent_WhenRequestSpoofsDdl()
         {
             var gatewayMock = new Mock<IDownloadClientGateway>();

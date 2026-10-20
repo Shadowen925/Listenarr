@@ -96,12 +96,16 @@ internal static class SabnzbdResponseMapper
             return null;
 
         var histStatus = GetString(slot, "status");
-        var mappedStatus = histStatus.ToLowerInvariant() switch
+        var mappedStatus = histStatus.Trim().ToLowerInvariant() switch
         {
-            "completed" => "completed",
+            "completed" or "complete" => "completed",
             "failed" => "failed",
-            _ => "completed"
+            _ => null
         };
+        if (mappedStatus == null)
+        {
+            return null;
+        }
 
         var histBytes = slot.TryGetProperty("bytes", out var hb) && hb.TryGetInt64(out var hbl) ? hbl : 0L;
         var storagePath = GetString(slot, "storage");

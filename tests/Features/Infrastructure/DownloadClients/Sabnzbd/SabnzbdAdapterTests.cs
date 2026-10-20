@@ -502,6 +502,7 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
 
         [Theory]
         [InlineData("Completed", "completed")]
+        [InlineData("Complete", "completed")]
         [InlineData("Failed", "failed")]
         public void HistoryStatus_IsMappedWithoutBehaviorDrift(string status, string expected)
         {
@@ -517,6 +518,25 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
             Assert.NotNull(item);
             Assert.Equal(expected, item!.Status);
             Assert.Equal("/downloads/book", item.ContentPath);
+        }
+
+        [Theory]
+        [InlineData("Queued")]
+        [InlineData("Processing")]
+        [InlineData("Unknown")]
+        [InlineData("")]
+        public void HistoryStatus_WithoutExplicitCompletionEvidence_IsNotImportable(string status)
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(
+                $$"""{"nzo_id":"sab-2","name":"Book","status":"{{status}}","storage":"/downloads/book"}""");
+
+            var item = SabnzbdResponseMapper.MapHistorySlotToQueueItem(
+                _client,
+                document.RootElement,
+                string.Empty,
+                new HashSet<string>());
+
+            Assert.Null(item);
         }
     }
 }
