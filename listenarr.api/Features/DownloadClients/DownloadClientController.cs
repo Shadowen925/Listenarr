@@ -17,6 +17,7 @@
  */
 
 using Listenarr.Api.Attributes;
+using Listenarr.Api.Features.DownloadClients.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Listenarr.Api.Features.DownloadClients
@@ -99,70 +100,55 @@ namespace Listenarr.Api.Features.DownloadClients
         /// <summary>
         /// Save or update a download client configuration. Preserves existing credentials when incoming values are blank.
         /// </summary>
-        /// <param name="config">Download client configuration to save.</param>
+        /// <param name="request">Download client configuration fields to save.</param>
         [HttpPost]
-        public async Task<ActionResult<object>> SaveDownloadClientConfiguration([FromBody] DownloadClientConfiguration config)
+        public async Task<ActionResult<object>> SaveDownloadClientConfiguration([FromBody] DownloadClientConfigurationRequest request)
         {
             try
             {
-                if (config == null)
+                if (request == null)
                 {
                     return BadRequest("Missing download client configuration");
                 }
 
-                if (!string.IsNullOrWhiteSpace(config.Id))
+                var existing = !string.IsNullOrWhiteSpace(request.Id)
+                    ? await _configurationService.GetDownloadClientConfigurationAsync(request.Id)
+                    : null;
+                var incomingSettings = request.Settings;
+                var settings = incomingSettings == null
+                    ? existing?.Settings ?? []
+                    : new Dictionary<string, object>(incomingSettings);
+                if (existing?.Settings?.TryGetValue("apiKey", out var existingApiKeyObject) == true)
                 {
-                    var existing = await _configurationService.GetDownloadClientConfigurationAsync(config.Id);
-                    if (existing != null)
+                    var incomingApiKey = settings.TryGetValue("apiKey", out var incomingApiKeyObject)
+                        ? incomingApiKeyObject?.ToString()
+                        : null;
+                    if (string.IsNullOrWhiteSpace(incomingApiKey)
+                        || string.Equals(incomingApiKey, ApiResponseRedactor.RedactedValue, StringComparison.Ordinal))
                     {
-                        if (string.IsNullOrWhiteSpace(config.Username) && !string.IsNullOrWhiteSpace(existing.Username))
-                        {
-                            config.Username = existing.Username;
-                        }
-
-                        if (string.IsNullOrWhiteSpace(config.Password) && !string.IsNullOrWhiteSpace(existing.Password))
-                        {
-                            config.Password = existing.Password;
-                        }
-
-                        if (existing.Settings != null)
-                        {
-                            var settings = config.Settings;
-                            var incomingApiKey = config.Settings != null
-                                && config.Settings.TryGetValue("apiKey", out var incomingApiKeyObj)
-                                    ? incomingApiKeyObj?.ToString()
-                                    : null;
-                            if (string.IsNullOrWhiteSpace(incomingApiKey)
-                                || string.Equals(
-                                    incomingApiKey,
-                                    ApiResponseRedactor.RedactedValue,
-                                    StringComparison.Ordinal))
-                            {
-                                if (existing.Settings.TryGetValue("apiKey", out var existingApiKeyObj))
-                                {
-                                    var existingApiKey = existingApiKeyObj?.ToString();
-                                    if (!string.IsNullOrWhiteSpace(existingApiKey))
-                                    {
-                                        settings["apiKey"] = existingApiKey;
-                                    }
-                                }
-                            }
-                            config.Settings = settings;
-                        }
-
-                        var savedSettings = config.Settings;
-                        if (savedSettings.TryGetValue("apiKey", out var apiKey)
-                            && string.Equals(
-                                apiKey?.ToString(),
-                                ApiResponseRedactor.RedactedValue,
-                                StringComparison.Ordinal)
-                            && existing.Settings?.ContainsKey("apiKey") != true)
-                        {
-                            savedSettings.Remove("apiKey");
-                            config.Settings = savedSettings;
-                        }
+                        settings["apiKey"] = existingApiKeyObject;
                     }
                 }
+
+                var username = PreserveSavedCredential(request.Username, existing?.Username);
+                var password = PreserveSavedCredential(request.Password, existing?.Password);
+                var config = new DownloadClientConfiguration
+                {
+                    Id = request.Id ?? existing?.Id ?? Guid.NewGuid().ToString(),
+                    Name = request.Name ?? existing?.Name ?? string.Empty,
+                    Type = request.Type ?? existing?.Type ?? string.Empty,
+                    Host = request.Host ?? existing?.Host ?? string.Empty,
+                    Port = request.Port ?? existing?.Port ?? 0,
+                    Username = username,
+                    Password = password,
+                    DownloadPath = request.DownloadPath ?? existing?.DownloadPath ?? string.Empty,
+                    UseSSL = request.UseSSL ?? existing?.UseSSL ?? false,
+                    IsEnabled = request.IsEnabled ?? existing?.IsEnabled ?? true,
+                    RemoveCompletedDownloads = request.RemoveCompletedDownloads
+                        ?? existing?.RemoveCompletedDownloads
+                        ?? "none",
+                    Settings = settings
+                };
 
                 var id = await _configurationService.SaveDownloadClientConfigurationAsync(config);
                 return Ok(new { id });
@@ -172,6 +158,14 @@ namespace Listenarr.Api.Features.DownloadClients
                 _logger.LogError(ex, "Error saving download client configuration");
                 return StatusCode(500, "Internal server error");
             }
+        }
+
+        private static string PreserveSavedCredential(string? incoming, string? existing)
+        {
+            return string.IsNullOrWhiteSpace(incoming)
+                || string.Equals(incoming, ApiResponseRedactor.RedactedValue, StringComparison.Ordinal)
+                    ? existing ?? string.Empty
+                    : incoming;
         }
 
         /// <summary>

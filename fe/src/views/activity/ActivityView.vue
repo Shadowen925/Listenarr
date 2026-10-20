@@ -166,6 +166,7 @@
               >
                 Source unavailable
               </span>
+              <span v-if="item.missingFromClient" class="stale-badge">Missing from client</span>
             </div>
             <div class="col-actions">
               <button
@@ -759,9 +760,8 @@ const canManuallyMatchRecovery = (item: QueueItem): boolean =>
   Boolean(item.localPath)
 
 const canRetryRecoveredImport = (item: QueueItem): boolean =>
-  item.status === 'importpending' &&
-  item.recoveryState === 'ImportPending' &&
-  Boolean(item.localPath)
+  (item.status === 'importpending' && item.recoveryState === 'ImportPending') ||
+  (item.status === 'importblocked' && item.recoveryState === 'ImportFailed')
 
 const retryRecoveredImport = async (item: QueueItem) => {
   try {
@@ -882,9 +882,12 @@ const confirmRemove = async (mode: DownloadRemovalMode) => {
 
 const statusClass = (item: QueueItem): string => {
   const label = displayStatus(item)
-  return label === 'Stalled' || label === 'Missing from client' || label === 'Needs attention'
+  return label === 'Stalled' ||
+    label === 'Missing from client' ||
+    label === 'Needs attention' ||
+    label === 'Import Failed'
     ? 'stalled'
-    : label === 'Replacing' || label === 'Retrieving metadata'
+    : label === 'Replacing' || label === 'Retrieving metadata' || label === 'Recovery Pending'
       ? 'queued'
       : ''
 }
@@ -922,6 +925,10 @@ const formatDuration = (from?: string | null): string => {
 }
 
 const displayStatus = (item: QueueItem): string => {
+  if (item.recoveryState === 'ImportFailed') return 'Import Failed'
+  if (item.recoveryState === 'RecoveryPending') return 'Recovery Pending'
+  if (item.recoveryState === 'ImportPending') return 'Import Pending'
+  if (item.recoveryState === 'MissingFromClient') return 'Missing from client'
   if (item.recoveryState === 'NeedsAttention') return 'Needs attention'
   if (item.replacementState === 'Removing' || item.replacementState === 'Removed')
     return 'Replacing'

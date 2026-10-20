@@ -189,12 +189,19 @@ public class DownloadsController : ControllerBase
                 return NotFound(new { error = "Download not found", id });
             }
 
-            if (download.Status == DownloadStatus.ImportPending
-                && !string.IsNullOrWhiteSpace(download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
+            var hasRecoveredSourceFiles = !string.IsNullOrWhiteSpace(
+                download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey));
+            if (hasRecoveredSourceFiles
+                && download.Status is DownloadStatus.ImportPending or DownloadStatus.ImportBlocked)
             {
                 if (_downloadProcessingJobService == null)
                 {
                     throw new InvalidOperationException("Download processing is not available.");
+                }
+
+                if (download.Status == DownloadStatus.ImportBlocked)
+                {
+                    download.Unblock();
                 }
 
                 download.CompletedAt ??= DateTime.UtcNow;
@@ -371,7 +378,10 @@ public class DownloadsController : ControllerBase
             if (d.Metadata != null)
             {
                 var dict = new Dictionary<string, object>();
-                foreach (var kvp in d.Metadata.Where(kvp => !string.Equals(kvp.Key, "ClientContentPath", StringComparison.OrdinalIgnoreCase)))
+                foreach (var kvp in d.Metadata.Where(kvp =>
+                    !string.Equals(kvp.Key, "ClientContentPath", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(kvp.Key, Download.RecoveredSourceFilesMetadataKey, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(kvp.Key, "Recovery.Stability", StringComparison.OrdinalIgnoreCase)))
                 {
                     dict[kvp.Key] = kvp.Value!;
                 }

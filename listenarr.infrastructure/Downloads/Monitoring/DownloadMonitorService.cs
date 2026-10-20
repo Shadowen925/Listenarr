@@ -277,7 +277,15 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                             var previous = previousDownloads.FirstOrDefault(d => d.Id == missing.Id);
                             if (previous != null)
                             {
-                                await TriggerCallbacks(client, missing, previous, cancellationToken);
+                                if (previous.Status == DownloadStatus.Completed
+                                    && missing.Status == DownloadStatus.Completed)
+                                {
+                                    await QueueRecoveredImportAsync(missing);
+                                }
+                                else
+                                {
+                                    await TriggerCallbacks(client, missing, previous, cancellationToken);
+                                }
                             }
                         }
                     }
@@ -446,6 +454,13 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             {
                 logger.LogError($"Unexpected error after a download was detected completed: {exception.Message}, download will not be queued for importing");
             }
+        }
+
+        private async Task QueueRecoveredImportAsync(Download download)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var downloadProcessingJobService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobService>();
+            await downloadProcessingJobService.EnqueueAsync(download);
         }
 
         /// <summary>

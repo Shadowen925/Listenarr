@@ -14,11 +14,13 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         TimeProvider timeProvider,
         ILogger<DownloadCompletionReconciler> logger)
     {
-        private const int MaximumScannedFiles = 1000;
-        private const int MaximumDirectoryDepth = 5;
         private const string StabilityKey = "Recovery.Stability";
         private const string StateKey = "Recovery.State";
         private const string ReasonKey = "Recovery.Reason";
+        private const string ClientPresenceKey = "Recovery.ClientPresence";
+
+        private readonly DownloadCompletionDirectoryScanner _directoryScanner =
+            new(remotePathMappingService, fileSystem, logger);
 
         public async Task<HashSet<string>> ReconcileAsync(
             DownloadClientConfiguration client,
@@ -32,64 +34,65 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 return recovered;
             }
 
-            if (string.IsNullOrWhiteSpace(client.DownloadPath))
+            var recoverableDownloads = missingDownloads.Where(CanRecover).ToList();
+            foreach (var download in recoverableDownloads)
             {
-                logger.LogWarning(
-                    "Skipping completion reconciliation for client {ClientId}: no authorized download directory is configured",
-                    client.Id);
+                download.SetMetadata(ClientPresenceKey, "MissingFromClient");
+                SetRecovery(
+                    download,
+                    "MissingFromClient",
+                    "The download client did not report this tracked item in its latest successful snapshot.");
+            }
+
+            if (recoverableDownloads.Count == 0)
+            {
                 return recovered;
             }
 
-            string root;
-            try
+            var mappings = await remotePathMappingService.GetPathMappingByClientAsync(client);
+            if (mappings.Count == 0)
             {
-                root = await remotePathMappingService.TranslatePathAsync(client, client.DownloadPath);
-            }
-            catch (InvalidOperationException exception)
-            {
-                foreach (var download in missingDownloads)
+                foreach (var download in recoverableDownloads)
                 {
-                    SetAttention(download, "The configured completed directory could not be mapped to a local path.");
+                    SetRecovery(
+                        download,
+                        "RecoveryPending",
+                        "No client-specific remote path mapping is configured for completed-download discovery.");
                 }
 
                 logger.LogWarning(
-                    exception,
-                    "Skipping completion reconciliation for client {ClientId}: its configured directory mapping is unavailable",
+                    "Skipping completion reconciliation for client {ClientId}: no client-specific completed-download path mappings are configured",
                     client.Id);
                 return recovered;
             }
 
-            if (string.IsNullOrWhiteSpace(root)
-                || !fileSystem.DirectoryExists(root)
-                || fileSystem.IsReparsePoint(root))
+            var (authorizedRoots, failureReason) = await _directoryScanner.ResolveAuthorizedRootsAsync(client, mappings);
+            if (authorizedRoots.Count == 0)
             {
-                foreach (var download in missingDownloads)
+                foreach (var download in recoverableDownloads)
                 {
-                    SetAttention(download, "The configured completed directory is unavailable to Listenarr.");
+                    SetRecovery(download, "RecoveryPending", failureReason);
                 }
 
                 logger.LogWarning(
-                    "Skipping completion reconciliation for client {ClientId}: configured download directory is unavailable",
-                    client.Id);
+                    "Skipping completion reconciliation for client {ClientId}: {Reason}",
+                    client.Id,
+                    failureReason);
                 return recovered;
             }
 
-            var candidateFiles = EnumerateAudioFiles(root);
+            var candidateFiles = _directoryScanner.EnumerateAudioFiles(authorizedRoots);
             var metadataByPath = new Dictionary<string, AudioMetadata?>(StringComparer.Ordinal);
-            foreach (var download in missingDownloads)
+            foreach (var download in recoverableDownloads)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!CanRecover(download))
-                {
-                    continue;
-                }
 
                 var audiobook = download.AudiobookId.HasValue
                     ? await audiobookRepository.GetByIdAsync(download.AudiobookId.Value)
                     : null;
                 if (audiobook == null || HasConflictingAsin(download, audiobook))
                 {
-                    SetAttention(download, "The tracked audiobook identity could not be verified.");
+                    SetRecovery(download, "RecoveryPending", "The tracked audiobook identity could not be verified.");
                     continue;
                 }
 
@@ -100,13 +103,19 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                     cancellationToken);
                 if (matchedFiles.Count == 0)
                 {
-                    SetAttention(download, "No confident completed-file match was found in the configured client directory.");
+                    SetRecovery(
+                        download,
+                        "RecoveryPending",
+                        "No confident completed-file match was found in this client's authorized mapped directories.");
                     continue;
                 }
 
-                if (!HasCompletionEvidence(download, matchedFiles))
+                if (!HasCompletionEvidence(download, matchedFiles, audiobook))
                 {
-                    SetAttention(download, "Files are present, but completion cannot be confirmed from client or size evidence.");
+                    SetRecovery(
+                        download,
+                        "RecoveryPending",
+                        "Matching files are present, but completion cannot be confirmed by client state, size, or embedded audiobook identity.");
                     continue;
                 }
 
@@ -116,15 +125,14 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 }
 
                 var filePaths = matchedFiles.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal).ToList();
-                download.DownloadPath = Path.GetDirectoryName(filePaths[0]) ?? root;
+                download.DownloadPath = Path.GetDirectoryName(filePaths[0]) ?? authorizedRoots[0];
                 download.SetMetadata("ClientContentPath", download.DownloadPath);
                 download.SetMetadata(
                     Download.RecoveredSourceFilesMetadataKey,
                     JsonSerializer.Serialize(filePaths));
-                download.SetMetadata(StateKey, settings.AutomaticImportReconciledDownloads
-                    ? "Recovered"
-                    : "ImportPending");
+                download.SetMetadata(StateKey, "ImportPending");
                 download.SetMetadata(ReasonKey, "Matched files were stable, readable, and associated with the tracked audiobook.");
+                download.SetMetadata(ClientPresenceKey, "MissingFromClient");
 
                 if (settings.AutomaticImportReconciledDownloads)
                 {
@@ -150,72 +158,6 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             }
 
             return recovered;
-        }
-
-        private List<string> EnumerateAudioFiles(string root)
-        {
-            var rootPath = Path.GetFullPath(root);
-            var rootPrefix = Path.EndsInDirectorySeparator(rootPath)
-                ? rootPath
-                : rootPath + Path.DirectorySeparatorChar;
-            var pathComparison = OperatingSystem.IsWindows()
-                ? StringComparison.OrdinalIgnoreCase
-                : StringComparison.Ordinal;
-            var directories = new Stack<(string Path, int Depth)>();
-            var files = new List<string>();
-            directories.Push((rootPath, 0));
-
-            while (directories.Count > 0 && files.Count < MaximumScannedFiles)
-            {
-                var (directory, depth) = directories.Pop();
-                try
-                {
-                    foreach (var path in fileSystem.EnumerateFiles(directory))
-                    {
-                        if (files.Count >= MaximumScannedFiles)
-                        {
-                            break;
-                        }
-
-                        if (FileUtils.IsAudioFile(path)
-                            && !fileSystem.IsReparsePoint(path)
-                            && IsWithinRoot(path, rootPrefix, pathComparison))
-                        {
-                            files.Add(path);
-                        }
-                    }
-
-                    if (depth >= MaximumDirectoryDepth)
-                    {
-                        continue;
-                    }
-
-                    foreach (var child in fileSystem.EnumerateDirectories(directory))
-                    {
-                        if (!fileSystem.IsReparsePoint(child)
-                            && IsWithinRoot(child, rootPrefix, pathComparison))
-                        {
-                            directories.Push((child, depth + 1));
-                        }
-                    }
-                }
-                catch (UnauthorizedAccessException exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Unable to inspect configured completed-download directory {Directory}",
-                        LogRedaction.SanitizeFilePath(directory));
-                }
-                catch (IOException exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Unable to inspect configured completed-download directory {Directory}",
-                        LogRedaction.SanitizeFilePath(directory));
-                }
-            }
-
-            return files;
         }
 
         private async Task<List<StableCandidateFile>> FindMatchingFilesAsync(
@@ -258,12 +200,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 var matchingFiles = files
                     .Where(file => MatchesAudiobook(file, audiobook))
                     .ToList();
-                if (matchingFiles.Count == 0
-                    || (matchingFiles.Count > 1
-                        && matchingFiles.Any(file => !string.Equals(
-                            Path.GetExtension(file.Path),
-                            ".mp3",
-                            StringComparison.OrdinalIgnoreCase))))
+                if (matchingFiles.Count == 0)
                 {
                     continue;
                 }
@@ -274,7 +211,8 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                         .Select(file => new StableCandidateFile(
                             file.Path,
                             fileSystem.GetFileLength(file.Path),
-                            fileSystem.GetLastWriteTimeUtc(file.Path)))
+                            fileSystem.GetLastWriteTimeUtc(file.Path),
+                            file.Metadata))
                         .ToList());
                 }
                 catch (UnauthorizedAccessException)
@@ -356,7 +294,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         {
             if (files.Any(file => file.Length <= 0))
             {
-                SetAttention(download, "A recovered audio file is empty.");
+                SetRecovery(download, "RecoveryPending", "A recovered audio file is empty.");
                 return false;
             }
 
@@ -376,14 +314,17 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             if (snapshot == null || !string.Equals(snapshot.Signature, signature, StringComparison.Ordinal))
             {
                 download.SetMetadata(StabilityKey, JsonSerializer.Serialize(new StabilitySnapshot(signature, now)));
-                download.SetMetadata(StateKey, "StabilityChecking");
+                SetRecovery(download, "RecoveryPending", "A matching file set was found and is being checked for stability.");
                 return false;
             }
 
             return now - snapshot.FirstObservedUtc >= TimeSpan.FromSeconds(Math.Clamp(minimumStabilitySeconds, 15, 3600));
         }
 
-        private static bool HasCompletionEvidence(Download download, IReadOnlyCollection<StableCandidateFile> files)
+        private static bool HasCompletionEvidence(
+            Download download,
+            IReadOnlyCollection<StableCandidateFile> files,
+            Audiobook audiobook)
         {
             var clientState = download.GetMetadataString("ClientState")?.Trim().ToLowerInvariant();
             if (clientState is "paused" or "stoppeddl" or "stoppedup" or "downloading" or "queued" or "queueddl")
@@ -391,21 +332,55 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 return false;
             }
 
-            if (clientState is "completed" or "success" or "seeding" or "finished"
-                || (download.TotalSize > 0 && download.DownloadedSize >= download.TotalSize))
+            if (clientState is "completed" or "success" or "seeding" or "finished")
             {
                 return true;
             }
 
-            return download.ExpectedFileSize is > 0
-                && files.Sum(file => file.Length) >= download.ExpectedFileSize.Value;
+            if (download.TotalSize > 0)
+            {
+                return download.DownloadedSize >= download.TotalSize;
+            }
+
+            if (download.ExpectedFileSize is > 0)
+            {
+                return files.Sum(file => file.Length) >= download.ExpectedFileSize.Value;
+            }
+
+            return files.All(file => HasStrongMetadataIdentity(file.Metadata, audiobook));
+        }
+
+        private static bool HasStrongMetadataIdentity(AudioMetadata? metadata, Audiobook audiobook)
+        {
+            if (!string.IsNullOrWhiteSpace(metadata?.Asin)
+                && !string.IsNullOrWhiteSpace(audiobook.Asin)
+                && string.Equals(metadata.Asin, audiobook.Asin, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var title = Normalize(audiobook.Title);
+            var fileTitle = Normalize(FirstNonEmpty(metadata?.Album, metadata?.Title));
+            var artist = Normalize(FirstNonEmpty(metadata?.AlbumArtist, metadata?.Artist));
+            return !string.IsNullOrWhiteSpace(title)
+                && string.Equals(fileTitle, title, StringComparison.OrdinalIgnoreCase)
+                && audiobook.Authors?.Where(author => !string.IsNullOrWhiteSpace(author))
+                    .Select(Normalize)
+                    .Any(author => string.Equals(artist, author, StringComparison.OrdinalIgnoreCase)
+                        || artist.Contains(author, StringComparison.OrdinalIgnoreCase)) == true;
         }
 
         private static bool CanRecover(Download download)
         {
             if (download.Status is not (DownloadStatus.Queued
                 or DownloadStatus.Downloading
+                or DownloadStatus.Completed
                 or DownloadStatus.ImportPending))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
             {
                 return false;
             }
@@ -419,16 +394,10 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             && !string.IsNullOrWhiteSpace(audiobook.Asin)
             && !string.Equals(download.Asin, audiobook.Asin, StringComparison.OrdinalIgnoreCase);
 
-        private static void SetAttention(Download download, string reason)
+        private static void SetRecovery(Download download, string state, string reason)
         {
-            download.SetMetadata(StateKey, "NeedsAttention");
+            download.SetMetadata(StateKey, state);
             download.SetMetadata(ReasonKey, reason);
-        }
-
-        private static bool IsWithinRoot(string path, string rootPrefix, StringComparison comparison)
-        {
-            var fullPath = Path.GetFullPath(path);
-            return fullPath.StartsWith(rootPrefix, comparison);
         }
 
         private static bool ContainsIdentifier(string value, string identifier) =>
@@ -443,6 +412,10 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
 
         private sealed record StabilitySnapshot(string Signature, DateTime FirstObservedUtc);
 
-        private sealed record StableCandidateFile(string Path, long Length, DateTime LastWriteTimeUtc);
+        private sealed record StableCandidateFile(
+            string Path,
+            long Length,
+            DateTime LastWriteTimeUtc,
+            AudioMetadata? Metadata);
     }
 }

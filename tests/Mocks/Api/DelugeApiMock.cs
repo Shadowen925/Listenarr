@@ -7,6 +7,7 @@ namespace Listenarr.Tests.Mocks.Api
     public class DelugeApiMock : BaseApiMock
     {
         public bool Authenticated { get; set; } = false;
+        public bool AuthenticationSucceeded { get; set; } = true;
         public bool DaemonConnected { get; set; } = true;
         public string? UpdateUiResponseOverride { get; set; }
         public bool FailRequests { get; set; } = false;
@@ -31,10 +32,10 @@ namespace Listenarr.Tests.Mocks.Api
                 var method = methodProp.GetString();
                 string responseBody = method switch
                 {
-                    "auth.login" => """
+                    "auth.login" => $$"""
                     {
                       "id": 1,
-                      "result": true,
+                      "result": {{AuthenticationSucceeded.ToString().ToLowerInvariant()}},
                       "error": null
                     }
                     """,

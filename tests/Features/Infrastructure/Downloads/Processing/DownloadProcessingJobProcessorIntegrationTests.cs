@@ -81,6 +81,54 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
         }
 
         [Fact]
+        public async Task ProcessJob_RecoveredSourceRegistersAudiobookBeforeClientCleanup()
+        {
+            var sourceDir = FileService.GetTempDirectory("recovered-dl-dir");
+            var destRoot = FileService.GetTempDirectory("recovered-dl-dest");
+            var audioPath = await FileService.GetFileAsync(sourceDir, "B000R34YKC.m4b");
+            var audiobook = await _audiobookRepository.AddAsync(new AudiobookBuilder()
+                .WithBasePath(destRoot)
+                .Build());
+            var client = await CreateDownloadClientConfiguration();
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithCompletedStatus(DateTime.UtcNow)
+                .WithPath(sourceDir)
+                .WithStartDate(DateTime.UtcNow)
+                .WithDownloadClientConfiguration(client)
+                .WithAudiobook(audiobook)
+                .Build());
+            download.SetMetadata(
+                Download.RecoveredSourceFilesMetadataKey,
+                System.Text.Json.JsonSerializer.Serialize(new[] { audioPath }));
+            await _downloadRepository.UpdateAsync(download);
+
+            await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
+                .WithOutputPath(destRoot)
+                .WithCopyFileOnCompleted()
+                .WithoutMetadataProcessing()
+                .Build());
+
+            var registeredBeforeClientCleanup = false;
+            downloadClientGateway.BeforeMarkImportedAsync = async _ =>
+            {
+                var importedFiles = await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id);
+                Assert.NotEmpty(importedFiles);
+                Assert.All(importedFiles, file => Assert.True(File.Exists(file.Path)));
+                registeredBeforeClientCleanup = true;
+            };
+
+            var jobId = await downloadProcessingJobService.EnqueueAsync(download);
+            await downloadProcessingJobProcessor.ProcessQueueAsync(CancellationToken.None);
+
+            var processedJob = await _downloadProcessingJobRepository.GetByIdAsync(jobId);
+            Assert.True(
+                registeredBeforeClientCleanup,
+                $"Job status: {processedJob?.Status}; error: {processedJob?.ErrorMessage}; logs: {string.Join(" | ", processedJob?.ProcessingLog ?? [])}");
+            Assert.Equal(1, downloadClientGateway.GetCallCount(nameof(IDownloadClientGateway.MarkItemAsImportedAsync)));
+            Assert.NotEmpty(jobId);
+        }
+
+        [Fact]
         public async Task ProcessQueueAsync_DirectorySource_UsesClientReportedFilesToExcludeUnrelatedFiles()
         {
             var sourceDir = FileService.GetTempDirectory($"dl-dir");

@@ -314,6 +314,39 @@ namespace Listenarr.Tests.Features.Api.Features.Downloads
         }
 
         [Fact]
+        public async Task RetryBlockedImport_FailedRecoveredImport_RequeuesSafelyIdentifiedSource()
+        {
+            await _downloadRepository.AddAsync(new Download
+            {
+                Id = "d-recovered-failed",
+                AudiobookId = 42,
+                Title = "Recovered audiobook",
+                DownloadClientId = _client.Id,
+                DownloadPath = Path.GetTempPath(),
+                Status = DownloadStatus.ImportBlocked,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["Recovery.State"] = "ImportFailed",
+                    [Download.RecoveredSourceFilesMetadataKey] = System.Text.Json.JsonSerializer.Serialize(
+                        new[] { Path.Combine(Path.GetTempPath(), "recovered.m4b") })
+                },
+                ImportBlockReason = "RepeatedFailure"
+            });
+
+            var controller = MockUtils.CreateDownloadsController(_provider);
+            var action = await controller.RetryBlockedImport("d-recovered-failed");
+
+            Assert.IsType<OkObjectResult>(action);
+            var updated = await _downloadRepository.GetByIdAsync("d-recovered-failed");
+            Assert.NotNull(updated);
+            Assert.Equal(DownloadStatus.Completed, updated!.Status);
+            Assert.Null(updated.ImportBlockReason);
+            var job = await _provider.GetRequiredService<IDownloadProcessingJobService>().GetNextJobAsync();
+            Assert.NotNull(job);
+            Assert.Equal("d-recovered-failed", job.DownloadId);
+        }
+
+        [Fact]
         [Trait("Method", "RetryBlockedImport")]
         [Trait("Scenario", "RetryBlockedImportRejectsNonBlockedStatus")]
         public async Task RetryBlockedImport_NonBlocked_ReturnsBadRequest()

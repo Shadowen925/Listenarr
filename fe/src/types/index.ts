@@ -307,7 +307,9 @@ export interface DownloadClientConfiguration {
   host: string
   port: number
   username: string
-  password: string
+  hasSavedUsername?: boolean
+  password?: string
+  hasSavedPassword?: boolean
   downloadPath: string
   useSSL: boolean
   isEnabled: boolean

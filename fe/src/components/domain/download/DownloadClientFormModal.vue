@@ -163,10 +163,13 @@
                   id="username"
                   v-model="formData.username"
                   type="text"
-                  placeholder="admin"
-                  :required="formData.type === 'nzbget'"
+                  :placeholder="hasSavedUsername ? 'Enter a new username to replace' : 'admin'"
+                  :required="formData.type === 'nzbget' && !hasSavedUsername"
                 />
-                <small v-if="formData.type === 'nzbget'"
+                <small v-if="hasSavedUsername"
+                  >Username saved. Leave blank to keep it, or enter a replacement.</small
+                >
+                <small v-else-if="formData.type === 'nzbget'"
                   >Required when NZBGet authentication is enabled.</small
                 >
               </div>
@@ -177,12 +180,16 @@
                   id="password"
                   v-model="formData.password"
                   :placeholder="
-                    props.editingClient && !formData.password ? '(Saved password)' : '********'
+                    hasSavedPassword ? 'Enter a new password to replace' : 'Enter password'
                   "
-                  :required="formData.type === 'nzbget'"
+                  :required="formData.type === 'nzbget' && !hasSavedPassword"
                   class="admin-input"
                 />
-                <small v-if="formData.type === 'nzbget'"
+                <small v-if="hasSavedPassword"
+                  >Password saved. Leave blank to keep it, or enter a new password to replace
+                  it.</small
+                >
+                <small v-else-if="formData.type === 'nzbget'"
                   >Use the NZBGet RPC password (default: nzbget).</small
                 >
               </div>
@@ -505,6 +512,7 @@ import { logger } from '@/utils/logger'
 import {
   buildStalledOverrides,
   readStalledOverrides,
+  STALLED_OVERRIDE_KEYS,
   validateStalledOverrides,
   type StalledOverrideValues,
 } from '@/utils/stalledOverrides'
@@ -604,6 +612,32 @@ const requiresApiKey = computed(() => {
   return formData.value.type === 'sabnzbd'
 })
 
+const hasSavedPassword = computed(() => Boolean(props.editingClient?.hasSavedPassword))
+const hasSavedUsername = computed(() => Boolean(props.editingClient?.hasSavedUsername))
+
+const preservedClientSettings = () => {
+  const preserved = { ...(formData.value.settings as Record<string, unknown>) }
+  const formManagedKeys = [
+    'apiKey',
+    'urlBase',
+    'category',
+    'tags',
+    'recentPriority',
+    'olderPriority',
+    'removeCompleted',
+    'removeFailed',
+    'removeCompletedDownloads',
+    'initialState',
+    'sequentialOrder',
+    'firstAndLastFirst',
+    'contentLayout',
+    'remotePathMappingIds',
+    ...STALLED_OVERRIDE_KEYS,
+  ]
+  for (const key of formManagedKeys) delete preserved[key]
+  return preserved
+}
+
 const getHostPlaceholder = () => {
   const placeholders: Record<string, string> = {
     qbittorrent: 'qbittorrent.tld.com',
@@ -680,10 +714,10 @@ watch(
         type: newClient.type,
         host: normalizeHost(newClient.host),
         port: newClient.port,
-        username: newClient.username || '',
-        password: newClient.password || '',
+        username: newClient.username === 'REDACTED' ? '' : newClient.username || '',
+        password: '',
         apiKey: settings?.apiKey === 'REDACTED' ? '' : (settings?.apiKey as string) || '',
-        downloadPath: newClient.downloadPath,
+        downloadPath: newClient.downloadPath || '',
         useSSL: newClient.useSSL,
         isEnabled: newClient.isEnabled,
         category: (settings?.category as string) || '',
@@ -740,6 +774,7 @@ const testConnection = async () => {
       isEnabled: formData.value.isEnabled,
       removeCompletedDownloads: formData.value.removeCompletedDownloads,
       settings: {
+        ...preservedClientSettings(),
         ...(formData.value.type === 'sabnzbd' && formData.value.apiKey
           ? { apiKey: formData.value.apiKey }
           : {}),
@@ -806,6 +841,7 @@ const handleSubmit = async () => {
       isEnabled: formData.value.isEnabled,
       removeCompletedDownloads: formData.value.removeCompletedDownloads,
       settings: {
+        ...preservedClientSettings(),
         ...(formData.value.type === 'sabnzbd' && formData.value.apiKey
           ? { apiKey: formData.value.apiKey }
           : {}),

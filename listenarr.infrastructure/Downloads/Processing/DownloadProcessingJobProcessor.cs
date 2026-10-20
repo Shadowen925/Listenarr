@@ -133,10 +133,19 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                     return;
                 }
 
-                await downloadService.UpdateAsync(
-                    download.Blocked(
-                        "Unable to import the download",
-                        $"See the log of job {job.Id} for more information"));
+                download.Blocked(
+                    "Unable to import the download",
+                    $"See the log of job {job.Id} for more information");
+                if (!string.IsNullOrWhiteSpace(
+                    download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
+                {
+                    download.SetMetadata("Recovery.State", "ImportFailed");
+                    download.SetMetadata(
+                        "Recovery.Reason",
+                        "Import failed after the configured processing retries were exhausted.");
+                }
+
+                await downloadService.UpdateAsync(download);
             }
         }
 

@@ -16,7 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Net;
+using System.Text.Json;
 using Listenarr.Api.Attributes;
+using Listenarr.Api.Features.DownloadClients.Models;
 using Listenarr.Tests.Mocks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Abstractions;
@@ -224,7 +226,7 @@ namespace Listenarr.Tests.Features.Api.Features.Configuration
                 HttpContext = new DefaultHttpContext()
             };
 
-            var result = await controller.SaveDownloadClientConfiguration(new DownloadClientConfiguration
+            var result = await controller.SaveDownloadClientConfiguration(new DownloadClientConfigurationRequest
             {
                 Id = "client-3",
                 Type = "sabnzbd",
@@ -275,6 +277,168 @@ namespace Listenarr.Tests.Features.Api.Features.Configuration
             Assert.Equal(ApiResponseRedactor.RedactedValue, returnedClient.Settings["apiKey"].ToString());
             configurationService.VerifyAll();
             gateway.VerifyAll();
+        }
+
+        [Fact]
+        public async Task GetDownloadClientConfiguration_ReturnsPathAndPasswordPresenceWithoutReturningPassword()
+        {
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            var stored = new DownloadClientConfiguration
+            {
+                Id = "deluge-1",
+                Type = "deluge",
+                Username = "saved-user",
+                DownloadPath = "/data/deluge/completed/",
+                Password = "saved-secret"
+            };
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync(stored.Id))
+                .ReturnsAsync(stored);
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                Mock.Of<IDownloadClientGateway>(),
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = await controller.GetDownloadClientConfiguration(stored.Id);
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            var response = ok.Value!;
+            Assert.Equal(stored.DownloadPath, response.GetType().GetProperty("DownloadPath")!.GetValue(response));
+            Assert.Equal(true, response.GetType().GetProperty("HasSavedPassword")!.GetValue(response));
+            Assert.Equal(true, response.GetType().GetProperty("HasSavedUsername")!.GetValue(response));
+            Assert.Equal(ApiResponseRedactor.RedactedValue, response.GetType().GetProperty("Username")!.GetValue(response));
+            Assert.Null(response.GetType().GetProperty("Password"));
+            configurationService.VerifyAll();
+        }
+
+        [Fact]
+        public async Task SaveDownloadClientConfiguration_OmittedPathSettingsAndPasswordPreserveStoredValues()
+        {
+            var existing = new DownloadClientConfiguration
+            {
+                Id = "deluge-2",
+                Type = "deluge",
+                DownloadPath = "/data/deluge/completed/",
+                Password = "saved-password",
+                Settings = new Dictionary<string, object>
+                {
+                    ["stalledEnabled"] = false,
+                    ["stalledAutoBlocklist"] = true
+                }
+            };
+            DownloadClientConfiguration? saved = null;
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync(existing.Id))
+                .ReturnsAsync(existing);
+            configurationService.Setup(service =>
+                    service.SaveDownloadClientConfigurationAsync(It.IsAny<DownloadClientConfiguration>()))
+                .Callback<DownloadClientConfiguration>(configuration => saved = configuration)
+                .ReturnsAsync(existing.Id);
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                Mock.Of<IDownloadClientGateway>(),
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = await controller.SaveDownloadClientConfiguration(new DownloadClientConfigurationRequest
+            {
+                Id = existing.Id,
+                Name = "Deluge updated",
+                Type = "deluge"
+            });
+
+            Assert.IsType<OkObjectResult>(result.Result);
+            Assert.NotNull(saved);
+            Assert.Equal(existing.DownloadPath, saved!.DownloadPath);
+            Assert.Equal(existing.Password, saved.Password);
+            Assert.Equal(JsonValueKind.False, Assert.IsType<JsonElement>(saved.Settings["stalledEnabled"]).ValueKind);
+            Assert.Equal(JsonValueKind.True, Assert.IsType<JsonElement>(saved.Settings["stalledAutoBlocklist"]).ValueKind);
+            configurationService.VerifyAll();
+        }
+
+        [Fact]
+        public async Task SaveDownloadClientConfiguration_EmptyPathAndReplacementPasswordAreApplied()
+        {
+            var existing = new DownloadClientConfiguration
+            {
+                Id = "deluge-3",
+                Type = "deluge",
+                DownloadPath = "/data/deluge/completed/",
+                Password = "old-password"
+            };
+            DownloadClientConfiguration? saved = null;
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync(existing.Id))
+                .ReturnsAsync(existing);
+            configurationService.Setup(service =>
+                    service.SaveDownloadClientConfigurationAsync(It.IsAny<DownloadClientConfiguration>()))
+                .Callback<DownloadClientConfiguration>(configuration => saved = configuration)
+                .ReturnsAsync(existing.Id);
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                Mock.Of<IDownloadClientGateway>(),
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = await controller.SaveDownloadClientConfiguration(new DownloadClientConfigurationRequest
+            {
+                Id = existing.Id,
+                Type = "deluge",
+                DownloadPath = string.Empty,
+                Password = "replacement-password"
+            });
+
+            Assert.IsType<OkObjectResult>(result.Result);
+            Assert.NotNull(saved);
+            Assert.Equal(string.Empty, saved!.DownloadPath);
+            Assert.Equal("replacement-password", saved.Password);
+            configurationService.VerifyAll();
+        }
+
+        [Fact]
+        public async Task TestDownloadClientConfiguration_UsesSavedPasswordAndReturnsAuthenticationFailure()
+        {
+            var existing = new DownloadClientConfiguration
+            {
+                Id = "deluge-auth",
+                Type = "deluge",
+                Username = "saved-user",
+                Password = "saved-password"
+            };
+            DownloadClientConfiguration? tested = null;
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync(existing.Id))
+                .ReturnsAsync(existing);
+            var gateway = new Mock<IDownloadClientGateway>(MockBehavior.Strict);
+            gateway.Setup(service => service.TestConnectionAsync(
+                    It.IsAny<DownloadClientConfiguration>(),
+                    It.IsAny<CancellationToken>()))
+                .Callback<DownloadClientConfiguration, CancellationToken>((configuration, _) => tested = configuration)
+                .ReturnsAsync((false, "Deluge authentication failed (401)"));
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                gateway.Object,
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = await controller.TestDownloadClientConfiguration(new DownloadClientConfiguration
+            {
+                Id = existing.Id,
+                Type = "deluge",
+                Username = string.Empty,
+                Password = string.Empty
+            });
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            Assert.NotNull(tested);
+            Assert.Equal(existing.Username, tested!.Username);
+            Assert.Equal(existing.Password, tested.Password);
+            Assert.Equal(false, ok.Value!.GetType().GetProperty("success")!.GetValue(ok.Value));
+            Assert.Equal(
+                "Deluge authentication failed (401)",
+                ok.Value.GetType().GetProperty("message")!.GetValue(ok.Value));
+            gateway.VerifyAll();
+            configurationService.VerifyAll();
         }
 
         [Fact]

@@ -30,6 +30,7 @@ namespace Listenarr.Tests.Mocks
         public bool? LastRemoveDeleteFiles { get; private set; }
         public bool MarkImportedResult { get; set; } = true;
         public Exception? QueueItemException { get; set; }
+        public Func<Download, Task>? BeforeMarkImportedAsync { get; set; }
         private readonly Dictionary<string, int> MethodCalls = [];
 
         public Task<(bool Success, string Message)> TestConnectionAsync(DownloadClientConfiguration client, CancellationToken ct = default)
@@ -71,11 +72,15 @@ namespace Listenarr.Tests.Mocks
             return [];
         }
 
-        public Task<bool> MarkItemAsImportedAsync(DownloadClientConfiguration client, Download download, CancellationToken ct = default)
+        public async Task<bool> MarkItemAsImportedAsync(DownloadClientConfiguration client, Download download, CancellationToken ct = default)
         {
             RegisterMethodCall(nameof(MarkItemAsImportedAsync));
+            if (BeforeMarkImportedAsync != null)
+            {
+                await BeforeMarkImportedAsync(download);
+            }
 
-            return Task.FromResult(MarkImportedResult);
+            return MarkImportedResult;
         }
 
         public Task<QueueItem> GetQueueItemAsync(DownloadClientConfiguration client, Download download, QueueItem queueItem, CancellationToken ct = default)

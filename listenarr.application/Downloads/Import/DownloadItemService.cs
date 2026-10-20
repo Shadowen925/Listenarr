@@ -52,12 +52,13 @@ namespace Listenarr.Application.Downloads.Import
                 DownloadClientId = client.Id,
                 LocalPath = download.DownloadPath
             };
-            var recoveredSourceFiles = download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey);
-            if (!string.IsNullOrWhiteSpace(recoveredSourceFiles))
+            var recoveredSourceFilePaths = download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey);
+            if (!string.IsNullOrWhiteSpace(recoveredSourceFilePaths))
             {
-                queueItem.SourceFiles = JsonSerializer.Deserialize<List<string>>(recoveredSourceFiles)
+                queueItem.SourceFiles = JsonSerializer.Deserialize<List<string>>(recoveredSourceFilePaths)
                     ?? throw new InvalidOperationException($"Recovered source-file record for download {download.Id} is invalid.");
             }
+            var persistedSourceFiles = queueItem.SourceFiles?.ToList();
 
             if (!client.IsEnabled)
             {
@@ -72,9 +73,9 @@ namespace Listenarr.Application.Downloads.Import
                 download,
                 queueItem,
                 ct);
-            if (resolvedItem.SourceFiles is not { Count: > 0 } && queueItem.SourceFiles is { Count: > 0 })
+            if (resolvedItem.SourceFiles is not { Count: > 0 } && persistedSourceFiles is { Count: > 0 })
             {
-                resolvedItem.SourceFiles = queueItem.SourceFiles;
+                resolvedItem.SourceFiles = persistedSourceFiles;
             }
 
             return resolvedItem;

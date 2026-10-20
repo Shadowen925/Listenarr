@@ -16,10 +16,10 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import DownloadClientFormModal from '@/components/domain/download/DownloadClientFormModal.vue'
+import { useConfigurationStore } from '@/stores/configuration'
 
 describe('DownloadClientFormModal', () => {
   it('renders password input for qbittorrent', async () => {
@@ -154,7 +154,7 @@ describe('DownloadClientFormModal', () => {
     expect(calledWith.id).toBe('3')
   })
 
-  it('modal sends existing client ID when password is cleared so backend can pull saved password', async () => {
+  it('shows a saved-password indicator without loading the stored credential into the form', async () => {
     const api = await import('@/services/api')
     ;(api.testDownloadClient as unknown) = vi.fn(async (config: unknown) => ({
       success: true,
@@ -179,19 +179,16 @@ describe('DownloadClientFormModal', () => {
         downloadPath: '',
         username: '',
         settings: {},
-        password: 'dbpass',
+        hasSavedPassword: true,
       },
     })
     await wrapper.vm.$nextTick()
 
     const passwordComponent = wrapper.findComponent({ name: 'PasswordInput' })
     expect(passwordComponent.exists()).toBe(true)
-    // prepopulated value should match DB via v-model prop
-    expect(passwordComponent.props('modelValue')).toBe('dbpass')
-
-    // clear the password input by emitting v-model update
-    await (passwordComponent.vm as unknown).$emit('update:modelValue', '')
-    await nextTick()
+    expect(passwordComponent.props('modelValue')).toBe('')
+    expect(wrapper.text()).toContain('Password saved. Leave blank to keep it')
+    expect(wrapper.find('#password').attributes('placeholder')).toContain('Enter a new password')
 
     // click Test
     const testButton = wrapper.find('button.btn-info')
@@ -199,8 +196,103 @@ describe('DownloadClientFormModal', () => {
 
     expect(api.testDownloadClient as unknown).toHaveBeenCalled()
     const calledWith = (api.testDownloadClient as unknown).mock.calls[0][0]
-    // We still send an empty password input, but include id so backend can reuse saved credentials.
+    // Send only the client ID and blank input so the API reuses the stored credential.
     expect(calledWith.password).toBe('')
     expect(calledWith.id).toBe('4')
+  })
+
+  it('preserves Download Path through Save, Reload, and reopening the editor', async () => {
+    const client = {
+      id: 'deluge-1',
+      name: 'Deluge',
+      type: 'deluge' as const,
+      host: 'deluge.local',
+      port: 8112,
+      isEnabled: true,
+      useSSL: false,
+      downloadPath: '/data/deluge/completed/',
+      username: '',
+      settings: {},
+    }
+    const savedClient = { ...client, downloadPath: '/data/deluge/new-completed/' }
+    const pinia = createPinia()
+    const configStore = useConfigurationStore(pinia)
+    const saveSpy = vi
+      .spyOn(configStore, 'saveDownloadClientConfiguration')
+      .mockImplementation(async (config) => {
+        expect(config.downloadPath).toBe(savedClient.downloadPath)
+        configStore.downloadClientConfigurations = [savedClient]
+      })
+
+    const wrapper = mount(DownloadClientFormModal, {
+      global: { plugins: [pinia] },
+      props: { visible: true, editingClient: client },
+    })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.find('#downloadPath').element as HTMLInputElement).value).toBe(
+      client.downloadPath,
+    )
+
+    await wrapper.find('#downloadPath').setValue(savedClient.downloadPath)
+    await wrapper.find('button.btn-primary').trigger('click')
+
+    expect(saveSpy).toHaveBeenCalled()
+    expect(configStore.downloadClientConfigurations[0].downloadPath).toBe(savedClient.downloadPath)
+
+    await wrapper.setProps({ editingClient: savedClient })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.find('#downloadPath').element as HTMLInputElement).value).toBe(
+      savedClient.downloadPath,
+    )
+    vi.restoreAllMocks()
+  })
+
+  it('round-trips inherited, enabled, and disabled stalled overrides through editing', async () => {
+    const client = {
+      id: 'deluge-overrides',
+      name: 'Deluge',
+      type: 'deluge' as const,
+      host: 'deluge.local',
+      port: 8112,
+      isEnabled: true,
+      useSSL: false,
+      downloadPath: '',
+      username: '',
+      settings: {
+        stalledEnabled: false,
+        stalledIgnoreManuallyPaused: true,
+      },
+    }
+    const pinia = createPinia()
+    const configStore = useConfigurationStore(pinia)
+    let reloadedClient = client
+    vi.spyOn(configStore, 'saveDownloadClientConfiguration').mockImplementation(async (config) => {
+      reloadedClient = { ...client, settings: config.settings }
+      configStore.downloadClientConfigurations = [reloadedClient]
+    })
+
+    const wrapper = mount(DownloadClientFormModal, {
+      global: { plugins: [pinia] },
+      props: { visible: true, editingClient: client },
+    })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.find('#ovEnabled').element as HTMLSelectElement).value).toBe('false')
+    expect((wrapper.find('#ovPaused').element as HTMLSelectElement).value).toBe('true')
+
+    await wrapper.find('#ovEnabled').setValue('')
+    await wrapper.find('#ovPaused').setValue('false')
+    await wrapper.find('#ovBlocklist').setValue('true')
+    await wrapper.find('button.btn-primary').trigger('click')
+
+    expect(reloadedClient.settings).not.toHaveProperty('stalledEnabled')
+    expect(reloadedClient.settings.stalledIgnoreManuallyPaused).toBe(false)
+    expect(reloadedClient.settings.stalledAutoBlocklist).toBe(true)
+
+    await wrapper.setProps({ editingClient: reloadedClient })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.find('#ovEnabled').element as HTMLSelectElement).value).toBe('')
+    expect((wrapper.find('#ovPaused').element as HTMLSelectElement).value).toBe('false')
+    expect((wrapper.find('#ovBlocklist').element as HTMLSelectElement).value).toBe('true')
+    vi.restoreAllMocks()
   })
 })

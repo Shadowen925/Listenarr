@@ -34,7 +34,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 var client = new DownloadClientConfiguration
                 {
                     Id = "deluge",
-                    DownloadPath = "/downloads/deluge/completed"
+                    DownloadPath = string.Empty
                 };
                 var download = new Download
                 {
@@ -62,10 +62,168 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 Assert.Contains(download.Id, secondPass);
                 Assert.Equal(DownloadStatus.Completed, download.Status);
                 Assert.Equal(Path.GetDirectoryName(file), download.DownloadPath);
+                Assert.True(File.Exists(file));
                 Assert.Equal(
                     file,
                     System.Text.Json.JsonSerializer.Deserialize<List<string>>(
                         download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)!)!.Single());
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_RecoversStableAsinFileWhenTorrentIsMissingAndExpectedSizeIsUnknown()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                var file = Path.Combine(root, "B000R34YKC.m4b");
+                await File.WriteAllBytesAsync(file, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 13,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var timeProvider = new MutableTimeProvider(DateTimeOffset.UtcNow);
+                var reconciler = CreateReconciler(root, audiobook, timeProvider, new AudioMetadata
+                {
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Artist = "Frank Herbert"
+                });
+                var client = new DownloadClientConfiguration
+                {
+                    Id = "deluge",
+                    DownloadPath = string.Empty
+                };
+                var download = new Download
+                {
+                    Id = "tracked-dune-missing-torrent",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = client.Id
+                };
+                var settings = new ApplicationSettings
+                {
+                    CompletedDownloadMinimumStabilitySeconds = 60,
+                    AutomaticImportReconciledDownloads = true
+                };
+
+                Assert.Empty(await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None));
+                Assert.Equal("RecoveryPending", download.GetMetadataString("Recovery.State"));
+
+                timeProvider.Advance(TimeSpan.FromSeconds(60));
+                var recovered = await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None);
+
+                Assert.Contains(download.Id, recovered);
+                Assert.Equal(DownloadStatus.Completed, download.Status);
+                Assert.Equal("tracked-dune-missing-torrent", download.Id);
+                Assert.Equal("ImportPending", download.GetMetadataString("Recovery.State"));
+                Assert.Equal("MissingFromClient", download.GetMetadataString("Recovery.ClientPresence"));
+                Assert.Equal(file, System.Text.Json.JsonSerializer.Deserialize<List<string>>(
+                    download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)!)!.Single());
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_LeavesDownloadRecoveryPendingWhenClientHasNoPathMappings()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                var audiobook = new Audiobook
+                {
+                    Id = 14,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var timeProvider = new MutableTimeProvider(DateTimeOffset.UtcNow);
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    timeProvider,
+                    new AudioMetadata { Asin = audiobook.Asin, Title = audiobook.Title!, Artist = "Frank Herbert" },
+                    []);
+                var download = new Download
+                {
+                    Id = "no-mapping",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge"
+                };
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal("RecoveryPending", download.GetMetadataString("Recovery.State"));
+                Assert.Contains("No client-specific", download.GetMetadataString("Recovery.Reason"));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_DoesNotScanWhenTranslatedPathDoesNotMatchAuthorizedMappingRoot()
+        {
+            var root = CreateTemporaryDirectory();
+            var translated = Path.Combine(root, "unmapped");
+            Directory.CreateDirectory(translated);
+            try
+            {
+                var file = Path.Combine(translated, "B000R34YKC.m4b");
+                await File.WriteAllBytesAsync(file, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 15,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var timeProvider = new MutableTimeProvider(DateTimeOffset.UtcNow);
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    timeProvider,
+                    new AudioMetadata { Asin = audiobook.Asin, Title = audiobook.Title!, Artist = "Frank Herbert" },
+                    translatedLocalRoot: translated);
+                var download = new Download
+                {
+                    Id = "invalid-mapping",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge",
+                    ExpectedFileSize = 32
+                };
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal("RecoveryPending", download.GetMetadataString("Recovery.State"));
+                Assert.Contains("authorized by this mapping", download.GetMetadataString("Recovery.Reason"));
             }
             finally
             {
@@ -127,7 +285,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 Assert.Empty(recovered);
                 Assert.Equal(DownloadStatus.Paused, paused.Status);
                 Assert.Equal(DownloadStatus.Downloading, incomplete.Status);
-                Assert.Equal("NeedsAttention", incomplete.GetMetadataString("Recovery.State"));
+                Assert.Equal("RecoveryPending", incomplete.GetMetadataString("Recovery.State"));
             }
             finally
             {
@@ -212,14 +370,27 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
             string localRoot,
             Audiobook audiobook,
             TimeProvider timeProvider,
-            AudioMetadata metadata)
+            AudioMetadata metadata,
+            IReadOnlyCollection<RemotePathMapping>? mappings = null,
+            string? translatedLocalRoot = null)
         {
             var mappingService = new Mock<IRemotePathMappingService>();
+            mappingService
+                .Setup(service => service.GetPathMappingByClientAsync(It.IsAny<DownloadClientConfiguration>()))
+                .ReturnsAsync(mappings?.ToList() ??
+                [
+                    new RemotePathMapping
+                    {
+                        DownloadClientId = "deluge",
+                        RemotePath = "/data/deluge/completed/",
+                        LocalPath = localRoot
+                    }
+                ]);
             mappingService
                 .Setup(service => service.TranslatePathAsync(
                     It.IsAny<DownloadClientConfiguration>(),
                     It.IsAny<string>()))
-                .ReturnsAsync(localRoot);
+                .ReturnsAsync(translatedLocalRoot ?? localRoot);
 
             var metadataService = new Mock<IMetadataService>();
             metadataService

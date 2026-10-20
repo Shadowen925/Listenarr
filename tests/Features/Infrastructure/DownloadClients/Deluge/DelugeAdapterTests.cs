@@ -177,6 +177,28 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Deluge
         }
 
         [Fact]
+        public async Task TestConnectionAsync_ReturnsAuthenticationFailureForRejectedSavedPassword()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.AuthenticationSucceeded = false;
+            var client = new DownloadClientConfiguration
+            {
+                Id = _client.Id,
+                Type = _client.Type,
+                Host = _client.Host,
+                Port = _client.Port,
+                Password = _client.Password
+            };
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var (success, message) = await adapter.TestConnectionAsync(client, CancellationToken.None);
+
+            Assert.False(success);
+            Assert.Contains("authentication failed", message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(_client.Password, mock.GetLastContent());
+        }
+
+        [Fact]
         public async Task GetImportItemAsync_MatchesQueueItemByExternalClientId()
         {
             var mock = _provider.GetRequiredService<DelugeApiMock>();
