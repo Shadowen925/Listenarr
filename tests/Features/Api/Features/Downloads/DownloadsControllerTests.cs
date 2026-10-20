@@ -283,6 +283,38 @@ namespace Listenarr.Tests.Features.Api.Features.Downloads
 
         [Fact]
         [Trait("Method", "RetryBlockedImport")]
+        public async Task RetryBlockedImport_RecoveredImport_EnqueuesDurableProcessingJob()
+        {
+            await _downloadRepository.AddAsync(new Download
+            {
+                Id = "d-recovered",
+                AudiobookId = 42,
+                Title = "Recovered audiobook",
+                DownloadClientId = _client.Id,
+                DownloadPath = Path.GetTempPath(),
+                Status = DownloadStatus.ImportPending,
+                Metadata = new Dictionary<string, object>
+                {
+                    [Download.RecoveredSourceFilesMetadataKey] = System.Text.Json.JsonSerializer.Serialize(
+                        new[] { Path.Combine(Path.GetTempPath(), "recovered.m4b") })
+                }
+            });
+
+            var controller = MockUtils.CreateDownloadsController(_provider);
+            var action = await controller.RetryBlockedImport("d-recovered");
+
+            var ok = Assert.IsType<OkObjectResult>(action);
+            Assert.NotNull(ok.Value);
+            var updated = await _downloadRepository.GetByIdAsync("d-recovered");
+            Assert.NotNull(updated);
+            Assert.Equal(DownloadStatus.Completed, updated.Status);
+            var job = await _provider.GetRequiredService<IDownloadProcessingJobService>().GetNextJobAsync();
+            Assert.NotNull(job);
+            Assert.Equal("d-recovered", job.DownloadId);
+        }
+
+        [Fact]
+        [Trait("Method", "RetryBlockedImport")]
         [Trait("Scenario", "RetryBlockedImportRejectsNonBlockedStatus")]
         public async Task RetryBlockedImport_NonBlocked_ReturnsBadRequest()
         {

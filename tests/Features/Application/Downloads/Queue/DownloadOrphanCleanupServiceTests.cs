@@ -19,7 +19,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
 
         [Fact]
         [Trait("Method", "RemoveOrphansAsync")]
-        public async Task RemoveOrphansAsync_RemovesOldActiveNonDdlDownloadWithoutExternalId()
+        public async Task RemoveOrphansAsync_RetainsOldActiveDownloadWithoutExternalIdForRecovery()
         {
             var client = CreateClient();
             var download = await AddDownloadAsync(
@@ -35,8 +35,10 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 [new QueueItem { Id = "other-live-item" }],
                 [download]);
 
-            Assert.Null(await _downloadRepository.GetByIdAsync(download.Id));
-            _metricsMock.Verify(m => m.Increment("download.orphan.unlinked_removed", 1), Times.Once);
+            var retained = await _downloadRepository.GetByIdAsync(download.Id);
+            Assert.NotNull(retained);
+            Assert.Equal("NeedsAttention", retained.GetMetadataString("Recovery.State"));
+            _metricsMock.Verify(m => m.Increment("download.orphan.detected", 1), Times.Once);
             _metricsMock.Verify(m => m.Increment("download.orphan.removed", It.IsAny<double>()), Times.Never);
         }
 
@@ -135,7 +137,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
 
         [Fact]
         [Trait("Method", "RemoveOrphansAsync")]
-        public async Task RemoveOrphansAsync_RemovesKnownExternalIdMissingFromLiveSnapshot()
+        public async Task RemoveOrphansAsync_RetainsKnownExternalIdMissingFromLiveSnapshot()
         {
             var client = CreateClient();
             var download = await AddDownloadAsync(
@@ -155,8 +157,10 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 [new QueueItem { Id = "other-live-item" }],
                 [download]);
 
-            Assert.Null(await _downloadRepository.GetByIdAsync(download.Id));
-            _metricsMock.Verify(m => m.Increment("download.orphan.removed", 1), Times.Once);
+            var retained = await _downloadRepository.GetByIdAsync(download.Id);
+            Assert.NotNull(retained);
+            Assert.Equal("NeedsAttention", retained.GetMetadataString("Recovery.State"));
+            _metricsMock.Verify(m => m.Increment("download.orphan.detected", 1), Times.Once);
             _metricsMock.Verify(m => m.Increment("download.orphan.unlinked_removed", It.IsAny<double>()), Times.Never);
         }
 

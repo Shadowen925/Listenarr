@@ -66,7 +66,9 @@ describe('DownloadSettingsSection stalled settings', () => {
     const wrapper = mount(DownloadSettingsSection, {
       props: { settings: { maxConcurrentDownloads: 3 } },
     })
-    const timeout = wrapper.findAll('input[type="number"]').find((i) => i.element.value === '60')
+    const timeout = wrapper
+      .findAll('input[type="number"]')
+      .find((input) => input.attributes('max') === '10080')
     expect(timeout).toBeDefined()
     await timeout!.setValue('90')
 

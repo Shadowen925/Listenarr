@@ -155,7 +155,8 @@ namespace Listenarr.Tests.Common
                 provider.GetRequiredService<IDownloadService>(),
                 provider.GetRequiredService<ILogger<DownloadsController>>(),
                 provider.GetRequiredService<IConfigurationService>(),
-                provider.GetRequiredService<IMemoryCache>());
+                provider.GetRequiredService<IMemoryCache>(),
+                provider.GetRequiredService<IDownloadProcessingJobService>());
         }
 
         public static IndexersController CreateIndexersController(ServiceProvider provider, HttpMessageHandler handler)

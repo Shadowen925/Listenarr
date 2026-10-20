@@ -132,7 +132,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
 
         [Fact]
         [Trait("Method", "MonitorDownloadsAsync")]
-        public async Task MonitorDownloadsAsync_LiveSnapshot_RemovesEligibleOrphanedDownload()
+        public async Task MonitorDownloadsAsync_LiveSnapshot_RetainsOrphanedDownloadForRecovery()
         {
             var orphan = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithId("orphaned-download")
@@ -151,13 +151,13 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
 
             await downloadMonitorService.MonitorDownloadsAsync(CancellationToken.None);
 
-            Assert.Null(await _downloadRepository.GetByIdAsync(orphan.Id));
+            Assert.NotNull(await _downloadRepository.GetByIdAsync(orphan.Id));
             Assert.NotNull(await _downloadRepository.GetByIdAsync(present.Id));
         }
 
         [Fact]
         [Trait("Method", "MonitorDownloadsAsync")]
-        public async Task MonitorDownloadsAsync_LiveSnapshot_RemovesOldActiveClientDownloadWithoutExternalId()
+        public async Task MonitorDownloadsAsync_LiveSnapshot_RetainsDownloadWithoutExternalIdForRecovery()
         {
             var unlinked = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithId("unlinked-download")
@@ -168,7 +168,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
 
             await downloadMonitorService.MonitorDownloadsAsync(CancellationToken.None);
 
-            Assert.Null(await _downloadRepository.GetByIdAsync(unlinked.Id));
+            Assert.NotNull(await _downloadRepository.GetByIdAsync(unlinked.Id));
         }
 
         [Fact]

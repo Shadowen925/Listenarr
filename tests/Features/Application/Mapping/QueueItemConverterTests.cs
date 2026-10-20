@@ -339,6 +339,34 @@ namespace Listenarr.Tests.Features.Application.Mapping
 
         [Fact]
         [Trait("Method", "UpdateFromQueueItem")]
+        public void UpdateFromQueueItem_DoesNotRegressCompleted_WhenClientReportsDownloading()
+        {
+            var download = new Download
+            {
+                Status = DownloadStatus.Completed,
+                Progress = 100m,
+                DownloadedSize = 1_000,
+                TotalSize = 1_000
+            };
+            var item = new QueueItem
+            {
+                Status = "downloading",
+                Progress = 20,
+                Size = 1_000,
+                Downloaded = 200,
+                CanRemove = true
+            };
+
+            var updated = QueueItemConverter.UpdateFromQueueItem(download, item);
+
+            Assert.Equal(DownloadStatus.Completed, updated.Status);
+            Assert.Equal(100m, updated.Progress);
+            Assert.Equal(1_000L, updated.DownloadedSize);
+            Assert.True((bool)updated.Metadata["CanBeRemoved"]);
+        }
+
+        [Fact]
+        [Trait("Method", "UpdateFromQueueItem")]
         public void UpdateFromQueueItem_StillUpdatesSafeMetadata_ForMovedDownload()
         {
             var download = new Download

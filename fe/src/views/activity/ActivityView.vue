@@ -141,7 +141,15 @@
               <span v-else class="muted">-</span>
             </div>
             <div class="col-status">
-              <span :class="['status-badge', item.status, statusClass(item)]">
+              <span
+                :class="['status-badge', item.status, statusClass(item)]"
+                :title="item.recoveryReason || undefined"
+                :aria-label="
+                  item.recoveryReason
+                    ? `${displayStatus(item)}: ${item.recoveryReason}`
+                    : displayStatus(item)
+                "
+              >
                 {{ displayStatus(item) }}
               </span>
               <span
@@ -169,12 +177,20 @@
                 <PhX />
               </button>
               <button
-                v-if="canImportCompletedExternal(item)"
+                v-if="canRetryRecoveredImport(item)"
+                class="btn btn-secondary activity-import-button"
+                :data-testid="`retry-import-${item.id}`"
+                @click="retryRecoveredImport(item)"
+              >
+                Retry Import
+              </button>
+              <button
+                v-if="canImportCompletedExternal(item) || canManuallyMatchRecovery(item)"
                 class="btn btn-secondary activity-import-button"
                 :data-testid="`import-download-${item.id}`"
                 @click="openManualImport(item)"
               >
-                Import
+                {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
               </button>
               <button
                 class="btn-icon"
@@ -538,6 +554,8 @@ const convertDownloadToQueueItem = (download: Download): QueueItem => {
   const clientName = (download as unknown as Record<string, unknown>)['downloadClientName'] as
     | string
     | undefined
+  const recoveryState = download.metadata?.['Recovery.State']
+  const recoveryReason = download.metadata?.['Recovery.Reason']
   return {
     id: download.id,
     title: download.title,
@@ -554,6 +572,10 @@ const convertDownloadToQueueItem = (download: Download): QueueItem => {
     downloadClientType:
       (download.downloadClientId || '').toString().toUpperCase() === 'DDL' ? 'DDL' : 'external',
     addedAt: download.startedAt,
+    localPath: download.downloadPath,
+    missingFromClient: typeof recoveryState === 'string',
+    recoveryState: typeof recoveryState === 'string' ? recoveryState : undefined,
+    recoveryReason: typeof recoveryReason === 'string' ? recoveryReason : undefined,
     canPause: false,
     canRemove: true,
   }
@@ -730,6 +752,28 @@ const canImportCompletedExternal = (item: QueueItem): boolean =>
   (item.downloadClientType || '').toLowerCase() !== 'move' &&
   Boolean(item.downloadClientId)
 
+const canManuallyMatchRecovery = (item: QueueItem): boolean =>
+  (item.recoveryState === 'ImportPending' ||
+    item.recoveryState === 'Recovered' ||
+    item.recoveryState === 'NeedsAttention') &&
+  Boolean(item.localPath)
+
+const canRetryRecoveredImport = (item: QueueItem): boolean =>
+  item.status === 'importpending' &&
+  item.recoveryState === 'ImportPending' &&
+  Boolean(item.localPath)
+
+const retryRecoveredImport = async (item: QueueItem) => {
+  try {
+    await apiService.retryDownloadImport(item.id)
+    useToast().success('Import queued', `Retrying import for ${getDisplayTitle(item)}.`)
+    await refreshQueue()
+  } catch (error) {
+    const message = (error as Error).message || 'Could not retry this import.'
+    useToast().error('Import retry failed', message)
+  }
+}
+
 const openManualImport = async (item: QueueItem) => {
   try {
     const snapshot = normalizeQueueSnapshot(await apiService.getQueue())
@@ -838,7 +882,7 @@ const confirmRemove = async (mode: DownloadRemovalMode) => {
 
 const statusClass = (item: QueueItem): string => {
   const label = displayStatus(item)
-  return label === 'Stalled' || label === 'Missing from client'
+  return label === 'Stalled' || label === 'Missing from client' || label === 'Needs attention'
     ? 'stalled'
     : label === 'Replacing' || label === 'Retrieving metadata'
       ? 'queued'
@@ -878,6 +922,7 @@ const formatDuration = (from?: string | null): string => {
 }
 
 const displayStatus = (item: QueueItem): string => {
+  if (item.recoveryState === 'NeedsAttention') return 'Needs attention'
   if (item.replacementState === 'Removing' || item.replacementState === 'Removed')
     return 'Replacing'
   if (item.stallState === 'MissingFromClient') return 'Missing from client'
@@ -894,7 +939,7 @@ const formatStatus = (status: string): string => {
     failed: 'Failed',
     processing: 'Processing',
     moving: 'Moving',
-    importpending: 'Importing',
+    importpending: 'Import Pending',
     importblocked: 'Import Blocked',
     imported: 'Imported',
   }

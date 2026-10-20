@@ -16,6 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace Listenarr.Application.Downloads.Import
 {
@@ -51,6 +52,12 @@ namespace Listenarr.Application.Downloads.Import
                 DownloadClientId = client.Id,
                 LocalPath = download.DownloadPath
             };
+            var recoveredSourceFiles = download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey);
+            if (!string.IsNullOrWhiteSpace(recoveredSourceFiles))
+            {
+                queueItem.SourceFiles = JsonSerializer.Deserialize<List<string>>(recoveredSourceFiles)
+                    ?? throw new InvalidOperationException($"Recovered source-file record for download {download.Id} is invalid.");
+            }
 
             if (!client.IsEnabled)
             {
@@ -60,11 +67,17 @@ namespace Listenarr.Application.Downloads.Import
 
             logger.LogDebug($"Resolving import item for download {download.Id}");
 
-            return await downloadClientGateway.GetQueueItemAsync(
+            var resolvedItem = await downloadClientGateway.GetQueueItemAsync(
                 client,
                 download,
                 queueItem,
                 ct);
+            if (resolvedItem.SourceFiles is not { Count: > 0 } && queueItem.SourceFiles is { Count: > 0 })
+            {
+                resolvedItem.SourceFiles = queueItem.SourceFiles;
+            }
+
+            return resolvedItem;
         }
 
     }

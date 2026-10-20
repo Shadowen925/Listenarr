@@ -222,6 +222,8 @@ export interface QueueItem {
   replacementState?: string | null
   replacementError?: string | null
   missingFromClient?: boolean
+  recoveryState?: string | null
+  recoveryReason?: string | null
 }
 
 export type DownloadRemovalMode = 'listenarrOnly' | 'clientKeepFiles' | 'clientDeleteData'
@@ -495,6 +497,10 @@ export interface ApplicationSettings {
   automaticSearchIntervalHours?: number
   // How many seconds a download must be observed as complete by the client before finalization begins
   downloadCompletionStabilitySeconds?: number
+  enableCompletedDownloadReconciliation?: boolean
+  completedDownloadReconciliationIntervalSeconds?: number
+  completedDownloadMinimumStabilitySeconds?: number
+  automaticImportReconciledDownloads?: boolean
   stalledHandlingEnabled?: boolean | null
   stalledTimeoutMinutes?: number | null
   stalledMetadataTimeoutMinutes?: number | null

@@ -295,6 +295,47 @@ describe('ActivityView', () => {
     )
   })
 
+  it('offers manual matching for recovered downloads that need attention', async () => {
+    mockSignalR()
+    mockApi({
+      getQueue: vi.fn(async () => ({
+        items: [
+          {
+            id: 'missing-download',
+            title: 'Dune',
+            status: 'downloading',
+            progress: 72,
+            size: 100,
+            downloaded: 72,
+            downloadClient: 'Deluge',
+            downloadClientId: 'deluge',
+            downloadClientType: 'external',
+            addedAt: new Date().toISOString(),
+            canPause: false,
+            canRemove: true,
+            localPath: 'C:\\downloads\\B000R34YKC',
+            recoveryState: 'NeedsAttention',
+            recoveryReason: 'No confident audiobook match was found.',
+          },
+        ],
+        clients: [],
+        generatedAt: new Date().toISOString(),
+        hasStaleData: false,
+        hasUnavailableClients: false,
+      })),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.get('[data-testid="import-download-missing-download"]').text()).toBe(
+      'Match / Import',
+    )
+    expect(wrapper.text()).toContain('Needs attention')
+  })
+
   it('filters the unified activity list by text', async () => {
     mockSignalR()
     mockApi()

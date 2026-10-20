@@ -40,6 +40,7 @@ namespace Listenarr.Domain.Downloads
     {
         public static string METADATA_EXTERNAL_ID_KEY = "ClientDownloadId";
         public const string SourceRetainedMetadataKey = "SourceRetained";
+        public const string RecoveredSourceFilesMetadataKey = "RecoveredSourceFiles";
         public static int MaxImportAttempts = 3;
 
         public string Id { get; set; } = Guid.NewGuid().ToString();
@@ -365,6 +366,8 @@ namespace Listenarr.Domain.Downloads
 
         /// <summary>True when Listenarr tracks this download but the client did not report it.</summary>
         public bool MissingFromClient { get; set; }
+        public string? RecoveryState { get; set; }
+        public string? RecoveryReason { get; set; }
 
         /// <summary>
         /// Link to the audiobook record this download is associated with (if any).

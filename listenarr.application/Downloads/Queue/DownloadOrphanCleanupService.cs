@@ -83,46 +83,33 @@ namespace Listenarr.Application.Downloads.Queue
                 return;
             }
 
+            var newlyDetectedCount = 0;
             foreach (var candidate in cleanupCandidates)
             {
                 var download = candidate.Download;
 
-                // There are two cleanup paths and both are intentionally logged for
-                // debugging: a known client item disappeared from a trusted snapshot,
-                // or a legacy/corrupt non-DDL active record has no external client ID
-                // and therefore cannot ever be monitored or reconciled with a client.
-                if (candidate.Reason == OrphanCleanupReason.MissingExternalId)
+                var reason = candidate.Reason == OrphanCleanupReason.MissingExternalId
+                    ? "The tracked download has no client item identifier; its configured completed directory will be checked for recovery."
+                    : "The client no longer reports this tracked download; its configured completed directory will be checked for recovery.";
+                if (download.GetMetadataString("Recovery.State") != "NeedsAttention"
+                    || download.GetMetadataString("Recovery.Reason") != reason)
                 {
-                    logger.LogInformation(
-                        "Removing unreconcilable active download {DownloadId} '{Title}' for client {ClientName}: no external client ID is stored, so it cannot be monitored or reconciled",
-                        download.Id,
-                        download.Title,
-                        client.Name);
-                }
-                else
-                {
-                    var externalId = candidate.ExternalIds.First();
-                    logger.LogInformation(
-                        "Removing orphaned download {DownloadId} '{Title}' for client {ClientName}: external id {ExternalId} was not found in live queue snapshot",
-                        download.Id,
-                        download.Title,
-                        client.Name,
-                        externalId);
-                }
+                    download.SetMetadata("Recovery.State", "NeedsAttention");
+                    download.SetMetadata("Recovery.Reason", reason);
+                    await downloadRepository.UpdateAsync(download);
+                    newlyDetectedCount++;
 
-                await downloadRepository.RemoveAsync(download.Id);
+                    logger.LogWarning(
+                        "Retaining tracked download {DownloadId} for client {ClientName}: {Reason}",
+                        LogRedaction.SanitizeText(download.Id),
+                        LogRedaction.SanitizeText(client.Name),
+                        reason);
+                }
             }
 
-            var missingFromSnapshotCount = cleanupCandidates.Count(candidate => candidate.Reason == OrphanCleanupReason.MissingFromClientSnapshot);
-            var missingExternalIdCount = cleanupCandidates.Count(candidate => candidate.Reason == OrphanCleanupReason.MissingExternalId);
-            if (missingFromSnapshotCount > 0)
+            if (newlyDetectedCount > 0)
             {
-                DownloadQueueDiagnostics.TryIncrementMetric(metrics, "download.orphan.removed", missingFromSnapshotCount);
-            }
-
-            if (missingExternalIdCount > 0)
-            {
-                DownloadQueueDiagnostics.TryIncrementMetric(metrics, "download.orphan.unlinked_removed", missingExternalIdCount);
+                DownloadQueueDiagnostics.TryIncrementMetric(metrics, "download.orphan.detected", newlyDetectedCount);
             }
         }
 

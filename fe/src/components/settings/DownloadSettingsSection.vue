@@ -114,6 +114,61 @@
         />
       </FormRow>
 
+      <h4 class="stalled-heading">Completed Download Handling</h4>
+      <CheckboxCard
+        :modelValue="settings.enableCompletedDownloadReconciliation ?? true"
+        @update:modelValue="
+          (value: boolean) => updateField('enableCompletedDownloadReconciliation', value)
+        "
+        title="Reconcile missed download completions"
+        description="Check tracked downloads against their configured client download directory when a completion event may have been missed."
+      />
+      <FormRow
+        label="Reconciliation Interval (seconds)"
+        help="How often to check tracked downloads that disappeared from a client."
+      >
+        <input
+          :value="settings.completedDownloadReconciliationIntervalSeconds ?? 60"
+          @input="
+            (e) =>
+              updateField(
+                'completedDownloadReconciliationIntervalSeconds',
+                Number((e.target as HTMLInputElement).value || 60),
+              )
+          "
+          type="number"
+          min="15"
+          max="3600"
+        />
+      </FormRow>
+      <FormRow
+        label="Minimum File Stability (seconds)"
+        help="Require all candidate audio files to remain unchanged for this long before recovery."
+      >
+        <input
+          :value="settings.completedDownloadMinimumStabilitySeconds ?? 60"
+          @input="
+            (e) =>
+              updateField(
+                'completedDownloadMinimumStabilitySeconds',
+                Number((e.target as HTMLInputElement).value || 60),
+              )
+          "
+          type="number"
+          min="15"
+          max="3600"
+        />
+      </FormRow>
+      <CheckboxCard
+        :modelValue="settings.automaticImportReconciledDownloads ?? true"
+        @update:modelValue="
+          (value: boolean) => updateField('automaticImportReconciledDownloads', value)
+        "
+        :disabled="!(settings.enableCompletedDownloadReconciliation ?? true)"
+        title="Automatically import confidently matched recoveries"
+        description="Only recovered files with completion evidence and a strong audiobook identity match are queued for the existing import pipeline."
+      />
+
       <FormRow
         label="Missing-source Retry Initial Delay (seconds)"
         help="Initial retry delay (seconds) used when files are not yet available at finalization time."

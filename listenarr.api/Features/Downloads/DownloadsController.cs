@@ -30,14 +30,22 @@ public class DownloadsController : ControllerBase
     private readonly ILogger<DownloadsController> _logger;
     private readonly IConfigurationService _configurationService;
     private readonly IMemoryCache? _cache;
+    private readonly IDownloadProcessingJobService? _downloadProcessingJobService;
 
-    public DownloadsController(IDownloadRepository downloadRepository, IDownloadService downloadService, ILogger<DownloadsController> logger, IConfigurationService configurationService, IMemoryCache? cache = null)
+    public DownloadsController(
+        IDownloadRepository downloadRepository,
+        IDownloadService downloadService,
+        ILogger<DownloadsController> logger,
+        IConfigurationService configurationService,
+        IMemoryCache? cache = null,
+        IDownloadProcessingJobService? downloadProcessingJobService = null)
     {
         _downloadRepository = downloadRepository;
         _downloadService = downloadService;
         _logger = logger;
         _configurationService = configurationService;
         _cache = cache;
+        _downloadProcessingJobService = downloadProcessingJobService;
     }
     /// <summary>
     /// Retrieve cached torrent bytes (if cached) for a given download id (synchronous for tests)
@@ -167,7 +175,7 @@ public class DownloadsController : ControllerBase
     }
 
     /// <summary>
-    /// Retry importing a download that was blocked due to import issues. Resets status to ImportPending.
+    /// Retry a blocked import, or enqueue a safely recovered download for processing.
     /// </summary>
     /// <param name="id">Download record ID.</param>
     [HttpPost("{id}/retry-import")]
@@ -179,6 +187,31 @@ public class DownloadsController : ControllerBase
             if (download == null)
             {
                 return NotFound(new { error = "Download not found", id });
+            }
+
+            if (download.Status == DownloadStatus.ImportPending
+                && !string.IsNullOrWhiteSpace(download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
+            {
+                if (_downloadProcessingJobService == null)
+                {
+                    throw new InvalidOperationException("Download processing is not available.");
+                }
+
+                download.CompletedAt ??= DateTime.UtcNow;
+                download.Completed();
+                await _downloadService.UpdateAsync(download);
+                var jobId = await _downloadProcessingJobService.EnqueueAsync(download);
+                _logger.LogInformation(
+                    "Queued recovered import {DownloadId} as processing job {JobId}",
+                    LogRedaction.SanitizeText(id),
+                    LogRedaction.SanitizeText(jobId));
+                return Ok(new
+                {
+                    message = "Import retry queued",
+                    id,
+                    status = download.Status.ToString(),
+                    jobId
+                });
             }
 
             if (download.Status != DownloadStatus.ImportBlocked)

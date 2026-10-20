@@ -18,7 +18,11 @@ namespace Listenarr.Application.Downloads.Queue
             foreach (var download in trackedDownloads)
             {
                 if (string.Equals(download.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase)
-                    || download.Status is not (DownloadStatus.Queued or DownloadStatus.Downloading or DownloadStatus.Paused))
+                    || download.Status is not (DownloadStatus.Queued
+                        or DownloadStatus.Downloading
+                        or DownloadStatus.Paused
+                        or DownloadStatus.Completed
+                        or DownloadStatus.ImportPending))
                 {
                     continue;
                 }
@@ -30,7 +34,11 @@ namespace Listenarr.Application.Downloads.Queue
                 }
 
                 // Only surface a tracked download as missing once the stall tracker has confirmed the absence persisted.
-                if (StallTracker.GetState(download) != nameof(StallVerdict.MissingFromClient))
+                var recoveryState = download.GetMetadataString("Recovery.State");
+                var isAwaitingRecoveryAction = download.Status == DownloadStatus.ImportPending
+                    && !string.IsNullOrWhiteSpace(recoveryState);
+                if (StallTracker.GetState(download) != nameof(StallVerdict.MissingFromClient)
+                    && !isAwaitingRecoveryAction)
                 {
                     continue;
                 }
@@ -60,6 +68,10 @@ namespace Listenarr.Application.Downloads.Queue
                     CanRemove = true,
                     AudiobookId = download.AudiobookId,
                     MissingFromClient = true,
+                    RecoveryState = recoveryState,
+                    RecoveryReason = download.GetMetadataString("Recovery.Reason"),
+                    LocalPath = download.DownloadPath,
+                    ContentPath = download.DownloadPath,
                     ErrorMessage = "The download client did not report this download.",
                 };
                 Enrich(synthetic, download);
@@ -78,6 +90,8 @@ namespace Listenarr.Application.Downloads.Queue
             item.ReplacementState = download.GetMetadataString(StallMetadataKeys.ReplacementState);
             item.ReplacementError = download.GetMetadataString(StallMetadataKeys.ReplacementError);
             item.MissingFromClient = item.MissingFromClient || state == nameof(StallVerdict.MissingFromClient);
+            item.RecoveryState = download.GetMetadataString("Recovery.State");
+            item.RecoveryReason = download.GetMetadataString("Recovery.Reason");
         }
     }
 }

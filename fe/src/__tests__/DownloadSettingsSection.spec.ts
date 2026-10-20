@@ -40,7 +40,7 @@ describe('DownloadSettingsSection', () => {
     })
 
     const inputs = wrapper.findAll('input[type="number"]')
-    expect(inputs).toHaveLength(12)
+    expect(inputs).toHaveLength(14)
 
     // Max concurrent
     await inputs[0].setValue('4')
@@ -72,23 +72,33 @@ describe('DownloadSettingsSection', () => {
     expect(last.downloadCompletionStabilitySeconds).toBe(10)
 
     // Missing-source delay
-    await inputs[5].setValue('3')
+    await inputs[5].setValue('120')
+    last =
+      wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
+    expect(last.completedDownloadReconciliationIntervalSeconds).toBe(120)
+
+    await inputs[6].setValue('90')
+    last =
+      wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
+    expect(last.completedDownloadMinimumStabilitySeconds).toBe(90)
+
+    await inputs[7].setValue('3')
     last =
       wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
     expect(last.missingSourceRetryInitialDelaySeconds).toBe(3)
 
     // Missing-source retries
-    await inputs[6].setValue('5')
+    await inputs[8].setValue('5')
     last =
       wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
     expect(last.missingSourceMaxRetries).toBe(5)
 
-    await inputs[7].setValue('90')
+    await inputs[9].setValue('90')
     last =
       wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
     expect(last.stalledTimeoutMinutes).toBe(90)
 
-    await inputs[10].setValue('4096')
+    await inputs[12].setValue('4096')
     last =
       wrapper.emitted()['update:settings']![wrapper.emitted()['update:settings']!.length - 1][0]
     expect(last.stalledMinimumProgressBytes).toBe(4096)

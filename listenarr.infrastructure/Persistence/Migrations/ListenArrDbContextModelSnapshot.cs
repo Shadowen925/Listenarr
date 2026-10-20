@@ -1851,10 +1851,19 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AutomaticImportReconciledDownloads")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("AutomaticSearchIntervalHours")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(6);
+
+                    b.Property<int>("CompletedDownloadMinimumStabilitySeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CompletedDownloadReconciliationIntervalSeconds")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("CompletedFileAction")
                         .HasColumnType("INTEGER");
@@ -1901,6 +1910,9 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("EnableAudibleSearch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EnableCompletedDownloadReconciliation")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("EnableCoverArtDownload")

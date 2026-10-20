@@ -86,6 +86,11 @@ namespace Listenarr.Domain.Configuration
         // avoids accidental long delays while still allowing this to be tuned by admins.
         public int DownloadCompletionStabilitySeconds { get; set; } = 10;
 
+        public bool EnableCompletedDownloadReconciliation { get; set; } = true;
+        public int CompletedDownloadReconciliationIntervalSeconds { get; set; } = 60;
+        public int CompletedDownloadMinimumStabilitySeconds { get; set; } = 60;
+        public bool AutomaticImportReconciledDownloads { get; set; } = true;
+
         // Retry/backoff settings for when a finalized download has no discoverable source file
         // at the time of finalization. These control how the monitor schedules retries when
         // files are still being extracted/moved by the client.

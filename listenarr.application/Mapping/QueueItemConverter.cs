@@ -10,7 +10,10 @@ namespace Listenarr.Application.Mapping
             // may be removed, but import/finalization workers own their status and path
             // lifecycle. Replaying a stale client path/state here can make an import pick
             // up the wrong source after import has already taken ownership.
-            if (download.Status is DownloadStatus.Moved or DownloadStatus.Processing or DownloadStatus.ImportPending)
+            if (download.Status is DownloadStatus.Completed
+                or DownloadStatus.Moved
+                or DownloadStatus.Processing
+                or DownloadStatus.ImportPending)
             {
                 UpdateImportOwnedMetadata(download, item);
                 return download;

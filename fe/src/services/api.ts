@@ -739,6 +739,12 @@ class ApiService {
     return this.request<Download>(`/downloads/${id}`)
   }
 
+  async retryDownloadImport(id: string): Promise<void> {
+    await this.request<void>(`/downloads/${encodeURIComponent(id)}/retry-import`, {
+      method: 'POST',
+    })
+  }
+
   async startDownload(searchResult: SearchResult, downloadClientId: string): Promise<string> {
     return this.request<string>('/downloads', {
       method: 'POST',

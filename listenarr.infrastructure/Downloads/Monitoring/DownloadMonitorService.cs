@@ -100,6 +100,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         internal readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _nextClientPoll = new();
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _clientFailureCounts = new();
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _nextOrphanCleanup = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _nextCompletionReconciliation = new();
 
         public void ScheduleNextClientPoll(DownloadClientConfiguration client, double interval)
         {
@@ -220,6 +221,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                     var stalledPolicy = StalledDownloadPolicy.Resolve(appSettings, client);
                     var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
                     var stalledIds = new List<string>();
+                    var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
 
                     foreach (Download download in updatedDownloads)
                     {
@@ -230,7 +232,6 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                             stalledIds.Add(download.Id);
                         }
 
-                        var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
                         var priorDownload = previousDownloads.FirstOrDefault(d => d.Id == download.Id);
                         await DownloadMonitorEventRecorder.RecordTransitionEventsAsync(
                             scope.ServiceProvider,
@@ -247,12 +248,37 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                         await TriggerCallbacks(client, download, previousDownload, cancellationToken);
                     }
 
+                    var reconciliationRan = false;
+                    var recoveredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (ShouldReconcileCompletions(client, appSettings))
+                    {
+                        var reconciler = scope.ServiceProvider.GetRequiredService<DownloadCompletionReconciler>();
+                        recoveredIds = await reconciler.ReconcileAsync(
+                            client,
+                            clientDownloads.Where(d => !d.Metadata.ContainsKey(StallMetadataKeys.Observed)).ToList(),
+                            appSettings,
+                            cancellationToken);
+                        ScheduleNextCompletionReconciliation(client, appSettings);
+                        reconciliationRan = true;
+                    }
+
                     foreach (var missing in clientDownloads.Where(d => !d.Metadata.ContainsKey(StallMetadataKeys.Observed)))
                     {
-                        if (StallTracker.EvaluateMissing(missing, client, stalledPolicy, nowUtc) != StallVerdict.None
+                        var missingVerdict = StallTracker.EvaluateMissing(missing, client, stalledPolicy, nowUtc);
+                        if (reconciliationRan
+                            || missingVerdict != StallVerdict.None
                             || missing.Metadata.ContainsKey(StallMetadataKeys.MissingSince))
                         {
-                            await downloadRepository.UpdateAsync(missing);
+                            await downloadService.UpdateAsync(missing);
+                        }
+
+                        if (recoveredIds.Contains(missing.Id))
+                        {
+                            var previous = previousDownloads.FirstOrDefault(d => d.Id == missing.Id);
+                            if (previous != null)
+                            {
+                                await TriggerCallbacks(client, missing, previous, cancellationToken);
+                            }
                         }
                     }
 
@@ -297,6 +323,26 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         {
             return !_nextOrphanCleanup.TryGetValue(client.Id, out var nextCleanup) ||
                 timeProvider.GetUtcNow() >= nextCleanup;
+        }
+
+        private bool ShouldReconcileCompletions(
+            DownloadClientConfiguration client,
+            ApplicationSettings settings)
+        {
+            return settings.EnableCompletedDownloadReconciliation
+                && (!_nextCompletionReconciliation.TryGetValue(client.Id, out var nextReconciliation)
+                    || timeProvider.GetUtcNow() >= nextReconciliation);
+        }
+
+        private void ScheduleNextCompletionReconciliation(
+            DownloadClientConfiguration client,
+            ApplicationSettings settings)
+        {
+            var intervalSeconds = Math.Clamp(
+                settings.CompletedDownloadReconciliationIntervalSeconds,
+                15,
+                3600);
+            _nextCompletionReconciliation[client.Id] = timeProvider.GetUtcNow().AddSeconds(intervalSeconds);
         }
 
         private void ScheduleNextOrphanCleanup(DownloadClientConfiguration client)
