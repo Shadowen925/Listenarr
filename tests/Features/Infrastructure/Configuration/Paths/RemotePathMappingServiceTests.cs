@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Listenarr.Tests.Features.Infrastructure.Configuration.Paths
 {
@@ -240,6 +242,96 @@ namespace Listenarr.Tests.Features.Infrastructure.Configuration.Paths
             var translated = await remotePathMappingService.TranslatePathAsync(client, reportedPath);
 
             Assert.Equal(Path.Join(localPath, "Author", "book.m4b"), translated);
+        }
+
+        [Fact]
+        public async Task ConcurrentClientQueuePolling_TranslatesMappingsWithoutSharingDbContext()
+        {
+            var sabClient = await _downloadClientConfigurationRepository.SaveAsync(
+                new DownloadClientConfigurationBuilder()
+                    .WithType("sabnzbd")
+                    .Build());
+            var delugeClient = await _downloadClientConfigurationRepository.SaveAsync(
+                new DownloadClientConfigurationBuilder()
+                    .WithType("deluge")
+                    .Build());
+            var sabLocalRoot = Path.Combine(FileService.GetTempPath(), "sab");
+            var delugeLocalRoot = Path.Combine(FileService.GetTempPath(), "deluge");
+
+            await _remotePathMappingRepository.SaveAsync(new RemotePathMappingBuilder()
+                .WithDownloadClientConfiguration(sabClient)
+                .WithRemotePath("/sab/completed")
+                .WithLocalPath(sabLocalRoot)
+                .Build());
+            await _remotePathMappingRepository.SaveAsync(new RemotePathMappingBuilder()
+                .WithDownloadClientConfiguration(delugeClient)
+                .WithRemotePath("/deluge/completed")
+                .WithLocalPath(delugeLocalRoot)
+                .Build());
+
+            var bothClientsPolling = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var startedPolls = 0;
+            var gateway = new Mock<IDownloadClientGateway>();
+            gateway
+                .Setup(clientGateway => clientGateway.GetQueueAsync(
+                    It.IsAny<DownloadClientConfiguration>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns((DownloadClientConfiguration downloadClient, CancellationToken _) =>
+                    GetQueueWithTranslatedPathAsync(downloadClient));
+
+            async Task<List<QueueItem>> GetQueueWithTranslatedPathAsync(
+                DownloadClientConfiguration downloadClient)
+            {
+                if (Interlocked.Increment(ref startedPolls) == 2)
+                {
+                    bothClientsPolling.TrySetResult(true);
+                }
+
+                await bothClientsPolling.Task;
+                var remotePath = downloadClient.Id == sabClient.Id
+                    ? "/sab/completed/book.m4b"
+                    : "/deluge/completed/book.m4b";
+                var localPath = await remotePathMappingService.TranslatePathAsync(
+                    downloadClient,
+                    remotePath);
+
+                return
+                [
+                    new QueueItem
+                    {
+                        Id = downloadClient.Id,
+                        RemotePath = remotePath,
+                        LocalPath = localPath,
+                    },
+                ];
+            }
+
+            using var cache = new MemoryCache(new MemoryCacheOptions());
+            var poller = new DownloadClientQueuePoller(
+                cache,
+                gateway.Object,
+                new Mock<IAppMetricsService>().Object,
+                NullLogger<DownloadClientQueuePoller>.Instance);
+
+            var results = await poller.FetchAsync(
+                [sabClient, delugeClient],
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMinutes(1),
+                maxParallelClientPolls: 2);
+
+            Assert.Equal(2, results.Count);
+            Assert.Equal(
+                Path.Combine(sabLocalRoot, "book.m4b"),
+                results.Single(result => result.Client.Id == sabClient.Id).QueueItems.Single().LocalPath);
+            Assert.Equal(
+                Path.Combine(delugeLocalRoot, "book.m4b"),
+                results.Single(result => result.Client.Id == delugeClient.Id).QueueItems.Single().LocalPath);
+            gateway.Verify(
+                clientGateway => clientGateway.GetQueueAsync(
+                    It.IsAny<DownloadClientConfiguration>(),
+                    It.IsAny<CancellationToken>()),
+                Times.Exactly(2));
         }
     }
 }

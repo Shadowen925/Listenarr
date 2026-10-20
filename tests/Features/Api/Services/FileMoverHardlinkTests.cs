@@ -127,7 +127,7 @@ public sealed class FileMoverHardlinkTests : BaseTests
     }
 
     [Fact]
-    public async Task PerformActionOn_CopyCrashBeforeTargetState_FailsClosedOnRetry()
+    public async Task PerformActionOn_CopyCrashBeforeTargetState_RetryPublishesFromStaging()
     {
         var root = FileService.GetTempDirectory("markerless-copy-prestate-crash");
         var source = await FileService.GetFileAsync(root, "source.mp3", "content");
@@ -143,22 +143,19 @@ public sealed class FileMoverHardlinkTests : BaseTests
                 source,
                 destination,
                 operationId));
-        Assert.True(File.Exists(destination));
-        Assert.Equal(0, new FileInfo(destination).Length);
+        Assert.False(File.Exists(destination));
         await AssertJournalStateAsync(
             operationId,
             FileMutationJournalState.Planned);
 
-        Assert.False(await CreateMover().PerformActionOn(
+        Assert.True(await CreateMover().PerformActionOn(
             FileAction.Copy,
             source,
             destination,
             operationId));
-        await AssertJournalStateAsync(
-            operationId,
-            FileMutationJournalState.NeedsAttention);
+        Assert.Equal("content", await File.ReadAllTextAsync(destination));
+        await AssertCompletedJournalAsync(operationId, FileAction.Copy);
         Assert.Equal("content", await File.ReadAllTextAsync(source));
-        Assert.Equal(0, new FileInfo(destination).Length);
         AssertNoLibraryArtifacts(root);
     }
 
@@ -181,7 +178,8 @@ public sealed class FileMoverHardlinkTests : BaseTests
                 operationId));
         await AssertJournalStateAsync(
             operationId,
-            FileMutationJournalState.TargetIdentityPersisted);
+            FileMutationJournalState.TargetStaged);
+        Assert.False(File.Exists(destination));
 
         Assert.True(await CreateMover().PerformActionOn(
             FileAction.Copy,
@@ -210,16 +208,19 @@ public sealed class FileMoverHardlinkTests : BaseTests
                 source,
                 destination,
                 operationId));
-        Assert.Equal("content", await File.ReadAllTextAsync(destination));
+        var stage = Path.Join(root, $".staging-{operationId:N}.partial");
+        Assert.False(File.Exists(destination));
+        Assert.Equal("content", await File.ReadAllTextAsync(stage));
         await AssertJournalStateAsync(
             operationId,
-            FileMutationJournalState.TargetIdentityPersisted);
+            FileMutationJournalState.TargetStaged);
 
         Assert.True(await CreateMover().PerformActionOn(
             FileAction.Copy,
             source,
             destination,
             operationId));
+        Assert.Equal("content", await File.ReadAllTextAsync(destination));
         await AssertCompletedJournalAsync(operationId, FileAction.Copy);
         AssertNoLibraryArtifacts(root);
     }

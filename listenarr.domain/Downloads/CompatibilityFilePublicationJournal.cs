@@ -18,7 +18,8 @@ public enum CompatibilityFilePublicationState
     SourceDeleteAuthorized = 5,
     SourceQuarantinePlanned = 6,
     SourceQuarantined = 7,
-    SourceDeleted = 8
+    SourceDeleted = 8,
+    TargetStaged = 9
 }
 
 public enum CompatibilitySourceDisposition

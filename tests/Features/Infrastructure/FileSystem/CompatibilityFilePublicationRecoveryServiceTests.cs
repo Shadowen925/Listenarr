@@ -51,4 +51,51 @@ public sealed class CompatibilityFilePublicationRecoveryServiceTests : BaseTests
             CompatibilityFilePublicationState.NeedsAttention,
             journal.State);
     }
+
+    [Fact]
+    public async Task ReconcileAsync_StagedJournalLeavesRecoveryToImportOwner()
+    {
+        var root = FileService.GetTempDirectory("compatibility-recovery-staged");
+        var source = Path.Join(root, "source.m4b");
+        var destination = Path.Join(root, "destination.m4b");
+        var stage = Path.Join(root, $".staging-{Guid.NewGuid():N}.partial");
+        await File.WriteAllTextAsync(source, "audio");
+        await File.WriteAllTextAsync(stage, "partial");
+        var operationId = Guid.NewGuid();
+        var factory = _provider.GetRequiredService<
+            IDbContextFactory<ListenArrDbContext>>();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.CompatibilityFilePublicationJournals.Add(
+                new CompatibilityFilePublicationJournal
+                {
+                    OperationId = operationId,
+                    RequestedAction = FileAction.Move,
+                    EffectiveAction = FileAction.Copy,
+                    SourcePath = source,
+                    DestinationPath = destination,
+                    SourceLength = 5,
+                    SourceSha256 = new string('A', 64),
+                    TargetLength = 5,
+                    TargetSha256 = new string('A', 64),
+                    State = CompatibilityFilePublicationState.TargetStaged
+                });
+            await db.SaveChangesAsync();
+        }
+        var service = new CompatibilityFilePublicationRecoveryService(
+            factory,
+            TimeProvider.System,
+            NullLogger<CompatibilityFilePublicationRecoveryService>.Instance);
+
+        await service.ReconcileAsync();
+
+        Assert.Equal("partial", await File.ReadAllTextAsync(stage));
+        Assert.False(File.Exists(destination));
+        await using var verification = await factory.CreateDbContextAsync();
+        var journal = await verification.CompatibilityFilePublicationJournals
+            .SingleAsync(candidate => candidate.OperationId == operationId);
+        Assert.Equal(
+            CompatibilityFilePublicationState.TargetStaged,
+            journal.State);
+    }
 }

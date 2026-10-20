@@ -21,26 +21,32 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
 {
     public class EfRemotePathMappingRepository : IRemotePathMappingRepository
     {
-        private readonly ListenArrDbContext _db;
+        private readonly IDbContextFactory<ListenArrDbContext> _dbFactory;
 
-        public EfRemotePathMappingRepository(ListenArrDbContext db)
+        public EfRemotePathMappingRepository(
+            IDbContextFactory<ListenArrDbContext> dbFactory)
         {
-            _db = db ?? throw new ArgumentNullException(nameof(db));
+            _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
         }
 
         public async Task<List<RemotePathMapping>> GetAllAsync(CancellationToken ct = default)
         {
-            return await _db.RemotePathMappings.AsNoTracking().ToListAsync(ct);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            return await db.RemotePathMappings.AsNoTracking().ToListAsync(ct);
         }
 
         public async Task<RemotePathMapping?> GetByIdAsync(int id, CancellationToken ct = default)
         {
-            return await _db.RemotePathMappings.FindAsync(new object[] { id }, ct);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            return await db.RemotePathMappings
+                .AsNoTracking()
+                .SingleOrDefaultAsync(mapping => mapping.Id == id, ct);
         }
 
         public async Task<List<RemotePathMapping>> GetByClientIdAsync(string downloadClientId, CancellationToken ct = default)
         {
-            return await _db.RemotePathMappings
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            return await db.RemotePathMappings
                 .AsNoTracking()
                 .Where(m => m.DownloadClientId == downloadClientId)
                 .OrderByDescending(m => m.RemotePath.Length)
@@ -49,25 +55,32 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
 
         public async Task<RemotePathMapping> SaveAsync(RemotePathMapping mapping, CancellationToken ct = default)
         {
-            var existing = await _db.RemotePathMappings.FindAsync(new object[] { mapping.Id }, ct);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var existing = mapping.Id > 0
+                ? await db.RemotePathMappings.SingleOrDefaultAsync(
+                    candidate => candidate.Id == mapping.Id,
+                    ct)
+                : null;
             if (existing == null)
             {
-                _db.RemotePathMappings.Add(mapping);
+                db.RemotePathMappings.Add(mapping);
             }
             else
             {
-                _db.Entry(existing).CurrentValues.SetValues(mapping);
+                db.Entry(existing).CurrentValues.SetValues(mapping);
             }
-            await _db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(ct);
             return existing ?? mapping;
         }
 
         public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
         {
-            var mapping = await _db.RemotePathMappings.FindAsync(new object[] { id }, ct);
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var mapping = await db.RemotePathMappings
+                .SingleOrDefaultAsync(candidate => candidate.Id == id, ct);
             if (mapping == null) return false;
-            _db.RemotePathMappings.Remove(mapping);
-            await _db.SaveChangesAsync(ct);
+            db.RemotePathMappings.Remove(mapping);
+            await db.SaveChangesAsync(ct);
             return true;
         }
     }

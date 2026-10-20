@@ -20,6 +20,12 @@ public partial class FileMover
         init;
     }
     internal Func<Task>?
+        AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync
+    {
+        get;
+        init;
+    }
+    internal Func<Task>?
         AfterMarkerlessRegistrationTargetWrittenBeforeVerifiedStateForTestAsync
     {
         get;

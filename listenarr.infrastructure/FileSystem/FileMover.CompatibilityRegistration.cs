@@ -115,80 +115,19 @@ public partial class FileMover
                     ?? "The compatibility publication requires manual attention.");
         }
 
-        if (journal.State == CompatibilityFilePublicationState.Planned)
+        var stagedPublication = await PublishCompatibilityStagedTargetAsync(
+            plan,
+            gate,
+            journal,
+            source,
+            destination,
+            expectedSourceProof,
+            cancellationToken);
+        if (stagedPublication.Failure != null)
         {
-            if (File.Exists(gate.DestinationPath))
-            {
-                await MarkCompatibilityNeedsAttentionAsync(
-                    journal.OperationId,
-                    "A compatibility destination appeared before target verification. It was preserved without overwrite.",
-                    cancellationToken);
-                return CompatibilityBlocked(
-                    plan,
-                    source,
-                    destination,
-                    "ambiguous_existing_target",
-                    "The destination appeared during compatibility publication and was preserved for manual review.");
-            }
-
-            using var sourceStream = OpenCompatibilityRead(gate.SourcePath);
-            if (!await CompatibilityStreamMatchesAsync(
-                    sourceStream,
-                    expectedSourceProof.Length,
-                    expectedSourceProof.Sha256,
-                    cancellationToken))
-            {
-                await MarkCompatibilityNeedsAttentionAsync(
-                    journal.OperationId,
-                    "The compatibility source content changed before publication.",
-                    cancellationToken);
-                return CompatibilityBlocked(
-                    plan,
-                    source,
-                    destination,
-                    "source_content_changed",
-                    "The source changed before compatibility publication.");
-            }
-
-            await using var created = new FileStream(
-                gate.DestinationPath,
-                FileMode.CreateNew,
-                FileAccess.ReadWrite,
-                FileShare.Read,
-                bufferSize: 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            sourceStream.Position = 0;
-            await sourceStream.CopyToAsync(created, 128 * 1024, cancellationToken);
-            await created.FlushAsync(cancellationToken);
-            created.Flush(flushToDisk: true);
-            if (!await CompatibilityStreamMatchesAsync(
-                    created,
-                    expectedSourceProof.Length,
-                    expectedSourceProof.Sha256,
-                    cancellationToken))
-            {
-                await MarkCompatibilityNeedsAttentionAsync(
-                    journal.OperationId,
-                    "The compatibility destination failed content verification and was preserved.",
-                    cancellationToken);
-                return CompatibilityBlocked(
-                    plan,
-                    source,
-                    destination,
-                    "target_verification_failed",
-                    "The copied destination could not be verified and was preserved for manual review.");
-            }
-            PreserveCompatibilityMetadata(gate.SourcePath, gate.DestinationPath);
-
-            journal = await _compatibilityFilePublicationJournalStore.AdvanceAsync(
-                journal.OperationId,
-                CompatibilityFilePublicationState.TargetVerified,
-                expectedSourceProof.Length,
-                expectedSourceProof.Sha256,
-                audiobookId: null,
-                error: null,
-                cancellationToken);
+            return stagedPublication.Failure;
         }
+        journal = stagedPublication.Journal;
 
         if (!CompatibilityTargetMatches(
                 gate.DestinationPath,

@@ -14,6 +14,88 @@ namespace Listenarr.Tests.Features.Infrastructure.FileSystem;
 public sealed class FileMoverMarkerlessRegistrationTests : BaseTests
 {
     [Fact]
+    public async Task PrepareCopy_InterruptedStagingKeepsFinalNameHiddenAndRetryPublishesVerifiedFile()
+    {
+        var scenario = await CreateScenarioAsync(
+            "registration-copy-hidden-staging");
+        var firstMover = CreateMover(
+            afterRegistrationTargetState: () =>
+                throw new IOException("Injected staged-copy interruption."));
+        var stagePath = Path.Combine(
+            Path.GetDirectoryName(scenario.Destination)!,
+            $".staging-{scenario.OperationId:N}.partial");
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            firstMover.PrepareActionForRegistrationAsync(
+                FileAction.Copy,
+                scenario.Source,
+                scenario.Destination,
+                scenario.OperationId));
+
+        Assert.False(File.Exists(scenario.Destination));
+        Assert.True(File.Exists(stagePath));
+        await AssertJournalStateAsync(
+            scenario.OperationId,
+            FileMutationJournalState.TargetStaged,
+            audiobookId: null);
+
+        using var lease = await CreateMover().PrepareActionForRegistrationAsync(
+            FileAction.Copy,
+            scenario.Source,
+            scenario.Destination,
+            scenario.OperationId);
+
+        Assert.NotNull(lease);
+        Assert.Equal("audio", await File.ReadAllTextAsync(scenario.Destination));
+        Assert.False(File.Exists(stagePath));
+        await AssertJournalStateAsync(
+            scenario.OperationId,
+            FileMutationJournalState.TargetVerified,
+            audiobookId: null);
+    }
+
+    [Fact]
+    public async Task PrepareCopy_InterruptedAfterAtomicPublish_RetryAdoptsVerifiedDestination()
+    {
+        var scenario = await CreateScenarioAsync(
+            "registration-copy-publish-recovery");
+        var firstMover = CreateMover(
+            afterRegistrationTargetPublishedBeforeState: () =>
+                throw new IOException("Injected post-publish interruption."));
+        var stagePath = Path.Combine(
+            Path.GetDirectoryName(scenario.Destination)!,
+            $".staging-{scenario.OperationId:N}.partial");
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            firstMover.PrepareActionForRegistrationAsync(
+                FileAction.Copy,
+                scenario.Source,
+                scenario.Destination,
+                scenario.OperationId));
+
+        Assert.True(File.Exists(scenario.Destination));
+        Assert.Equal("audio", await File.ReadAllTextAsync(scenario.Destination));
+        Assert.False(File.Exists(stagePath));
+        await AssertJournalStateAsync(
+            scenario.OperationId,
+            FileMutationJournalState.TargetStaged,
+            audiobookId: null);
+
+        using var lease = await CreateMover().PrepareActionForRegistrationAsync(
+            FileAction.Copy,
+            scenario.Source,
+            scenario.Destination,
+            scenario.OperationId);
+
+        Assert.NotNull(lease);
+        Assert.Equal("audio", await File.ReadAllTextAsync(scenario.Destination));
+        await AssertJournalStateAsync(
+            scenario.OperationId,
+            FileMutationJournalState.TargetVerified,
+            audiobookId: null);
+    }
+
+    [Fact]
     public async Task CheckPublicationSource_ExistingStableFile_ReturnsSupported()
     {
         var scenario = await CreateScenarioAsync("registration-source-capability");
@@ -1905,7 +1987,9 @@ public sealed class FileMoverMarkerlessRegistrationTests : BaseTests
         IRootFolderStorageHealthResolver? rootFolderStorageHealthResolver = null,
         bool forceContentOnlySourceProof = false,
         ILogger<FileMover>? logger = null,
-        IOptions<FileMoverOptions>? options = null)
+        IOptions<FileMoverOptions>? options = null,
+        Func<Task>? afterRegistrationTargetState = null,
+        Func<Task>? afterRegistrationTargetPublishedBeforeState = null)
     {
         var factory = _provider.GetRequiredService<
             IDbContextFactory<ListenArrDbContext>>();
@@ -1928,6 +2012,10 @@ public sealed class FileMoverMarkerlessRegistrationTests : BaseTests
                 beforeRegistrationSourceDelete,
             AfterMarkerlessRegistrationTargetCreatedBeforeStateForTestAsync =
                 afterRegistrationTargetCreatedBeforeState,
+            AfterMarkerlessRegistrationTargetStateForTestAsync =
+                afterRegistrationTargetState,
+            AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync =
+                afterRegistrationTargetPublishedBeforeState,
             AfterMarkerlessMoveSourceDeletedBeforeStateForTestAsync =
                 afterSourceDeletedBeforeState,
             AfterMarkerlessMoveSourceDeletedStateForTestAsync =

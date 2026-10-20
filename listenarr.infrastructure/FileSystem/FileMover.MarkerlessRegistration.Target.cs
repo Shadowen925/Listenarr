@@ -12,13 +12,10 @@ public partial class FileMover
         FileMutationJournal journal,
         CancellationToken cancellationToken)
     {
+        var stageName = $".staging-{journal.OperationId:N}.partial";
         using var sourceEntry = gate.SourceParent.TryOpenExistingFile(
             gate.SourceName,
             requireDeleteAccess: false);
-        using var existingTarget = gate.DestinationParent.TryOpenExistingFile(
-            gate.DestinationName,
-            requireDeleteAccess: false);
-
         var sourceSharesDestinationVolume = sourceEntry != null
             && !ForceCrossVolumeForTest
             && sourceEntry.IsOnSameVolume(gate.DestinationParent);
@@ -28,6 +25,150 @@ public partial class FileMover
                 && !OperatingSystem.IsWindows()
                 && sourceSharesDestinationVolume);
 
+        if (journal.State == FileMutationJournalState.TargetStaged)
+        {
+            using var publishedTarget = gate.DestinationParent.TryOpenExistingFile(
+                gate.DestinationName,
+                requireDeleteAccess: false);
+            if (publishedTarget != null)
+            {
+                var existingPublishedIdentity = publishedTarget.GetObjectIdentity();
+                var exactTargetIdentityMatches =
+                    !string.IsNullOrWhiteSpace(
+                        journal.TargetPhysicalObjectIdentity)
+                    && publishedTarget.MatchesObjectIdentity(
+                        journal.TargetPhysicalObjectIdentity);
+                var renamedTargetIdentityMatches =
+                    !exactTargetIdentityMatches
+                    && !string.IsNullOrWhiteSpace(
+                        journal.TargetPhysicalObjectIdentity)
+                    && publishedTarget.MatchesWindowsFileId(
+                        journal.TargetPhysicalObjectIdentity);
+                if ((exactTargetIdentityMatches
+                        || renamedTargetIdentityMatches)
+                    && await MatchesMarkerlessTargetContentAsync(
+                        publishedTarget,
+                        journal,
+                        cancellationToken))
+                {
+                    if (renamedTargetIdentityMatches)
+                    {
+                        journal = await _fileMutationJournalStore!.AdvanceAsync(
+                            journal.OperationId,
+                            FileMutationJournalState.TargetStaged,
+                            existingPublishedIdentity,
+                            audiobookId: null,
+                            error: null,
+                            cancellationToken);
+                    }
+
+                    return await _fileMutationJournalStore!.AdvanceAsync(
+                        journal.OperationId,
+                        FileMutationJournalState.TargetIdentityPersisted,
+                        existingPublishedIdentity,
+                        audiobookId: null,
+                        error: null,
+                        cancellationToken);
+                }
+
+                await MarkMarkerlessRegistrationNeedsAttentionAsync(
+                    journal,
+                    "A different registration destination appeared during staged publication.",
+                    cancellationToken);
+                return await _fileMutationJournalStore!.GetAsync(
+                    journal.OperationId,
+                    cancellationToken)
+                    ?? throw new InvalidOperationException(
+                        "The markerless registration journal disappeared.");
+            }
+
+            if (sourceEntry == null
+                || !await MatchesMarkerlessSourceProofAsync(
+                    sourceEntry,
+                    journal,
+                    cancellationToken))
+            {
+                await MarkMarkerlessRegistrationNeedsAttentionAsync(
+                    journal,
+                    "The registration source changed before staged publication could resume.",
+                    cancellationToken);
+                return await _fileMutationJournalStore!.GetAsync(
+                    journal.OperationId,
+                    cancellationToken)
+                    ?? throw new InvalidOperationException(
+                        "The markerless registration journal disappeared.");
+            }
+
+            using var resumableStage = gate.DestinationParent.TryOpenExistingFile(
+                stageName,
+                requireDeleteAccess: true);
+            if (resumableStage == null
+                || (!string.IsNullOrWhiteSpace(
+                        journal.TargetPhysicalObjectIdentity)
+                    && !resumableStage.MatchesObjectIdentity(
+                        journal.TargetPhysicalObjectIdentity)))
+            {
+                await MarkMarkerlessRegistrationNeedsAttentionAsync(
+                    journal,
+                    "The staged registration target is missing or changed physical generation.",
+                    cancellationToken);
+                return await _fileMutationJournalStore!.GetAsync(
+                    journal.OperationId,
+                    cancellationToken)
+                    ?? throw new InvalidOperationException(
+                        "The markerless registration journal disappeared.");
+            }
+
+            await CopyMarkerlessFileAsync(
+                sourceEntry,
+                resumableStage,
+                cancellationToken);
+            sourceEntry.PreserveMarkerlessMetadataTo(resumableStage);
+            if (AfterMarkerlessRegistrationTargetWrittenBeforeVerifiedStateForTestAsync != null)
+            {
+                await AfterMarkerlessRegistrationTargetWrittenBeforeVerifiedStateForTestAsync();
+            }
+            if (!await MatchesMarkerlessTargetContentAsync(
+                    resumableStage,
+                    journal,
+                    cancellationToken))
+            {
+                throw new IOException(
+                    "The staged registration destination failed content verification.");
+            }
+
+            journal = await _fileMutationJournalStore!.AdvanceAsync(
+                journal.OperationId,
+                FileMutationJournalState.TargetStaged,
+                resumableStage.GetObjectIdentity(),
+                audiobookId: null,
+                error: null,
+                cancellationToken);
+            resumableStage.MoveWithinParent(gate.DestinationName);
+            if (AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync != null)
+            {
+                await AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync();
+            }
+            var publishedIdentity = resumableStage.GetObjectIdentity();
+            journal = await _fileMutationJournalStore!.AdvanceAsync(
+                journal.OperationId,
+                FileMutationJournalState.TargetStaged,
+                publishedIdentity,
+                audiobookId: null,
+                error: null,
+                cancellationToken);
+            return await _fileMutationJournalStore!.AdvanceAsync(
+                journal.OperationId,
+                FileMutationJournalState.TargetIdentityPersisted,
+                publishedIdentity,
+                audiobookId: null,
+                error: null,
+                cancellationToken);
+        }
+
+        using var existingTarget = gate.DestinationParent.TryOpenExistingFile(
+            gate.DestinationName,
+            requireDeleteAccess: false);
         if (existingTarget != null)
         {
             if (requiresGenerationPreservingLink
@@ -148,17 +289,22 @@ public partial class FileMover
             sourceEntry,
             journal,
             cancellationToken);
-        using var created = gate.DestinationParent.CreateNewFile(
-            gate.DestinationName);
-        targetIdentity = created.GetObjectIdentity();
+        using (var abandonedStage = gate.DestinationParent.TryOpenExistingFile(
+                   stageName,
+                   requireDeleteAccess: true))
+        {
+            abandonedStage?.Delete();
+        }
+
+        using var stagedTarget = gate.DestinationParent.CreateNewFile(stageName);
         if (AfterMarkerlessRegistrationTargetCreatedBeforeStateForTestAsync != null)
         {
             await AfterMarkerlessRegistrationTargetCreatedBeforeStateForTestAsync();
         }
         journal = await _fileMutationJournalStore!.AdvanceAsync(
             journal.OperationId,
-            FileMutationJournalState.TargetIdentityPersisted,
-            targetIdentity,
+            FileMutationJournalState.TargetStaged,
+            targetPhysicalObjectIdentity: null,
             audiobookId: null,
             error: null,
             cancellationToken);
@@ -166,7 +312,53 @@ public partial class FileMover
         {
             await AfterMarkerlessRegistrationTargetStateForTestAsync();
         }
-        return journal;
+
+        await CopyMarkerlessFileAsync(
+            sourceEntry,
+            stagedTarget,
+            cancellationToken);
+        sourceEntry.PreserveMarkerlessMetadataTo(stagedTarget);
+        if (AfterMarkerlessRegistrationTargetWrittenBeforeVerifiedStateForTestAsync != null)
+        {
+            await AfterMarkerlessRegistrationTargetWrittenBeforeVerifiedStateForTestAsync();
+        }
+        if (!await MatchesMarkerlessTargetContentAsync(
+                stagedTarget,
+                journal,
+                cancellationToken))
+        {
+            throw new IOException(
+                "The staged registration destination failed content verification.");
+        }
+
+        targetIdentity = stagedTarget.GetObjectIdentity();
+        journal = await _fileMutationJournalStore!.AdvanceAsync(
+            journal.OperationId,
+            FileMutationJournalState.TargetStaged,
+            targetIdentity,
+            audiobookId: null,
+            error: null,
+            cancellationToken);
+        stagedTarget.MoveWithinParent(gate.DestinationName);
+        if (AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync != null)
+        {
+            await AfterMarkerlessRegistrationTargetPublishedBeforeStateForTestAsync();
+        }
+        targetIdentity = stagedTarget.GetObjectIdentity();
+        journal = await _fileMutationJournalStore!.AdvanceAsync(
+            journal.OperationId,
+            FileMutationJournalState.TargetStaged,
+            targetIdentity,
+            audiobookId: null,
+            error: null,
+            cancellationToken);
+        return await _fileMutationJournalStore!.AdvanceAsync(
+            journal.OperationId,
+            FileMutationJournalState.TargetIdentityPersisted,
+            targetIdentity,
+            audiobookId: null,
+            error: null,
+            cancellationToken);
     }
 
     private async Task<FileMutationJournal> VerifyMarkerlessRegistrationTargetAsync(
@@ -177,12 +369,15 @@ public partial class FileMover
         using var targetEntry = gate.DestinationParent.TryOpenExistingFile(
             gate.DestinationName,
             requireDeleteAccess: false);
-        if (targetEntry == null
-            || !TargetMatchesMarkerlessJournal(targetEntry, journal))
+        var targetMatchesJournal = targetEntry != null
+            && TargetMatchesMarkerlessJournal(targetEntry, journal);
+        if (targetEntry == null || !targetMatchesJournal)
         {
             await MarkMarkerlessRegistrationNeedsAttentionAsync(
                 journal,
-                "The registration destination changed before content verification.",
+                targetEntry == null
+                    ? "The registration destination is missing before content verification."
+                    : "The registration destination changed before content verification.",
                 cancellationToken);
             return await _fileMutationJournalStore!.GetAsync(
                 journal.OperationId,

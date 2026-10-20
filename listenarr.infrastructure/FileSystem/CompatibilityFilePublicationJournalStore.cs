@@ -172,6 +172,8 @@ internal sealed class CompatibilityFilePublicationJournalStore(
         return current switch
         {
             CompatibilityFilePublicationState.Planned =>
+                next == CompatibilityFilePublicationState.TargetStaged,
+            CompatibilityFilePublicationState.TargetStaged =>
                 next == CompatibilityFilePublicationState.TargetVerified,
             CompatibilityFilePublicationState.TargetVerified =>
                 next == CompatibilityFilePublicationState.RegistrationCommitted,

@@ -37,7 +37,8 @@ public enum FileMutationJournalState
     SourceDeleted,
     Completed,
     OwnerMetadataReconciled,
-    NeedsAttention
+    NeedsAttention,
+    TargetStaged
 }
 
 /// <summary>

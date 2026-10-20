@@ -175,7 +175,8 @@ public partial class FileMover
             }
         }
 
-        if (journal.State == FileMutationJournalState.Planned)
+        if (journal.State is FileMutationJournalState.Planned
+            or FileMutationJournalState.TargetStaged)
         {
             journal = await PublishMarkerlessRegistrationTargetAsync(
                 action,

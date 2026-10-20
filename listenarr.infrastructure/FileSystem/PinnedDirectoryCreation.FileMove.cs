@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 
 namespace Listenarr.Infrastructure.FileSystem;
 
@@ -317,6 +318,53 @@ internal sealed partial class PinnedDirectoryCreation
                         PinnedDirectoryCreation.ArePersistedObjectIdentitiesDurablyEquivalent(
                             expectedIdentity,
                             candidate)));
+        }
+
+        internal bool MatchesWindowsFileId(string expectedIdentity)
+        {
+            ThrowIfDisposed();
+            ArgumentException.ThrowIfNullOrWhiteSpace(expectedIdentity);
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            var components = expectedIdentity.Split(':');
+            // Staged publication retries use the stable file ID when NTFS changes
+            // the creation-time component during an atomic rename.
+            if (components.Length != 5
+                || !string.Equals(components[0], "windows", StringComparison.Ordinal)
+                || !ulong.TryParse(
+                    components[1],
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out var expectedVolume)
+                || !ulong.TryParse(
+                    components[2],
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out var expectedLowPart)
+                || !ulong.TryParse(
+                    components[3],
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out var expectedHighPart))
+            {
+                return false;
+            }
+            if (!ulong.TryParse(
+                    components[4],
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out _))
+            {
+                return false;
+            }
+
+            var identity = GetWindowsIdentity(_fileHandle);
+            return identity.VolumeSerialNumber == expectedVolume
+                && identity.LowPart == expectedLowPart
+                && identity.HighPart == expectedHighPart;
         }
 
         internal bool IsOnSameVolume(PinnedDirectoryAnchor directory)

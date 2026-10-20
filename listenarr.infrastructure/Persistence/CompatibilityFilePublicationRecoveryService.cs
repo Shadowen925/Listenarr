@@ -83,6 +83,13 @@ internal sealed class CompatibilityFilePublicationRecoveryService(
                 return;
             }
         }
+        else if (journal.State == CompatibilityFilePublicationState.TargetStaged)
+        {
+            // The originating import owns the source proof and resumes the staged
+            // publication; startup must not interpret the intentionally hidden file
+            // as a missing or unverified final destination.
+            return;
+        }
         else if (journal.ProtocolVersion == CompatibilityFilePublicationProtocol.Current
             && journal.State is
                 CompatibilityFilePublicationState.SourceDeleteAuthorized or

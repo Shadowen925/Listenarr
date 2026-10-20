@@ -270,7 +270,8 @@ public sealed partial class FileRegistrationRecoveryService(
             {
                 throw RepairRequired(operationId);
             }
-            if (!IsRegistrationMoveOwner(journal)
+            if (journal.State == FileMutationJournalState.TargetStaged
+                || !IsRegistrationMoveOwner(journal)
                 || journal.State < FileMutationJournalState.TargetVerified
                 || !journal.AudiobookId.HasValue)
             {
