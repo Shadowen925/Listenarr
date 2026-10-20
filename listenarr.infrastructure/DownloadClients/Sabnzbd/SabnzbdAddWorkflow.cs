@@ -27,15 +27,20 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
             if (submission is not PreparedUsenetSubmission usenet)
                 throw new DownloadClientSubmissionException("SABnzbd requires a prepared Usenet submission.");
 
+            IEnumerable<string?> sensitiveValues = [];
             try
             {
                 var requestContext = requestBuilder.CreateContext(client);
                 if (!requestContext.HasApiKey)
-                    throw new Exception("SABnzbd API key not configured");
+                {
+                    throw new DownloadClientSubmissionException(
+                        "SABnzbd API key is not configured.",
+                        failureKind: DownloadSubmissionFailureKind.ClientUnavailable);
+                }
 
                 logger.LogInformation("Sending prepared NZB to SABnzbd: {Title} from {Source}", LogRedaction.SanitizeText(usenet.Title), LogRedaction.SanitizeText(usenet.Source));
 
-                var sensitiveValues = requestBuilder.BuildSensitiveValues(requestContext);
+                sensitiveValues = requestBuilder.BuildSensitiveValues(requestContext);
                 var queryParams = SabnzbdAddRequestPlanner.BuildFileQueryParams(client, usenet.Title);
                 var requestUrl = requestBuilder.BuildUrl(requestContext, queryParams);
 
@@ -53,13 +58,23 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 {
                     var redacted = LogRedaction.RedactText(responseContent, sensitiveValues);
                     logger.LogError("SABnzbd returned error status {Status}: {Content}", response.StatusCode, redacted);
-                    throw new Exception($"SABnzbd returned status {response.StatusCode}: {redacted}");
+                    var failureKind = response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                        ? DownloadSubmissionFailureKind.ReleaseSpecific
+                        : DownloadSubmissionFailureKind.ClientUnavailable;
+                    throw new DownloadClientSubmissionException(
+                        SabnzbdRequestBuilder.DescribeHttpFailure(
+                            response.StatusCode,
+                            "NZB submission",
+                            client.Name ?? client.Id),
+                        failureKind: failureKind);
                 }
 
                 if (string.IsNullOrWhiteSpace(responseContent))
                 {
                     logger.LogWarning("SABnzbd returned empty response body when adding NZB: {Url}", LogRedaction.RedactText(requestUrl, sensitiveValues));
-                    throw new DownloadClientSubmissionException("SABnzbd returned an empty submission response.");
+                    throw new DownloadClientSubmissionException(
+                        "SABnzbd returned an empty submission response.",
+                        failureKind: DownloadSubmissionFailureKind.ClientUnavailable);
                 }
 
                 var jsonDoc = JsonDocument.Parse(responseContent);
@@ -69,7 +84,19 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 {
                     var errorMsg = errorElement.GetString();
                     if (!string.IsNullOrEmpty(errorMsg))
-                        throw new Exception($"SABnzbd error: {errorMsg}");
+                    {
+                        var normalizedError = errorMsg.ToLowerInvariant();
+                        var failureKind = normalizedError.Contains("api key", StringComparison.Ordinal)
+                            || normalizedError.Contains("unauthorized", StringComparison.Ordinal)
+                            || normalizedError.Contains("forbidden", StringComparison.Ordinal)
+                            ? DownloadSubmissionFailureKind.ClientUnavailable
+                            : DownloadSubmissionFailureKind.ReleaseSpecific;
+                        throw new DownloadClientSubmissionException(
+                            failureKind == DownloadSubmissionFailureKind.ClientUnavailable
+                                ? "SABnzbd rejected the request due to an authentication or access configuration error."
+                                : "SABnzbd rejected the release.",
+                            failureKind: failureKind);
+                    }
                 }
 
                 if (root.TryGetProperty("nzo_ids", out var nzoIds) && nzoIds.ValueKind == JsonValueKind.Array)
@@ -80,12 +107,34 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                     return new DownloadClientSubmissionResult(downloadId);
                 }
 
-                throw new DownloadClientSubmissionException("SABnzbd did not return a verified queue identifier.");
+                throw new DownloadClientSubmissionException(
+                    "SABnzbd did not return a verified queue identifier.",
+                    failureKind: DownloadSubmissionFailureKind.ClientUnavailable);
+            }
+            catch (DownloadClientSubmissionException ex)
+            {
+                logger.LogError(
+                    "Failed to send NZB to SABnzbd: {Failure}",
+                    LogRedaction.RedactText(ex.ToString(), sensitiveValues));
+                throw;
+            }
+            catch (HttpRequestException ex)
+            {
+                logger.LogError(
+                    "Failed to send NZB to SABnzbd: {Failure}",
+                    LogRedaction.RedactText(ex.ToString(), sensitiveValues));
+                throw new DownloadClientSubmissionException(
+                    "SABnzbd could not be reached while submitting the NZB.",
+                    failureKind: DownloadSubmissionFailureKind.ClientUnavailable);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                logger.LogError(ex, "Failed to send NZB to SABnzbd");
-                throw;
+                logger.LogError(
+                    "Failed to send NZB to SABnzbd: {Failure}",
+                    LogRedaction.RedactText(ex.ToString(), sensitiveValues));
+                throw new DownloadClientSubmissionException(
+                    "SABnzbd returned an invalid or unexpected submission response.",
+                    failureKind: DownloadSubmissionFailureKind.ClientUnavailable);
             }
         }
     }

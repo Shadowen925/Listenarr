@@ -25,6 +25,8 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         public List<AutomaticSearchDiagnostic> Diagnostics { get; } = [];
         public Mock<IReleaseRejectionRepository> Rejections { get; } = new();
         public Mock<IDownloadService> Downloads { get; } = new();
+        public Mock<ISearchService> Search { get; } = new();
+        public List<string> SearchQueries { get; } = [];
         public AutomaticSearchProcessor Processor { get; }
 
         public Fixture(params (string Id, int Score)[] results)
@@ -55,14 +57,15 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                     repository.GetByAudiobookIdAsync(Audiobook.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
 
-            var searchService = new Mock<ISearchService>();
-            searchService.Setup(service => service.SearchAsync(
+            Search.Setup(service => service.SearchAsync(
                     It.IsAny<string>(),
                     It.IsAny<string?>(),
                     It.IsAny<List<string>?>(),
                     It.IsAny<SearchSortBy>(),
                     It.IsAny<SearchSortDirection>(),
                     true))
+                .Callback<string, string?, List<string>?, SearchSortBy, SearchSortDirection, bool>(
+                    (query, _, _, _, _, _) => SearchQueries.Add(query))
                 .ReturnsAsync(Results);
 
             var qualityProfileService = new Mock<IQualityProfileService>();
@@ -139,7 +142,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
             services.AddSingleton(audiobookRepository.Object);
             services.AddSingleton(downloadRepository.Object);
             services.AddSingleton(audiobookFileRepository.Object);
-            services.AddSingleton(searchService.Object);
+            services.AddSingleton(Search.Object);
             services.AddSingleton(qualityProfileService.Object);
             services.AddSingleton(Downloads.Object);
             services.AddSingleton(Rejections.Object);
@@ -249,5 +252,43 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                 rejection.ReleaseKey == ReleaseRejection.IdKey("bad-source")),
             It.IsAny<CancellationToken>()), Times.Once);
         Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_QueriesTitleAndSeriesPositionVariants()
+    {
+        using var fixture = new Fixture(("release", 100));
+        fixture.Audiobook.Authors = ["Troy Ashford"];
+        fixture.Audiobook.Series = "Mystic Seekers";
+        fixture.Audiobook.SeriesNumber = "1";
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        Assert.Contains("Test Book Troy Ashford Mystic Seekers", fixture.SearchQueries);
+        Assert.Contains("Mystic Seekers 1 Troy Ashford", fixture.SearchQueries);
+        Assert.Contains(fixture.Audiobook.Asin, fixture.SearchQueries);
+        Assert.Equal(fixture.SearchQueries.Count, fixture.SearchQueries.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_ContinuesAfterOneQueryVariantFails()
+    {
+        using var fixture = new Fixture();
+        fixture.Audiobook.Authors = ["Troy Ashford"];
+        fixture.Audiobook.Series = "Mystic Seekers";
+        fixture.Audiobook.SeriesNumber = "1";
+        fixture.Search.Setup(service => service.SearchAsync(
+                "Test Book Troy Ashford Mystic Seekers",
+                It.IsAny<string?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<SearchSortBy>(),
+                It.IsAny<SearchSortDirection>(),
+                true))
+            .ThrowsAsync(new HttpRequestException("Indexer query failed"));
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        Assert.Contains("Mystic Seekers 1 Troy Ashford", fixture.SearchQueries);
+        Assert.Equal("PartialIndexerFailure", Assert.Single(fixture.Diagnostics).FinalOutcome);
     }
 }

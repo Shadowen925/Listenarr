@@ -426,8 +426,8 @@ namespace Listenarr.Application.Search.Indexers.MyAnonamouse
                         {
                             if (_mamDebugIndex < 5)
                             {
-                                logger.LogDebug("ParseMyAnonamouse: constructed SearchResult #{Index} -> Id='{Id}', Title='{Title}', Size={Size}, Seeders={Seeders}, TorrentUrl='{TorrentUrl}', Artist='{Artist}', Album='{Album}', Category='{Category}', Source='{Source}', Grabs={Grabs}, Files={Files}, PublishedDate={PublishedDate}'",
-                                    _mamDebugIndex, result.Id, result.Title, result.Size, result.Seeders, result.TorrentUrl ?? "", result.Artist ?? "", result.Album ?? "", result.Category ?? "", result.Source ?? "", result.Grabs, result.Files, result.PublishedDate);
+                                logger.LogDebug("ParseMyAnonamouse: constructed SearchResult #{Index} -> Id='{Id}', Title='{Title}', Size={Size}, Seeders={Seeders}, HasTorrentUrl={HasTorrentUrl}, Artist='{Artist}', Album='{Album}', Category='{Category}', Source='{Source}', Grabs={Grabs}, Files={Files}, PublishedDate={PublishedDate}",
+                                    _mamDebugIndex, result.Id, result.Title, result.Size, result.Seeders, !string.IsNullOrWhiteSpace(result.TorrentUrl), result.Artist ?? "", result.Album ?? "", result.Category ?? "", result.Source ?? "", result.Grabs, result.Files, result.PublishedDate);
                             }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)

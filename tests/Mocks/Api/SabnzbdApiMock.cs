@@ -13,6 +13,7 @@ namespace Listenarr.Tests.Mocks.Api
         public string contentPath = FileUtils.GetAbsolutePath("completed", "Book.m4b");
         public System.Net.HttpStatusCode HistoryStatusCode { get; set; } = System.Net.HttpStatusCode.OK;
         public System.Net.HttpStatusCode QueueStatusCode { get; set; } = System.Net.HttpStatusCode.OK;
+        public System.Net.HttpStatusCode VersionStatusCode { get; set; } = System.Net.HttpStatusCode.OK;
         public string? HistoryResponseOverride { get; set; }
         public List<Uri> RemovalRequests { get; } = [];
 
@@ -100,6 +101,11 @@ namespace Listenarr.Tests.Mocks.Api
 
         public async Task<HttpResponseMessage> GetVersion(HttpRequestMessage request, CancellationToken ct)
         {
+            if (VersionStatusCode != System.Net.HttpStatusCode.OK)
+            {
+                return new HttpResponseMessage(VersionStatusCode);
+            }
+
             return MockUtils.GetCannedResponse("""
             {
                 "version": "4.4.1"
@@ -121,6 +127,10 @@ namespace Listenarr.Tests.Mocks.Api
                 if (string.Equals("delete", query["name"], StringComparison.Ordinal))
                 {
                     RemovalRequests.Add(request.RequestUri!);
+                    if (HistoryStatusCode != System.Net.HttpStatusCode.OK)
+                    {
+                        return new HttpResponseMessage(HistoryStatusCode);
+                    }
                     return MockUtils.GetCannedResponse("""{"status": true}""");
                 }
                 return await GetHistory(request, ct);
@@ -131,6 +141,10 @@ namespace Listenarr.Tests.Mocks.Api
                 if (string.Equals("delete", query["name"], StringComparison.Ordinal))
                 {
                     RemovalRequests.Add(request.RequestUri!);
+                    if (QueueStatusCode != System.Net.HttpStatusCode.OK)
+                    {
+                        return new HttpResponseMessage(QueueStatusCode);
+                    }
                     return MockUtils.GetCannedResponse("""{"status": true}""");
                 }
                 return await GetQueue(request, ct);

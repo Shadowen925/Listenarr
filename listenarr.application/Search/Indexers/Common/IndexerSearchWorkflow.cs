@@ -63,8 +63,10 @@ public class IndexerSearchWorkflow
 
         if (!indexers.Any())
         {
-            _logger.LogWarning("No indexers configured, returning mock results for query: {Query}", query);
-            return GenerateMockIndexerResults(query);
+            _logger.LogWarning(
+                "No indexers configured for query: {Query}; automatic search will not create synthetic releases",
+                query);
+            return isAutomaticSearch ? results : GenerateMockIndexerResults(query);
         }
 
         var searchTasks = indexers.Select(async indexer =>
@@ -76,19 +78,29 @@ public class IndexerSearchWorkflow
 
                 var indexerResults = await SearchIndexerAsync(indexer, query, category, perIndexerRequest);
                 _logger.LogInformation("Found {Count} results from indexer {Name}", indexerResults.Count, indexer.Name);
-                return indexerResults;
+                return (Results: indexerResults, Failed: false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error searching indexer {Name} for query: {Query}", indexer.Name, query);
-                return new List<IndexerSearchResult>();
+                _logger.LogError(
+                    "Error searching indexer {Name} for query {Query} ({FailureType})",
+                    indexer.Name,
+                    LogRedaction.SanitizeText(query),
+                    ex.GetType().Name);
+                return (Results: new List<IndexerSearchResult>(), Failed: true);
             }
         }).ToList();
 
         var indexerResults = await Task.WhenAll(searchTasks);
+        if (isAutomaticSearch && indexerResults.Length > 0 && indexerResults.All(result => result.Failed))
+        {
+            throw new InvalidOperationException(
+                $"All {indexerResults.Length} enabled indexer(s) failed while searching.");
+        }
+
         foreach (var indexerResult in indexerResults)
         {
-            results.AddRange(indexerResult);
+            results.AddRange(indexerResult.Results);
         }
 
         _logger.LogInformation("Total {Count} results from all indexers for query: {Query}", results.Count, query);
@@ -123,7 +135,11 @@ public class IndexerSearchWorkflow
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
-            _logger.LogError(ex, "Error searching indexer {ApiId} for query: {Query}", apiId, query);
+            _logger.LogError(
+                "Error searching indexer {ApiId} for query {Query} ({FailureType})",
+                apiId,
+                LogRedaction.SanitizeText(query),
+                ex.GetType().Name);
             return new List<SearchResult>();
         }
     }
@@ -149,7 +165,11 @@ public class IndexerSearchWorkflow
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
-            _logger.LogError(ex, "Error searching indexer {ApiId} for query: {Query}", apiId, query);
+            _logger.LogError(
+                "Error searching indexer {ApiId} for query {Query} ({FailureType})",
+                apiId,
+                LogRedaction.SanitizeText(query),
+                ex.GetType().Name);
             return new List<IndexerSearchResult>();
         }
     }
@@ -166,7 +186,7 @@ public class IndexerSearchWorkflow
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
-            _logger.LogError(ex, "Error testing API connection for {ApiId}", apiId);
+            _logger.LogError("Error testing API connection for {ApiId} ({FailureType})", apiId, ex.GetType().Name);
             return false;
         }
     }
@@ -203,36 +223,29 @@ public class IndexerSearchWorkflow
         string? category = null,
         SearchRequest? request = null)
     {
-        try
+        query = IndexerQuerySanitizer.Sanitize(query);
+        _logger.LogInformation("Searching indexer {Name} ({Implementation}) for: {Query}", indexer.Name, indexer.Implementation, query);
+
+        var fallbackName = GetFallbackIndexerName(indexer);
+        var provider = _searchProviders.FirstOrDefault(p =>
+            p.IndexerType.Equals(indexer.Implementation, StringComparison.OrdinalIgnoreCase) ||
+            (p.IndexerType.Equals("Torznab", StringComparison.OrdinalIgnoreCase)
+             && indexer.Implementation.Equals("Newznab", StringComparison.OrdinalIgnoreCase)));
+
+        if (provider == null)
         {
-            query = IndexerQuerySanitizer.Sanitize(query);
-            _logger.LogInformation("Searching indexer {Name} ({Implementation}) for: {Query}", indexer.Name, indexer.Implementation, query);
-
-            var fallbackName = GetFallbackIndexerName(indexer);
-            var provider = _searchProviders.FirstOrDefault(p =>
-                p.IndexerType.Equals(indexer.Implementation, StringComparison.OrdinalIgnoreCase) ||
-                (p.IndexerType.Equals("Torznab", StringComparison.OrdinalIgnoreCase)
-                 && indexer.Implementation.Equals("Newznab", StringComparison.OrdinalIgnoreCase)));
-
-            if (provider == null)
-            {
-                _logger.LogWarning("No provider found for indexer type: {Implementation}", indexer.Implementation);
-                return new List<IndexerSearchResult>();
-            }
-
-            var providerResults = await provider.SearchAsync(indexer, query, category, request);
-            foreach (var r in providerResults.Where(r => string.IsNullOrWhiteSpace(r.Source)))
-            {
-                r.Source = fallbackName;
-            }
-
-            return providerResults;
+            _logger.LogWarning("No provider found for indexer type: {Implementation}", indexer.Implementation);
+            throw new InvalidOperationException(
+                $"No search provider is registered for indexer type {indexer.Implementation}.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+
+        var providerResults = await provider.SearchAsync(indexer, query, category, request);
+        foreach (var r in providerResults.Where(r => string.IsNullOrWhiteSpace(r.Source)))
         {
-            _logger.LogError(ex, "Error searching indexer {Name}", indexer.Name);
-            return new List<IndexerSearchResult>();
+            r.Source = fallbackName;
         }
+
+        return providerResults;
     }
 
     private static string GetFallbackIndexerName(Indexer indexer)

@@ -58,11 +58,14 @@ public partial class TorznabNewznabSearchProvider : IIndexerSearchProvider
             var userAgent = $"Listenarr/{version} (+https://github.com/Listenarrs/listenarr)";
             requestMessage.Headers.UserAgent.ParseAdd(userAgent);
 
-            var response = await _httpClient.SendAsync(requestMessage);
+            using var response = await _httpClient.SendAsync(requestMessage);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Indexer {Name} returned status {Status}", indexer.Name, response.StatusCode);
-                return new List<IndexerSearchResult>();
+                throw new HttpRequestException(
+                    $"Indexer returned HTTP {(int)response.StatusCode}.",
+                    null,
+                    response.StatusCode);
             }
 
             var xmlContent = await response.Content.ReadAsStringAsync();
@@ -75,8 +78,11 @@ public partial class TorznabNewznabSearchProvider : IIndexerSearchProvider
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
-            _logger.LogError(ex, "Error searching Torznab/Newznab indexer {Name}", indexer.Name);
-            return new List<IndexerSearchResult>();
+            _logger.LogError(
+                "Error searching Torznab/Newznab indexer {Name} ({FailureType})",
+                indexer.Name,
+                ex.GetType().Name);
+            throw;
         }
     }
 

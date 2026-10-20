@@ -20,7 +20,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
             {
                 Id = "d1",
                 AudiobookId = 7,
-                Title = "Old Release",
+                Title = "Book Old Release",
                 DownloadClientId = "c1",
                 Status = status,
                 TotalSize = total,
@@ -348,13 +348,13 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
         {
             var f = new ReplacementFixture();
             f.MarkStalled();
-            f.History.Add(new Download { Id = "old-failed", Status = DownloadStatus.Failed, Title = "Bad Release", AudiobookId = 7 });
-            f.SetupResults(Release("1", "Old Release", 99), Release("2", "Bad Release", 50), Release("3", "Good Release", 5));
+            f.History.Add(new Download { Id = "old-failed", Status = DownloadStatus.Failed, Title = "Book Bad Release", AudiobookId = 7 });
+            f.SetupResults(Release("1", "Book Old Release", 99), Release("2", "Book Bad Release", 50), Release("3", "Book Good Release", 5));
 
             var outcome = await f.Service.TryAutoReplaceAsync("d1", TorrentClient(), Policy);
 
             Assert.True(outcome.Success);
-            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Good Release"), "c1", 7), Times.Once);
+            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Book Good Release"), "c1", 7), Times.Once);
             Assert.Equal(DownloadStatus.Failed, f.Old.Status);
             Assert.Equal(1, StallTracker.GetReplacementAttempts(f.Old));
             f.Removal.Gateway.Verify(g => g.RemoveAsync(It.IsAny<DownloadClientConfiguration>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -365,7 +365,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
         {
             var f = new ReplacementFixture();
             f.MarkStalled();
-            f.SetupResults(Release("1", "Old Release", 99));
+            f.SetupResults(Release("1", "Book Old Release", 99));
 
             var outcome = await f.Service.TryAutoReplaceAsync("d1", TorrentClient(), Policy);
 
@@ -381,7 +381,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
             var f = new ReplacementFixture();
             f.MarkStalled();
             f.Old.Metadata[StallMetadataKeys.ReplacementAttempts] = "3";
-            f.SetupResults(Release("3", "Good Release", 5));
+            f.SetupResults(Release("3", "Book Good Release", 5));
 
             var outcome = await f.Service.TryAutoReplaceAsync("d1", TorrentClient(), Policy);
 
@@ -393,7 +393,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
         public async Task AutoReplace_DoesNothingWhenNotStalledOrDisabled()
         {
             var f = new ReplacementFixture();
-            f.SetupResults(Release("3", "Good Release", 5));
+            f.SetupResults(Release("3", "Book Good Release", 5));
             Assert.Equal(ReplacementOutcomeKind.Skipped, (await f.Service.TryAutoReplaceAsync("d1", TorrentClient(), Policy)).Kind);
 
             f.MarkStalled();
@@ -483,7 +483,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
         public async Task ManualReplace_PersistsRejection_AndItSurvivesHistoryCleanup()
         {
             var f = new ReplacementFixture();
-            f.SetupResults(Release("1", "Old Release", 99), Release("3", "Good Release", 5));
+            f.SetupResults(Release("1", "Book Old Release", 99), Release("3", "Book Good Release", 5));
 
             var replacement = await f.Service.ReplaceAsync("d1", "c1", Candidate(), DownloadRemovalMode.ClientKeepFiles);
             Assert.True(replacement.Success, replacement.Message);
@@ -497,8 +497,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Stalls
             var outcome = await f.Service.TryAutoReplaceAsync("d1", TorrentClient(), Policy);
 
             Assert.True(outcome.Success);
-            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Good Release"), "c1", 7), Times.AtLeastOnce);
-            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Old Release"), It.IsAny<string?>(), It.IsAny<int?>()), Times.Never);
+            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Book Good Release"), "c1", 7), Times.AtLeastOnce);
+            f.Downloads.Verify(d => d.SendToDownloadClientAsync(It.Is<TrustedDownloadCandidate>(c => c.Title == "Book Old Release"), It.IsAny<string?>(), It.IsAny<int?>()), Times.Never);
         }
 
         [Fact]

@@ -100,13 +100,13 @@ namespace Listenarr.Application.Downloads.Stalls
                 var excluded = await GetExcludedReleasesAsync(audiobookId, download, ct);
                 var searchQuery = DownloadSearchQueryBuilder.Build(audiobook);
                 var results = await searchService.SearchAsync(searchQuery, isAutomaticSearch: true);
-                results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesAsin(audiobook, result));
+                results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result));
                 if (results.Count == 0
                     && !string.IsNullOrWhiteSpace(audiobook.Asin)
                     && !string.Equals(searchQuery, audiobook.Asin, StringComparison.OrdinalIgnoreCase))
                 {
                     results = await searchService.SearchAsync(audiobook.Asin.Trim(), isAutomaticSearch: true);
-                    results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesAsin(audiobook, result));
+                    results.RemoveAll(result => !AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result));
                 }
                 var scored = results.Count == 0 ? [] : await qualityProfileService.ScoreSearchResults(results, audiobook.QualityProfile);
                 var best = scored

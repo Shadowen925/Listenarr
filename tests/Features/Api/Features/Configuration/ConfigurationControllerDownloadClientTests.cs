@@ -116,7 +116,7 @@ namespace Listenarr.Tests.Features.Api.Features.Configuration
         }
 
         [Fact]
-        public async Task TestDownloadClientConfiguration_PrivateNetworkCaller_DoesNotRedactSecrets()
+        public async Task TestDownloadClientConfiguration_PrivateNetworkCaller_StillRedactsSecrets()
         {
             // Arrange
             var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
@@ -186,16 +186,95 @@ namespace Listenarr.Tests.Features.Api.Features.Configuration
             var clientProp = payload.GetType().GetProperty("client");
             Assert.NotNull(clientProp);
             var returnedClient = Assert.IsType<DownloadClientConfiguration>(clientProp!.GetValue(payload));
-            Assert.Equal("nzb-user", returnedClient.Username);
-            Assert.Equal("nzb-pass", returnedClient.Password);
+            Assert.Equal(ApiResponseRedactor.RedactedValue, returnedClient.Username);
+            Assert.Equal(ApiResponseRedactor.RedactedValue, returnedClient.Password);
             Assert.True(returnedClient.Settings.TryGetValue("apiKey", out var apiKey));
-            Assert.Equal("very-secret-api-key", apiKey?.ToString());
+            Assert.Equal(ApiResponseRedactor.RedactedValue, apiKey?.ToString());
 
             downloadClientGateway.Verify(
                 x => x.TestConnectionAsync(It.Is<DownloadClientConfiguration>(c =>
                     c.Host == "192.168.1.50" && c.Port == 6789)),
                 Times.Once);
             configurationService.VerifyNoOtherCalls();
+        }
+
+        [Fact]
+        public async Task SaveDownloadClientConfiguration_RedactedApiKey_PreservesStoredCredential()
+        {
+            var existing = new DownloadClientConfiguration
+            {
+                Id = "client-3",
+                Type = "sabnzbd",
+                Settings = new Dictionary<string, object> { ["apiKey"] = "stored-secret" }
+            };
+            DownloadClientConfiguration? saved = null;
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync("client-3"))
+                .ReturnsAsync(existing);
+            configurationService.Setup(service =>
+                    service.SaveDownloadClientConfigurationAsync(It.IsAny<DownloadClientConfiguration>()))
+                .Callback<DownloadClientConfiguration>(configuration => saved = configuration)
+                .ReturnsAsync("client-3");
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                Mock.Of<IDownloadClientGateway>(),
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            };
+
+            var result = await controller.SaveDownloadClientConfiguration(new DownloadClientConfiguration
+            {
+                Id = "client-3",
+                Type = "sabnzbd",
+                Settings = new Dictionary<string, object> { ["apiKey"] = ApiResponseRedactor.RedactedValue }
+            });
+
+            Assert.IsType<OkObjectResult>(result.Result);
+            Assert.NotNull(saved);
+            Assert.Equal("stored-secret", saved!.Settings["apiKey"].ToString());
+            configurationService.VerifyAll();
+        }
+
+        [Fact]
+        public async Task TestDownloadClientConfiguration_RedactedApiKey_UsesStoredCredentialAndRedactsResponse()
+        {
+            var existing = new DownloadClientConfiguration
+            {
+                Id = "client-4",
+                Type = "sabnzbd",
+                Settings = new Dictionary<string, object> { ["apiKey"] = "stored-secret" }
+            };
+            DownloadClientConfiguration? tested = null;
+            var configurationService = new Mock<IConfigurationService>(MockBehavior.Strict);
+            configurationService.Setup(service => service.GetDownloadClientConfigurationAsync("client-4"))
+                .ReturnsAsync(existing);
+            var gateway = new Mock<IDownloadClientGateway>(MockBehavior.Strict);
+            gateway.Setup(service => service.TestConnectionAsync(It.IsAny<DownloadClientConfiguration>()))
+                .Callback<DownloadClientConfiguration, CancellationToken>((configuration, _) => tested = configuration)
+                .ReturnsAsync((true, "Connection successful"));
+            var controller = new DownloadClientController(
+                configurationService.Object,
+                gateway.Object,
+                NullLogger<DownloadClientController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = await controller.TestDownloadClientConfiguration(new DownloadClientConfiguration
+            {
+                Id = "client-4",
+                Type = "sabnzbd",
+                Settings = new Dictionary<string, object> { ["apiKey"] = ApiResponseRedactor.RedactedValue }
+            });
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            Assert.NotNull(tested);
+            Assert.Equal("stored-secret", tested!.Settings["apiKey"].ToString());
+            var returnedClient = Assert.IsType<DownloadClientConfiguration>(
+                ok.Value!.GetType().GetProperty("client")!.GetValue(ok.Value));
+            Assert.Equal(ApiResponseRedactor.RedactedValue, returnedClient.Settings["apiKey"].ToString());
+            configurationService.VerifyAll();
+            gateway.VerifyAll();
         }
 
         [Fact]

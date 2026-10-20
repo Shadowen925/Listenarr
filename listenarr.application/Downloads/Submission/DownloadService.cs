@@ -17,6 +17,7 @@
  */
 
 using Listenarr.Application.Common;
+using Listenarr.Application.Search.Matching;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Application.Downloads.Submission
@@ -148,6 +149,9 @@ namespace Listenarr.Application.Downloads.Submission
             // by the background/manual 'search-and-download' endpoint), so set isAutomaticSearch
             // to true to ensure only indexers are queried (no Amazon/Audible scraping).
             var searchResults = await searchService.SearchAsync(searchQuery, isAutomaticSearch: true);
+            searchResults = searchResults?
+                .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
+                .ToList() ?? [];
 
             if (searchResults == null || !searchResults.Any())
             {

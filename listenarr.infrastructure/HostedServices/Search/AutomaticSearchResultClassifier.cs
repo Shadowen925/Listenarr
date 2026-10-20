@@ -23,18 +23,36 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
         public string BuildSearchQuery(Audiobook audiobook)
         {
-            var parts = new List<string>();
+            return BuildSearchQueries(audiobook).FirstOrDefault() ?? string.Empty;
+        }
 
-            if (!string.IsNullOrEmpty(audiobook.Title))
-                parts.Add(audiobook.Title);
+        public IReadOnlyList<string> BuildSearchQueries(Audiobook audiobook)
+        {
+            var title = audiobook.Title?.Trim();
+            var author = audiobook.Authors?.FirstOrDefault()?.Trim();
+            var primaryMembership = audiobook.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)
+                ?? audiobook.SeriesMemberships?.FirstOrDefault();
+            var series = (audiobook.Series ?? primaryMembership?.SeriesName)?.Trim();
+            var seriesNumber = (audiobook.SeriesNumber ?? primaryMembership?.SeriesNumber)?.Trim();
+            var queries = new List<string>();
 
-            if (audiobook.Authors != null && audiobook.Authors.Any())
-                parts.Add(audiobook.Authors.First());
+            AddQuery(queries, title, author, series);
+            AddQuery(queries, title, author);
+            AddQuery(queries, series, seriesNumber, author);
+            AddQuery(queries, title, series);
+            AddQuery(queries, audiobook.Asin);
 
-            if (!string.IsNullOrEmpty(audiobook.Series))
-                parts.Add(audiobook.Series);
+            return queries;
+        }
 
-            return string.Join(" ", parts);
+        private static void AddQuery(List<string> queries, params string?[] parts)
+        {
+            var query = string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+            if (!string.IsNullOrWhiteSpace(query)
+                && !queries.Contains(query, StringComparer.OrdinalIgnoreCase))
+            {
+                queries.Add(query);
+            }
         }
 
         public bool IsTorrentResult(SearchResult result)

@@ -21,17 +21,19 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
         public async Task<List<DownloadClientItem>> GetItemsAsync(DownloadClientConfiguration client, CancellationToken ct = default)
         {
             var items = new List<DownloadClientItem>();
-            if (client == null) return items;
+            ArgumentNullException.ThrowIfNull(client);
 
             var configuredCategory = DownloadClientCategoryFilter.GetConfiguredCategory(client);
+            IEnumerable<string?> sensitiveValues = [];
 
             try
             {
                 var requestContext = requestBuilder.CreateContext(client);
+                sensitiveValues = requestBuilder.BuildSensitiveValues(requestContext);
                 if (!requestContext.HasApiKey)
                 {
-                    logger.LogWarning("SABnzbd API key not configured for client {ClientName}", LogRedaction.SanitizeText(client.Name));
-                    return items;
+                    throw new DownloadClientAdapterPollingException(
+                        $"SABnzbd API key is not configured for client {LogRedaction.SanitizeText(client.Name ?? client.Id)}.");
                 }
 
                 var requestUrl = requestBuilder.BuildUrl(requestContext, new Dictionary<string, string>
@@ -40,23 +42,29 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                     ["output"] = "json"
                 });
                 var http = httpFactory.CreateClient(clientType);
-                var response = await http.GetAsync(requestUrl, ct);
+                using var response = await http.GetAsync(requestUrl, ct);
                 if (!response.IsSuccessStatusCode)
                 {
-                    logger.LogWarning("SABnzbd queue request failed with status {Status}", response.StatusCode);
-                    return items;
+                    throw new DownloadClientAdapterPollingException(
+                        SabnzbdRequestBuilder.DescribeHttpFailure(
+                            response.StatusCode,
+                            "queue API",
+                            client.Name ?? client.Id));
                 }
 
                 var jsonContent = await response.Content.ReadAsStringAsync(ct);
                 if (string.IsNullOrWhiteSpace(jsonContent))
                 {
-                    logger.LogWarning("SABnzbd returned empty response for client {ClientName}", LogRedaction.SanitizeText(client.Name));
-                    return items;
+                    throw new DownloadClientAdapterPollingException("SABnzbd returned an empty queue response.");
                 }
 
-                var doc = JsonDocument.Parse(jsonContent);
-                if (!doc.RootElement.TryGetProperty("queue", out var queue)) return items;
-                if (!queue.TryGetProperty("slots", out var slots) || slots.ValueKind != JsonValueKind.Array) return items;
+                using var doc = JsonDocument.Parse(jsonContent);
+                if (!doc.RootElement.TryGetProperty("queue", out var queue)
+                    || !queue.TryGetProperty("slots", out var slots)
+                    || slots.ValueKind != JsonValueKind.Array)
+                {
+                    throw new DownloadClientAdapterPollingException("SABnzbd returned an invalid queue response.");
+                }
 
                 var queueSpeed = 0.0;
                 if (queue.TryGetProperty("speed", out var speedProp))
@@ -77,14 +85,24 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
                     {
-                        logger.LogError(ex, "Error parsing SABnzbd queue item");
+                        logger.LogError(
+                            "Error parsing SABnzbd queue item ({Failure})",
+                            LogRedaction.RedactText(ex.ToString(), sensitiveValues));
                     }
                 }
                 logger.LogInformation("Retrieved {Count} items from SABnzbd queue", items.Count);
             }
+            catch (DownloadClientAdapterPollingException)
+            {
+                throw;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                logger.LogError(ex, "Error getting SABnzbd items");
+                logger.LogError(
+                    "Error getting SABnzbd items ({Failure})",
+                    LogRedaction.RedactText(ex.ToString(), sensitiveValues));
+                throw new DownloadClientAdapterPollingException(
+                    "SABnzbd queue item retrieval failed due to a network or response error.");
             }
 
             return items;

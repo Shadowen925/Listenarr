@@ -53,11 +53,29 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
         }
 
         public List<string> BuildSensitiveValues(SabnzbdRequestContext context, string? indexerApiKey = null)
+            => BuildSensitiveValues(context.ApiKey, indexerApiKey);
+
+        public List<string> BuildSensitiveValues(DownloadClientConfiguration client, string? indexerApiKey = null)
         {
-            var sensitiveValues = LogRedaction.GetSensitiveValuesFromEnvironment().Concat(new[] { context.ApiKey }).ToList();
+            ArgumentNullException.ThrowIfNull(client);
+            var apiKey = client.Settings != null && client.Settings.TryGetValue("apiKey", out var apiKeyObject)
+                ? apiKeyObject?.ToString() ?? string.Empty
+                : string.Empty;
+            return BuildSensitiveValues(apiKey, indexerApiKey);
+        }
+
+        private static List<string> BuildSensitiveValues(string apiKey, string? indexerApiKey)
+        {
+            var sensitiveValues = LogRedaction.GetSensitiveValuesFromEnvironment().Concat(new[] { apiKey }).ToList();
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                sensitiveValues.Add(Uri.EscapeDataString(apiKey));
+            }
+
             if (!string.IsNullOrEmpty(indexerApiKey))
             {
                 sensitiveValues.Add(indexerApiKey);
+                sensitiveValues.Add(Uri.EscapeDataString(indexerApiKey));
             }
 
             return sensitiveValues;

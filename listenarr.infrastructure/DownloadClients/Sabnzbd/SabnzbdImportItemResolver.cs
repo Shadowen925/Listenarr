@@ -92,13 +92,15 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
             string nzoId,
             CancellationToken ct)
         {
+            IEnumerable<string?> sensitiveValues = [];
             try
             {
                 var requestContext = requestBuilder.CreateContext(client);
+                sensitiveValues = requestBuilder.BuildSensitiveValues(requestContext);
                 if (!requestContext.HasApiKey)
                 {
-                    logger.LogWarning("SABnzbd API key not configured for client {ClientId}", client.Id);
-                    return null;
+                    throw new DownloadClientAdapterPollingException(
+                        $"SABnzbd API key is not configured for client {LogRedaction.SanitizeText(client.Name ?? client.Id)}.");
                 }
 
                 var historyUrl = requestBuilder.BuildUrl(requestContext, new Dictionary<string, string>
@@ -107,27 +109,29 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                     ["output"] = "json"
                 });
                 var http = httpFactory.CreateClient(clientType);
-                var historyResp = await http.GetAsync(historyUrl, ct);
+                using var historyResp = await http.GetAsync(historyUrl, ct);
 
                 if (!historyResp.IsSuccessStatusCode)
                 {
-                    logger.LogWarning("Failed to query SABnzbd history for download {NzoId}", nzoId);
-                    return null;
+                    throw new DownloadClientAdapterPollingException(
+                        SabnzbdRequestBuilder.DescribeHttpFailure(
+                            historyResp.StatusCode,
+                            "history API",
+                            client.Name ?? client.Id));
                 }
 
                 var historyText = await historyResp.Content.ReadAsStringAsync(ct);
                 if (string.IsNullOrWhiteSpace(historyText))
                 {
-                    return null;
+                    throw new DownloadClientAdapterPollingException("SABnzbd returned an empty history response.");
                 }
 
-                var doc = JsonDocument.Parse(historyText);
+                using var doc = JsonDocument.Parse(historyText);
                 if (!doc.RootElement.TryGetProperty("history", out var history) ||
                     !history.TryGetProperty("slots", out var slots) ||
                     slots.ValueKind != JsonValueKind.Array)
                 {
-                    logger.LogWarning("Invalid SABnzbd history response format");
-                    return null;
+                    throw new DownloadClientAdapterPollingException("SABnzbd returned an invalid history response.");
                 }
 
                 foreach (var slot in slots.EnumerateArray())
@@ -148,10 +152,18 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 logger.LogWarning("Download {NzoId} not found in SABnzbd history", nzoId);
                 return null;
             }
+            catch (DownloadClientAdapterPollingException)
+            {
+                throw;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                logger.LogWarning(ex, "Error resolving import item for SABnzbd download {NzoId}", nzoId);
-                return null;
+                logger.LogWarning(
+                    "Error resolving import item for SABnzbd download {NzoId}: {Failure}",
+                    LogRedaction.SanitizeText(nzoId),
+                    LogRedaction.RedactText(ex.ToString(), sensitiveValues));
+                throw new DownloadClientAdapterPollingException(
+                    "SABnzbd history could not be queried while resolving the import path.");
             }
         }
     }

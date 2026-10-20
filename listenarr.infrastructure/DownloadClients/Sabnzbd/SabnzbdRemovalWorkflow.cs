@@ -61,22 +61,23 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 if (deleteFiles)
                     queueRemoveUrl += "&del_files=1";
 
-                try
+                using (var queueResponse = await http.GetAsync(queueRemoveUrl, ct))
                 {
-                    var queueResponse = await http.GetAsync(queueRemoveUrl, ct);
-                    if (queueResponse.IsSuccessStatusCode)
+                    if (!queueResponse.IsSuccessStatusCode)
                     {
-                        var queueContent = await queueResponse.Content.ReadAsStringAsync(ct);
-                        var queueDoc = JsonDocument.Parse(queueContent);
-                        if (queueDoc.RootElement.TryGetProperty("status", out var queueStatus))
-                        {
-                            removedFromQueue = queueStatus.GetBoolean();
-                        }
+                        throw new HttpRequestException(
+                            SabnzbdRequestBuilder.DescribeHttpFailure(queueResponse.StatusCode, "queue removal", client.Name ?? client.Id),
+                            null,
+                            queueResponse.StatusCode);
                     }
-                }
-                catch (Exception queueEx) when (queueEx is not OperationCanceledException && queueEx is not OutOfMemoryException && queueEx is not StackOverflowException)
-                {
-                    _logger.LogDebug(queueEx, "Could not remove {DownloadId} from SABnzbd queue (may not be in queue)", id);
+
+                    using var queueDoc = JsonDocument.Parse(await queueResponse.Content.ReadAsStringAsync(ct));
+                    if (!queueDoc.RootElement.TryGetProperty("status", out var queueStatus)
+                        || queueStatus.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        throw new InvalidDataException("SABnzbd returned an invalid queue removal response.");
+                    }
+                    removedFromQueue = queueStatus.GetBoolean();
                 }
 
                 // Try to remove from history (for completed downloads)
@@ -90,22 +91,23 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
                 if (deleteFiles)
                     historyRemoveUrl += "&del_files=1";
 
-                try
+                using (var historyResponse = await http.GetAsync(historyRemoveUrl, ct))
                 {
-                    var historyResponse = await http.GetAsync(historyRemoveUrl, ct);
-                    if (historyResponse.IsSuccessStatusCode)
+                    if (!historyResponse.IsSuccessStatusCode)
                     {
-                        var historyContent = await historyResponse.Content.ReadAsStringAsync(ct);
-                        var historyDoc = JsonDocument.Parse(historyContent);
-                        if (historyDoc.RootElement.TryGetProperty("status", out var historyStatus))
-                        {
-                            removedFromHistory = historyStatus.GetBoolean();
-                        }
+                        throw new HttpRequestException(
+                            SabnzbdRequestBuilder.DescribeHttpFailure(historyResponse.StatusCode, "history removal", client.Name ?? client.Id),
+                            null,
+                            historyResponse.StatusCode);
                     }
-                }
-                catch (Exception historyEx) when (historyEx is not OperationCanceledException && historyEx is not OutOfMemoryException && historyEx is not StackOverflowException)
-                {
-                    _logger.LogDebug(historyEx, "Could not remove {DownloadId} from SABnzbd history (may not be in history)", id);
+
+                    using var historyDoc = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync(ct));
+                    if (!historyDoc.RootElement.TryGetProperty("status", out var historyStatus)
+                        || historyStatus.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        throw new InvalidDataException("SABnzbd returned an invalid history removal response.");
+                    }
+                    removedFromHistory = historyStatus.GetBoolean();
                 }
 
                 var success = removedFromQueue || removedFromHistory;
@@ -123,8 +125,11 @@ namespace Listenarr.Infrastructure.DownloadClients.Sabnzbd
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error removing from SABnzbd: {DownloadId}", LogRedaction.SanitizeText(id));
-                return false;
+                _logger.LogError(
+                    "Error removing from SABnzbd: {DownloadId} ({Failure})",
+                    LogRedaction.SanitizeText(id),
+                    LogRedaction.RedactText(ex.ToString(), _requestBuilder.BuildSensitiveValues(client)));
+                throw;
             }
         }
     }

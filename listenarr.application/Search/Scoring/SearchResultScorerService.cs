@@ -140,13 +140,13 @@ public class SearchResultScorerService
             if (string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(query))
                 return 0.0;
 
-            var queryTokens = TokenizeAndNormalize(query);
-            if (!queryTokens.Any())
+            var queryTokens = new HashSet<string>(TokenizeAndNormalize(query), StringComparer.OrdinalIgnoreCase);
+            var artistTokens = new HashSet<string>(TokenizeAndNormalize(artist), StringComparer.OrdinalIgnoreCase);
+            if (artistTokens.Count == 0 || queryTokens.Count == 0)
                 return 0.0;
 
-            var artistTokens = new HashSet<string>(TokenizeAndNormalize(artist), StringComparer.OrdinalIgnoreCase);
-            int matchedAuthor = queryTokens.Count(qt => artistTokens.Contains(qt));
-            return Math.Min(1.0, (double)matchedAuthor / queryTokens.Count);
+            var matchedAuthorTokens = artistTokens.Count(queryTokens.Contains);
+            return (double)matchedAuthorTokens / artistTokens.Count;
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
@@ -202,4 +202,3 @@ public record ScoredSearchResult(
     double ContainmentScore,
     double FuzzyScore,
     string DropReason);
-

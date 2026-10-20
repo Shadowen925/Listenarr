@@ -77,6 +77,37 @@ describe('DownloadClientFormModal', () => {
     expect(apiKeyComponent.exists()).toBe(true)
   })
 
+  it('does not treat a redacted saved SABnzbd key as an editable credential', async () => {
+    const wrapper = mount(DownloadClientFormModal, {
+      global: { plugins: [createPinia()] },
+      props: { visible: true, editingClient: null },
+    })
+
+    await wrapper.setProps({
+      editingClient: {
+        id: 'saved-sab',
+        name: 'sab',
+        type: 'sabnzbd',
+        host: 'sab.local',
+        port: 8080,
+        isEnabled: true,
+        useSSL: false,
+        downloadPath: '',
+        username: '',
+        password: '',
+        settings: { apiKey: 'REDACTED' },
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    const apiKeyComponent = wrapper.findComponent({ name: 'PasswordInput' })
+    expect(apiKeyComponent.exists()).toBe(true)
+    expect(apiKeyComponent.props('modelValue')).toBe('')
+    const apiKeyInput = wrapper.find('#apiKey')
+    expect(apiKeyInput.attributes('required')).toBeUndefined()
+    expect(apiKeyInput.attributes('placeholder')).toContain('leave blank to keep it')
+  })
+
   it('test button on modal uses current input values and includes ID for existing client fallback', async () => {
     const api = await import('@/services/api')
     ;(api.testDownloadClient as unknown) = vi.fn(async (config: unknown) => ({

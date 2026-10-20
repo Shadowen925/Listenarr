@@ -98,6 +98,8 @@ public class InternetArchiveSearchProvider : IIndexerSearchProvider
             var applicationSettings = await _configurationService.GetApplicationSettingsAsync();
             var processedIdentifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var searchResults = new List<IndexerSearchResult>();
+            var successfulQueries = 0;
+            var failedQueries = 0;
 
             var queryIndex = 0;
             foreach (var searchQuery in queryPlan.Queries)
@@ -115,23 +117,52 @@ public class InternetArchiveSearchProvider : IIndexerSearchProvider
                     queryIndex,
                     queryPlan.Queries.Count);
 
-                using var response = await _httpClient.GetAsync(searchUrl);
-                if (!response.IsSuccessStatusCode)
+                HttpResponseMessage response;
+                try
                 {
-                    _logger.LogWarning("Internet Archive returned status {Status}", response.StatusCode);
+                    response = await _httpClient.GetAsync(searchUrl);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException && ex is not StackOverflowException)
+                {
+                    failedQueries++;
+                    _logger.LogWarning(
+                        "Internet Archive query variant {QueryIndex} failed ({FailureType})",
+                        queryIndex,
+                        ex.GetType().Name);
                     continue;
                 }
 
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                _logger.LogDebug("Internet Archive response length: {Length}", jsonResponse.Length);
+                using (response)
+                {
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        failedQueries++;
+                        _logger.LogWarning("Internet Archive returned status {Status}", response.StatusCode);
+                        continue;
+                    }
 
-                var queryResults = await ParseInternetArchiveSearchResponse(
-                    jsonResponse,
-                    indexer,
-                    applicationSettings.ExtractArchives,
-                    processedIdentifiers,
-                    MaxItemsToProcess - processedIdentifiers.Count);
-                searchResults.AddRange(queryResults);
+                    successfulQueries++;
+                    var jsonResponse = await response.Content.ReadAsStringAsync();
+                    _logger.LogDebug("Internet Archive response length: {Length}", jsonResponse.Length);
+
+                    var queryResults = await ParseInternetArchiveSearchResponse(
+                        jsonResponse,
+                        indexer,
+                        applicationSettings.ExtractArchives,
+                        processedIdentifiers,
+                        MaxItemsToProcess - processedIdentifiers.Count);
+                    searchResults.AddRange(queryResults);
+                }
+            }
+
+            if (successfulQueries == 0 && failedQueries > 0)
+            {
+                throw new HttpRequestException(
+                    $"Internet Archive search failed for all {failedQueries} query variant(s).");
             }
 
             _logger.LogInformation("Internet Archive returned {Count} results", searchResults.Count);
@@ -139,8 +170,11 @@ public class InternetArchiveSearchProvider : IIndexerSearchProvider
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
         {
-            _logger.LogError(ex, "Error searching Internet Archive indexer {Name}", indexer.Name);
-            return new List<IndexerSearchResult>();
+            _logger.LogError(
+                "Error searching Internet Archive indexer {Name} ({FailureType})",
+                indexer.Name,
+                ex.GetType().Name);
+            throw;
         }
     }
 

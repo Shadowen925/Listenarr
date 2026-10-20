@@ -49,19 +49,48 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
             var apiMock = _provider.GetRequiredService<SabnzbdApiMock>();
 
             var downloadClientGateway = _provider.GetRequiredService<IDownloadClientGateway>();
+            apiMock.ResetRequestHistory();
             var (success, message) = await downloadClientGateway.TestConnectionAsync(_client);
 
             Assert.True(success);
-            Assert.Contains("connected", message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Version API: Success", message, StringComparison.Ordinal);
+            Assert.Contains("Queue API: Success", message, StringComparison.Ordinal);
+            Assert.Contains("History API: Success", message, StringComparison.Ordinal);
 
-            var capturedUri = apiMock.GetLastRequest().RequestUri;
-            Assert.NotNull(capturedUri);
-            Assert.Equal("http", capturedUri!.Scheme);
-            Assert.Equal("192.168.50.111", capturedUri.Host);
-            Assert.Equal(8080, capturedUri.Port);
-            Assert.Equal("/api", capturedUri.AbsolutePath);
-            Assert.Contains("mode=version", capturedUri.Query, StringComparison.Ordinal);
-            Assert.Contains("output=json", capturedUri.Query, StringComparison.Ordinal);
+            Assert.Contains(apiMock.RequestHistory, request =>
+                request.RequestUri?.Query.Contains("mode=version", StringComparison.Ordinal) == true);
+            Assert.Contains(apiMock.RequestHistory, request =>
+                request.RequestUri?.Query.Contains("mode=queue", StringComparison.Ordinal) == true);
+            Assert.Contains(apiMock.RequestHistory, request =>
+                request.RequestUri?.Query.Contains("mode=history", StringComparison.Ordinal) == true);
+            Assert.All(apiMock.RequestHistory, request =>
+            {
+                var capturedUri = request.RequestUri;
+                Assert.NotNull(capturedUri);
+                Assert.Equal("http", capturedUri!.Scheme);
+                Assert.Equal("192.168.50.111", capturedUri.Host);
+                Assert.Equal(8080, capturedUri.Port);
+                Assert.Equal("/api", capturedUri.AbsolutePath);
+                Assert.Contains("output=json", capturedUri.Query, StringComparison.Ordinal);
+            });
+        }
+
+        [Fact]
+        public async Task TestConnectionAsync_QueueForbidden_ReportsEndpointFailureAndStillChecksHistory()
+        {
+            sabnzbdApiMock.QueueStatusCode = HttpStatusCode.Forbidden;
+            sabnzbdApiMock.ResetRequestHistory();
+            var adapter = MockUtils.CreateSabnzbdAdapter(_provider);
+
+            var (success, message) = await adapter.TestConnectionAsync(_client);
+
+            Assert.False(success);
+            Assert.Contains("Version API: Success", message, StringComparison.Ordinal);
+            Assert.Contains("Queue API:", message, StringComparison.Ordinal);
+            Assert.Contains("HTTP 403", message, StringComparison.Ordinal);
+            Assert.Contains("host restrictions", message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("History API: Success", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("secret", message, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -238,6 +267,44 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
         }
 
         [Fact]
+        public async Task GetRecentHistoryAsync_Forbidden_ThrowsInsteadOfReturningEmptyHistory()
+        {
+            sabnzbdApiMock.HistoryStatusCode = HttpStatusCode.Forbidden;
+            var adapter = MockUtils.CreateSabnzbdAdapter(_provider);
+
+            var exception = await Assert.ThrowsAsync<DownloadClientAdapterPollingException>(
+                () => adapter.GetRecentHistoryAsync(_client));
+
+            Assert.Contains("HTTP 403", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("host restrictions", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secret", exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task GetRecentHistoryAsync_ValidEmptyHistory_ReturnsEmptyCollection()
+        {
+            sabnzbdApiMock.HistoryResponseOverride = """{"history":{"slots":[]}}""";
+            var adapter = MockUtils.CreateSabnzbdAdapter(_provider);
+
+            var history = await adapter.GetRecentHistoryAsync(_client);
+
+            Assert.Empty(history);
+        }
+
+        [Fact]
+        public async Task GetQueueAsync_DisplaySnapshotForbidden_ThrowsInsteadOfReturningEmptyQueue()
+        {
+            sabnzbdApiMock.QueueStatusCode = HttpStatusCode.Forbidden;
+            var adapter = MockUtils.CreateSabnzbdAdapter(_provider);
+
+            var exception = await Assert.ThrowsAsync<DownloadClientAdapterPollingException>(
+                () => adapter.GetQueueAsync(_client));
+
+            Assert.Contains("HTTP 403", exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("secret", exception.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task GetQueueAsync_WithTrackedIds_UsesMonitorHistoryLimit()
         {
             sabnzbdApiMock.ResetRequestHistory();
@@ -359,6 +426,20 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
                 Assert.Contains("value=SABnzbd_nzo_remove", uri.Query, StringComparison.Ordinal);
                 Assert.Equal(expectDeleteFilesParameter, uri.Query.Contains("del_files=1", StringComparison.Ordinal));
             });
+        }
+
+        [Fact]
+        public async Task RemoveAsync_Forbidden_ReportsSABnzbdAccessFailure()
+        {
+            sabnzbdApiMock.QueueStatusCode = HttpStatusCode.Forbidden;
+            var gateway = _provider.GetRequiredService<IDownloadClientGateway>();
+
+            var exception = await Assert.ThrowsAsync<HttpRequestException>(
+                () => gateway.RemoveAsync(_client, "SABnzbd_nzo_remove"));
+
+            Assert.Contains("HTTP 403", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("host restrictions", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secret", exception.Message, StringComparison.Ordinal);
         }
 
         [Fact]

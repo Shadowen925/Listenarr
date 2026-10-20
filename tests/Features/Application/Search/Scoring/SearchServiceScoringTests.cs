@@ -116,5 +116,21 @@ namespace Listenarr.Tests.Features.Application.Search.Scoring
 
             Assert.True(usenetScore > torrentScore, $"Expected Usenet ({usenetScore}) to score higher than low-seed torrent ({torrentScore})");
         }
+
+        [Fact]
+        public void AuthorScore_IsNotDilutedBySeriesTokensInTheQuery()
+        {
+            var scorer = new SearchResultScorerService(NullLogger<SearchResultScorerService>.Instance);
+            var result = new SearchResult { Title = "Breathless", Artist = "Cat Wynn" };
+
+            var focusedQueryScore = scorer.ScoreResult(result, "Breathless Cat Wynn", 0, 0).Score;
+            var expandedQueryScore = scorer.ScoreResult(
+                result,
+                "Breathless Cat Wynn Mystic Seekers",
+                0,
+                0).Score;
+
+            Assert.Equal(focusedQueryScore, expandedQueryScore);
+        }
     }
 }

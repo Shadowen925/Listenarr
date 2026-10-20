@@ -56,7 +56,7 @@ namespace Listenarr.Infrastructure.Search.Providers.MyAnonamouse
                 if (string.IsNullOrEmpty(mamId))
                 {
                     _logger.LogWarning("MyAnonamouse indexer {Name} missing mam_id", indexer.Name);
-                    return new List<IndexerSearchResult>();
+                    throw new InvalidOperationException("MyAnonamouse indexer is missing its mam_id configuration.");
                 }
 
                 var searchUri = MyAnonamouseRequestFactory.BuildSearchUri(indexer, query, request);
@@ -82,9 +82,10 @@ namespace Listenarr.Infrastructure.Search.Providers.MyAnonamouse
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("MyAnonamouse returned status {Status}", response.StatusCode);
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning("MyAnonamouse error response: {Content}", LogRedaction.RedactText(errorContent, LogRedaction.GetSensitiveValuesFromEnvironment().Concat(new[] { indexer.ApiKey ?? string.Empty })));
-                    return new List<IndexerSearchResult>();
+                    throw new HttpRequestException(
+                        $"MyAnonamouse returned HTTP {(int)response.StatusCode}.",
+                        null,
+                        response.StatusCode);
                 }
 
                 // Capture and persist an updated mam_id cookie if the tracker provided one in Set-Cookie
@@ -109,7 +110,7 @@ namespace Listenarr.Infrastructure.Search.Providers.MyAnonamouse
                 }
 
                 var jsonResponse = await response.Content.ReadAsStringAsync();
-                _logger.LogDebug("MyAnonamouse raw response: {Response}", jsonResponse);
+                _logger.LogDebug("MyAnonamouse response length: {Length}", jsonResponse.Length);
                 var results = MyAnonamouseResponseParser.Parse(jsonResponse, indexer, _logger);
 
                 // Optional per-result enrichment: fetch individual item pages to populate missing fields
@@ -134,8 +135,11 @@ namespace Listenarr.Infrastructure.Search.Providers.MyAnonamouse
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error searching MyAnonamouse indexer {Name}", indexer.Name);
-                return new List<IndexerSearchResult>();
+                _logger.LogError(
+                    "Error searching MyAnonamouse indexer {Name} ({FailureType})",
+                    indexer.Name,
+                    ex.GetType().Name);
+                throw;
             }
         }
 

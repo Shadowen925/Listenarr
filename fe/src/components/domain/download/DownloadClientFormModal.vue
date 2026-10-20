@@ -139,15 +139,21 @@
           <!-- Authentication -->
           <FormSection title="Authentication" :icon="PhLock" v-if="requiresAuth">
             <div class="form-group" v-if="requiresApiKey">
-              <label for="apiKey">API Key *</label>
+              <label for="apiKey">API Key{{ editingClient ? '' : ' *' }}</label>
               <PasswordInput
                 id="apiKey"
                 v-model="formData.apiKey"
                 autocomplete="off"
-                placeholder="********"
-                required
+                :placeholder="
+                  editingClient ? 'Saved key retained; leave blank to keep it' : 'Enter API key'
+                "
+                :required="!editingClient"
                 class="admin-input"
               />
+              <small v-if="editingClient"
+                >The saved key is never returned to the form. Leave this blank to retain it, or
+                enter a replacement.</small
+              >
             </div>
 
             <div v-else>
@@ -676,7 +682,7 @@ watch(
         port: newClient.port,
         username: newClient.username || '',
         password: newClient.password || '',
-        apiKey: (settings?.apiKey as string) || '',
+        apiKey: settings?.apiKey === 'REDACTED' ? '' : (settings?.apiKey as string) || '',
         downloadPath: newClient.downloadPath,
         useSSL: newClient.useSSL,
         isEnabled: newClient.isEnabled,

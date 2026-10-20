@@ -21,6 +21,17 @@ namespace Listenarr.Tests.Features.Infrastructure.Search.Providers.InternetArchi
 public sealed class InternetArchiveSearchProviderTests : BaseTests
 {
     [Fact]
+    public async Task SearchAsync_AllQueryVariantsFail_ThrowsForAutomaticRetryDiagnostics()
+    {
+        // Given
+        var provider = CreateProvider(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        // When / Then
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => provider.SearchAsync(CreateIndexer(), "Alice"));
+    }
+
+    [Fact]
     public async Task SearchAsync_MultiTrackItem_ReturnsCompleteRepresentations()
     {
         // Given

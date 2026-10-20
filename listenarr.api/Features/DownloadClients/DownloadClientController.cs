@@ -52,9 +52,8 @@ namespace Listenarr.Api.Features.DownloadClients
             try
             {
                 var configs = await _configurationService.GetDownloadClientConfigurationsAsync();
-                var redactSecrets = HttpSecurityRequestUtils.ShouldRedactSecretsForCaller(HttpContext);
                 var response = configs
-                    .Select(c => redactSecrets ? ApiResponseRedactor.RedactDownloadClientConfiguration(c) : c)
+                    .Select(ApiResponseRedactor.RedactDownloadClientConfiguration)
                     .Select(ApiResponseRedactor.ToDownloadClientSummaryResponse)
                     .ToList();
 
@@ -85,9 +84,7 @@ namespace Listenarr.Api.Features.DownloadClients
                     return NotFound();
                 }
 
-                var responseConfig = HttpSecurityRequestUtils.ShouldRedactSecretsForCaller(HttpContext)
-                    ? ApiResponseRedactor.RedactDownloadClientConfiguration(config)
-                    : config;
+                var responseConfig = ApiResponseRedactor.RedactDownloadClientConfiguration(config);
                 var response = ApiResponseRedactor.ToDownloadClientDetailResponse(responseConfig);
 
                 return Ok(response);
@@ -128,39 +125,41 @@ namespace Listenarr.Api.Features.DownloadClients
                             config.Password = existing.Password;
                         }
 
-                        try
+                        if (existing.Settings != null)
                         {
-                            if (existing.Settings != null)
+                            var settings = config.Settings;
+                            var incomingApiKey = config.Settings != null
+                                && config.Settings.TryGetValue("apiKey", out var incomingApiKeyObj)
+                                    ? incomingApiKeyObj?.ToString()
+                                    : null;
+                            if (string.IsNullOrWhiteSpace(incomingApiKey)
+                                || string.Equals(
+                                    incomingApiKey,
+                                    ApiResponseRedactor.RedactedValue,
+                                    StringComparison.Ordinal))
                             {
-                                if (!config.Settings?.ContainsKey("apiKey") ?? true)
+                                if (existing.Settings.TryGetValue("apiKey", out var existingApiKeyObj))
                                 {
-                                    if (existing.Settings.TryGetValue("apiKey", out var existingApiKeyObj))
+                                    var existingApiKey = existingApiKeyObj?.ToString();
+                                    if (!string.IsNullOrWhiteSpace(existingApiKey))
                                     {
-                                        var existingApiKey = existingApiKeyObj?.ToString();
-                                        if (!string.IsNullOrWhiteSpace(existingApiKey))
-                                        {
-                                            config.Settings ??= new Dictionary<string, object>();
-                                            config.Settings["apiKey"] = existingApiKey;
-                                        }
-                                    }
-                                }
-                                else if (config.Settings != null && config.Settings.TryGetValue("apiKey", out var incomingApiKeyObj))
-                                {
-                                    var incomingApiKey = incomingApiKeyObj?.ToString();
-                                    if (string.IsNullOrWhiteSpace(incomingApiKey) && existing.Settings.TryGetValue("apiKey", out var exKey))
-                                    {
-                                        var existingApiKey = exKey?.ToString();
-                                        if (!string.IsNullOrWhiteSpace(existingApiKey))
-                                        {
-                                            config.Settings["apiKey"] = existingApiKey;
-                                        }
+                                        settings["apiKey"] = existingApiKey;
                                     }
                                 }
                             }
+                            config.Settings = settings;
                         }
-                        catch (Exception caughtEx) when (caughtEx is not OperationCanceledException && caughtEx is not OutOfMemoryException && caughtEx is not StackOverflowException)
+
+                        var savedSettings = config.Settings;
+                        if (savedSettings.TryGetValue("apiKey", out var apiKey)
+                            && string.Equals(
+                                apiKey?.ToString(),
+                                ApiResponseRedactor.RedactedValue,
+                                StringComparison.Ordinal)
+                            && existing.Settings?.ContainsKey("apiKey") != true)
                         {
-                            _logger.LogDebug(caughtEx, "Unable to preserve download client API key settings while saving configuration {Id}", config.Id);
+                            savedSettings.Remove("apiKey");
+                            config.Settings = savedSettings;
                         }
                     }
                 }
@@ -228,12 +227,27 @@ namespace Listenarr.Api.Features.DownloadClients
                         {
                             if (existing.Settings != null)
                             {
-                                config.Settings ??= new Dictionary<string, object>();
+                                var settings = config.Settings;
 
-                                foreach (var kvp in existing.Settings.Where(kvp => !config.Settings.ContainsKey(kvp.Key)))
+                                foreach (var kvp in existing.Settings.Where(kvp => !settings.ContainsKey(kvp.Key)))
                                 {
-                                    config.Settings[kvp.Key] = kvp.Value;
+                                    settings[kvp.Key] = kvp.Value;
                                 }
+                                if (settings.TryGetValue("apiKey", out var incomingApiKey)
+                                    && string.Equals(incomingApiKey?.ToString(), ApiResponseRedactor.RedactedValue, StringComparison.Ordinal)
+                                    && existing.Settings.TryGetValue("apiKey", out var storedApiKey))
+                                {
+                                    settings["apiKey"] = storedApiKey;
+                                }
+                                else if (settings.TryGetValue("apiKey", out incomingApiKey)
+                                    && string.Equals(
+                                        incomingApiKey?.ToString(),
+                                        ApiResponseRedactor.RedactedValue,
+                                        StringComparison.Ordinal))
+                                {
+                                    settings.Remove("apiKey");
+                                }
+                                config.Settings = settings;
                             }
                         }
                         catch (Exception caughtEx) when (caughtEx is not OperationCanceledException && caughtEx is not OutOfMemoryException && caughtEx is not StackOverflowException)
@@ -244,11 +258,7 @@ namespace Listenarr.Api.Features.DownloadClients
                 }
 
                 var (success, message) = await _downloadClientGateway.TestConnectionAsync(config);
-                var clientResponse = config;
-                if (HttpSecurityRequestUtils.ShouldRedactSecretsForCaller(HttpContext))
-                {
-                    clientResponse = ApiResponseRedactor.RedactDownloadClientConfiguration(clientResponse);
-                }
+                var clientResponse = ApiResponseRedactor.RedactDownloadClientConfiguration(config);
                 return Ok(new { success, message, client = clientResponse });
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
