@@ -253,9 +253,16 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                 var failedResults = results.Where(result => !result.Success).ToList();
                 if (failedResults.Count > 0)
                 {
-                    await FailImportAsync(job, downloadProcessingJobService, historyRepository, download, audiobook,
-                        correlationId, "Unable to import at least one file for the job (see the log entries)",
-                        cancellationToken, failedResults);
+                    await HandleFailedImportResultsAsync(
+                        scope.ServiceProvider,
+                        job,
+                        downloadProcessingJobService,
+                        historyRepository,
+                        download,
+                        audiobook,
+                        correlationId,
+                        failedResults,
+                        cancellationToken);
                     return;
                 }
 
@@ -276,6 +283,16 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                         outputProof.Error,
                         cancellationToken);
                     return;
+                }
+
+                if (job.TryGetJobDataString(
+                        "PostImportRecovery.State",
+                        out var recoveryState)
+                    && string.Equals(recoveryState, "Pending", StringComparison.Ordinal))
+                {
+                    job.JobData["PostImportRecovery.State"] = "Recovered";
+                    job.AddLogEntry(
+                        "The targeted library scan registered the published files; import will continue through normal verification and finalization.");
                 }
 
                 foreach (var result in results)

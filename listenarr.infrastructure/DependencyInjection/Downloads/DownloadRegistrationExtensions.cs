@@ -94,6 +94,7 @@ internal static class DownloadRegistrationExtensions
         services.AddScoped<IRemotePathMappingService, RemotePathMappingService>();
         services.AddScoped<IDownloadProcessingJobService, DownloadProcessingJobService>();
         services.AddScoped<IDirectDownloadImportSourceResolver, DirectDownloadImportSourceResolver>();
+        services.AddScoped<PostImportScanRecoveryService>();
         return services;
     }
 
