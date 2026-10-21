@@ -192,7 +192,16 @@ namespace Listenarr.Tests.Features.Application.Downloads.Submission
             // Download should be imported
             download = await _downloadRepository.GetByIdAsync(createdDownloadId);
             Assert.NotNull(download);
-            Assert.Equal(DownloadStatus.Moved, download.Status);
+            Assert.True(
+                download.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    download.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    createdDownloadId,
+                    job.Id,
+                    audiobook.Id));
 
             // Audiobook still exists
             audiobook = await _audiobookRepository.GetByIdAsync(audiobook.Id);

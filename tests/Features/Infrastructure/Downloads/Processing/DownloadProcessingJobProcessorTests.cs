@@ -161,7 +161,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
                 .WithPath(stalePath)
                 .Build());
 
-            await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
+            var job = await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
                 .WithDownload(download)
                 .Build());
 
@@ -172,7 +172,16 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             // Assert
             download = await _downloadRepository.GetByIdAsync(download.Id);
             Assert.NotNull(download);
-            Assert.Equal(DownloadStatus.Moved, download.Status);
+            Assert.True(
+                download.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    download.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
             Assert.Equal(1, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.GetQueueItemAsync)));
         }
 
@@ -364,7 +373,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
                 .WithPath(source)
                 .Build());
 
-            await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
+            var job = await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
                 .WithDownload(download)
                 .Build());
 
@@ -375,7 +384,16 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             // Assert
             download = await _downloadRepository.GetByIdAsync(download.Id);
             Assert.NotNull(download);
-            Assert.True(download.Status == DownloadStatus.Moved, $"Expected Moved, got {download.Status}");
+            Assert.True(
+                download.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    download.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
         }
 
         [Fact]
@@ -396,7 +414,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
                 .WithPath(source)
                 .Build());
 
-            await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
+            var job = await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
                 .WithDownload(download)
                 .Build());
 
@@ -478,7 +496,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
                 .WithPath(source)
                 .Build());
 
-            await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
+            var job = await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJobBuilder()
                 .WithDownload(download)
                 .Build());
 
@@ -489,7 +507,16 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             // Assert
             download = await _downloadRepository.GetByIdAsync(download.Id);
             Assert.NotNull(download);
-            Assert.True(download.Status == DownloadStatus.Moved, $"Expected Moved, got {download.Status}");
+            Assert.True(
+                download.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    download.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
         }
 
         [Fact]
@@ -616,7 +643,16 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             // Job is retried (and refailed)
             job = await _downloadProcessingJobRepository.GetByIdAsync(job.Id);
             Assert.NotNull(job);
-            Assert.Equal(ProcessingJobStatus.Completed, job.Status);
+            Assert.True(
+                job.Status == ProcessingJobStatus.Completed,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    job.Status != ProcessingJobStatus.Completed,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
 
             Assert.Equal(1, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.MarkItemAsImportedAsync)));
         }
@@ -663,7 +699,18 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
             await TestUtils.CancelJobRetryWait(_downloadProcessingJobRepository, job);
             await processor.ProcessQueueAsync(CancellationToken.None);
 
-            Assert.Equal(DownloadStatus.Moved, (await _downloadRepository.GetByIdAsync(download.Id))!.Status);
+            var finalizedDownload = await _downloadRepository.GetByIdAsync(download.Id);
+            Assert.NotNull(finalizedDownload);
+            Assert.True(
+                finalizedDownload.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    finalizedDownload.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
             Assert.Equal(1, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.GetQueueItemAsync)));
             Assert.Equal(2, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.MarkItemAsImportedAsync)));
         }

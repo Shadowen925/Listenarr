@@ -387,7 +387,16 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
             // Job should be Completed
             job = await downloadProcessingJobService.GetJobAsync(jobId);
             Assert.NotNull(job);
-            Assert.Equal(ProcessingJobStatus.Completed, job.Status);
+            Assert.True(
+                job.Status == ProcessingJobStatus.Completed,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    job.Status != ProcessingJobStatus.Completed,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    jobId,
+                    audiobook.Id));
 
             // Files should be imported
             var importedFiles = Directory.EnumerateFiles(outputDirectory, "*.*", SearchOption.AllDirectories)

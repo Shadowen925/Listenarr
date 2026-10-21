@@ -162,10 +162,28 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
             await downloadProcessingJobProcessor.ProcessQueueAsync(CancellationToken.None);
 
             job = await _downloadProcessingJobRepository.GetByIdAsync(job.Id);
-            Assert.Equal(ProcessingJobStatus.Completed, job.Status);
+            Assert.True(
+                job.Status == ProcessingJobStatus.Completed,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    job.Status != ProcessingJobStatus.Completed,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
 
             download = await _downloadRepository.GetByIdAsync(download.Id);
-            Assert.Equal(DownloadStatus.Moved, download.Status);
+            Assert.True(
+                download.Status == DownloadStatus.Moved,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    download.Status != DownloadStatus.Moved,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    job.Id,
+                    download.AudiobookId));
         }
 
         /// <summary>
@@ -404,7 +422,16 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Sabnzbd
             // Check job is completed
             job = await _downloadProcessingJobRepository.GetByIdAsync(jobId);
             Assert.NotNull(job);
-            Assert.Equal(ProcessingJobStatus.Completed, job.Status);
+            Assert.True(
+                job.Status == ProcessingJobStatus.Completed,
+                await ImportFinalizationFailureDiagnostics.DescribeIfFailedAsync(
+                    job.Status != ProcessingJobStatus.Completed,
+                    _provider,
+                    _downloadRepository,
+                    _downloadProcessingJobRepository,
+                    download.Id,
+                    jobId,
+                    download.AudiobookId));
         }
 
         [Theory]
