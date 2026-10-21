@@ -221,24 +221,33 @@ public partial class DownloadImportService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        var recoveryIdentity = expectedRegisteredPhysicalObjectIdentity;
+        int? recoveryAudiobookId = string.IsNullOrWhiteSpace(recoveryIdentity)
+            ? null
+            : audiobookId;
         if (publicationPlan.Mode == FilePublicationExecutionMode.Durable)
         {
-            var lease = publicationPlan.EffectiveAction == FileAction.HardlinkCopy
-                && !string.IsNullOrWhiteSpace(
-                    expectedRegisteredPhysicalObjectIdentity)
-                    ? await fileMover.PrepareActionForRegistrationAsync(
+            var expectedIdentity =
+                publicationPlan.EffectiveAction == FileAction.HardlinkCopy
+                    ? expectedRegisteredPhysicalObjectIdentity
+                    : null;
+            var lease = !string.IsNullOrWhiteSpace(recoveryIdentity)
+                ? await fileMover
+                    .PrepareActionForRegistrationWithRegisteredTargetRecoveryAsync(
                         publicationPlan.EffectiveAction,
                         source,
                         destination,
                         operationId,
-                        expectedRegisteredPhysicalObjectIdentity,
-                        expectedSourceProof)
-                    : await fileMover.PrepareActionForRegistrationAsync(
+                        expectedIdentity,
+                        expectedSourceProof,
+                        recoveryIdentity,
+                        recoveryAudiobookId!.Value)
+                : await fileMover.PrepareActionForRegistrationAsync(
                         publicationPlan.EffectiveAction,
                         source,
                         destination,
                         operationId,
-                        expectedRegisteredPhysicalObjectIdentity: null,
+                        expectedIdentity,
                         expectedSourceProof);
             return new FilePublicationPreparationResult(
                 lease == null

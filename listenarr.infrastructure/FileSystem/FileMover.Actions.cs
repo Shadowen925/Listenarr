@@ -62,6 +62,39 @@ public partial class FileMover
             companionAudiobookId: null);
     }
 
+    public Task<IAudiobookFileRegistrationLease?>
+        PrepareActionForRegistrationWithRegisteredTargetRecoveryAsync(
+            FileAction action,
+            string source,
+            string destination,
+            Guid operationId,
+            string? expectedRegisteredPhysicalObjectIdentity,
+            FilePublicationSourceProof expectedSourceProof,
+            string registeredDestinationRecoveryIdentity,
+            int registeredDestinationRecoveryAudiobookId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            registeredDestinationRecoveryIdentity);
+        if (registeredDestinationRecoveryAudiobookId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(registeredDestinationRecoveryAudiobookId));
+        }
+
+        expectedSourceProof.Validate();
+        return PrepareActionForRegistrationCoreAsync(
+            action,
+            source,
+            destination,
+            operationId,
+            expectedRegisteredPhysicalObjectIdentity,
+            expectedSourceProof,
+            isCompanionFile: false,
+            companionAudiobookId: null,
+            registeredDestinationRecoveryIdentity,
+            registeredDestinationRecoveryAudiobookId);
+    }
+
     private async Task<IAudiobookFileRegistrationLease?>
         PrepareActionForRegistrationCoreAsync(
             FileAction action,
@@ -71,7 +104,9 @@ public partial class FileMover
             string? expectedRegisteredPhysicalObjectIdentity,
             FilePublicationSourceProof? expectedSourceProof,
             bool isCompanionFile,
-            int? companionAudiobookId)
+            int? companionAudiobookId,
+            string? registeredDestinationRecoveryIdentity = null,
+            int? registeredDestinationRecoveryAudiobookId = null)
     {
         if (action is not (
                 FileAction.Move or
@@ -113,7 +148,9 @@ public partial class FileMover
             expectedRegisteredPhysicalObjectIdentity,
             expectedSourceProof,
             isCompanionFile,
-            companionAudiobookId);
+            companionAudiobookId,
+            registeredDestinationRecoveryIdentity,
+            registeredDestinationRecoveryAudiobookId);
         if (markerless.Handled)
         {
             return markerless.Lease;

@@ -220,6 +220,65 @@ public sealed class EfAudiobookFileRepositoryTests : BaseTests
     }
 
     [Fact]
+    public async Task PhysicalIdentityObservation_RoundTripsAsUtcAndRejectsUnknownKinds()
+    {
+        var fixedTimestamp = new DateTime(
+            2026,
+            2,
+            3,
+            4,
+            5,
+            6,
+            DateTimeKind.Utc);
+        var file = AudiobookFile.CreateUnresolved("/library/utc-observation.m4b");
+
+        file.ApplyPhysicalObjectIdentity("utc-generation", fixedTimestamp);
+        Assert.Equal(DateTimeKind.Utc, file.PhysicalIdentityObservedAtUtc!.Value.Kind);
+        Assert.Throws<ArgumentException>(() =>
+            file.ApplyPhysicalObjectIdentity(
+                "local-generation",
+                DateTime.SpecifyKind(fixedTimestamp, DateTimeKind.Local)));
+        Assert.Throws<ArgumentException>(() =>
+            file.ApplyPhysicalObjectIdentity(
+                "unspecified-generation",
+                DateTime.SpecifyKind(
+                    fixedTimestamp,
+                    DateTimeKind.Unspecified)));
+
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        int fileId;
+        await using (var context = new ListenArrDbContext(options))
+        {
+            await context.Database.EnsureCreatedAsync();
+            var audiobook = new Audiobook
+            {
+                Title = "UTC observation round trip",
+                BasePath = "/library"
+            };
+            file.Audiobook = audiobook;
+            context.AudiobookFiles.Add(file);
+            await context.SaveChangesAsync();
+            fileId = file.Id;
+            context.ChangeTracker.Clear();
+
+            var reloaded = await context.AudiobookFiles
+                .AsNoTracking()
+                .SingleAsync(candidate => candidate.Id == fileId);
+
+            Assert.Equal(
+                DateTimeKind.Utc,
+                reloaded.PhysicalIdentityObservedAtUtc!.Value.Kind);
+            Assert.Equal(
+                fixedTimestamp,
+                reloaded.PhysicalIdentityObservedAtUtc.Value);
+        }
+    }
+
+    [Fact]
     public async Task DeletePhysicalGenerationAsync_NullLegacyIdentity_DeletesOnlyExpectedRow()
     {
         var options = new DbContextOptionsBuilder<ListenArrDbContext>()

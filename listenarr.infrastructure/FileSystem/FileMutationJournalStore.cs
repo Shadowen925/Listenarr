@@ -17,6 +17,12 @@ internal sealed record FileMutationJournalClaim(
     int? AudiobookId = null,
     int? AudiobookFileId = null);
 
+internal static class FileMutationJournalRecoveryPolicy
+{
+    internal const string RegisteredTargetIdentityMismatch =
+        "The registration destination changed before content verification.";
+}
+
 internal interface IFileMutationJournalStore
 {
     Task<FileMutationJournal> GetOrCreateAsync(

@@ -395,11 +395,23 @@ public partial class FileMover
             && TargetMatchesMarkerlessJournal(targetEntry, journal);
         if (targetEntry == null || !targetMatchesJournal)
         {
+            if (targetEntry != null
+                && !string.IsNullOrWhiteSpace(
+                    journal.TargetPhysicalObjectIdentity)
+                && targetEntry.VisiblePathMatches())
+            {
+                FileMoverIdentityDiagnostics.LogTargetIdentityMismatch(
+                    _logger,
+                    journal,
+                    targetEntry);
+            }
+
             await MarkMarkerlessRegistrationNeedsAttentionAsync(
                 journal,
                 targetEntry == null
                     ? "The registration destination is missing before content verification."
-                    : "The registration destination changed before content verification.",
+                    : FileMutationJournalRecoveryPolicy
+                        .RegisteredTargetIdentityMismatch,
                 cancellationToken);
             return await _fileMutationJournalStore!.GetAsync(
                 journal.OperationId,

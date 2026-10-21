@@ -135,6 +135,21 @@ namespace Listenarr.Application.Downloads.Contracts
             FilePublicationSourceProof expectedSourceProof);
 
         /// <summary>
+        /// Recovers only a registration publication whose destination identity
+        /// mismatch is independently confirmed by existing audiobook-file ownership.
+        /// </summary>
+        Task<IAudiobookFileRegistrationLease?>
+            PrepareActionForRegistrationWithRegisteredTargetRecoveryAsync(
+                FileAction action,
+                string source,
+                string destination,
+                Guid operationId,
+                string? expectedRegisteredPhysicalObjectIdentity,
+                FilePublicationSourceProof expectedSourceProof,
+                string registeredDestinationRecoveryIdentity,
+                int registeredDestinationRecoveryAudiobookId);
+
+        /// <summary>
         /// Publishes through the explicitly selected durable or additive-only
         /// execution mode and reports the effective action and source disposition.
         /// </summary>

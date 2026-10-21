@@ -174,6 +174,15 @@ internal sealed partial class EfFileMutationJournalStore
         int? audiobookId,
         string? error)
     {
+        var registeredTargetRecovery =
+            journal.State == FileMutationJournalState.NeedsAttention
+            && journal.Error
+                == FileMutationJournalRecoveryPolicy.RegisteredTargetIdentityMismatch
+            && state == FileMutationJournalState.TargetIdentityPersisted
+            && !string.IsNullOrWhiteSpace(targetPhysicalObjectIdentity)
+            && audiobookId > 0
+            && (journal.AudiobookId == null
+                || journal.AudiobookId == audiobookId);
         if (journal.ProtocolVersion != FileMutationProtocol.Current)
         {
             throw new InvalidOperationException(
@@ -185,7 +194,8 @@ internal sealed partial class EfFileMutationJournalStore
                 "A file mutation whose owner metadata is reconciled is terminal and cannot be advanced.");
         }
         if (journal.State == FileMutationJournalState.NeedsAttention
-            && state != FileMutationJournalState.NeedsAttention)
+            && state != FileMutationJournalState.NeedsAttention
+            && !registeredTargetRecovery)
         {
             throw new InvalidOperationException(
                 "A file mutation requiring attention cannot resume automatically.");
@@ -204,12 +214,14 @@ internal sealed partial class EfFileMutationJournalStore
                 StringComparison.Ordinal);
         if (state != FileMutationJournalState.NeedsAttention
             && state < journal.State
-            && !stagedTargetPublished)
+            && !stagedTargetPublished
+            && !registeredTargetRecovery)
         {
             throw new InvalidOperationException(
                 "A file-mutation state transition would regress durable state.");
         }
         if (!stagedTargetIdentityRefreshed
+            && !registeredTargetRecovery
             && !string.IsNullOrWhiteSpace(journal.TargetPhysicalObjectIdentity)
             && !string.IsNullOrWhiteSpace(targetPhysicalObjectIdentity)
             && !string.Equals(
@@ -228,11 +240,13 @@ internal sealed partial class EfFileMutationJournalStore
                 "The file-mutation registration owner changed.");
         }
 
-        journal.TargetPhysicalObjectIdentity = stagedTargetIdentityRefreshed
-            ? targetPhysicalObjectIdentity
-            : journal.TargetPhysicalObjectIdentity ?? targetPhysicalObjectIdentity;
+        journal.TargetPhysicalObjectIdentity = registeredTargetRecovery
+            || stagedTargetIdentityRefreshed
+                ? targetPhysicalObjectIdentity
+                : journal.TargetPhysicalObjectIdentity ?? targetPhysicalObjectIdentity;
         journal.AudiobookId ??= audiobookId;
         if (state > journal.State
+            || registeredTargetRecovery
             || stagedTargetPublished
             || state == FileMutationJournalState.NeedsAttention)
         {

@@ -18,7 +18,9 @@ public partial class FileMover
             string? expectedRegisteredPhysicalObjectIdentity,
             FilePublicationSourceProof? expectedSourceProof,
             bool isCompanionFile,
-            int? companionAudiobookId)
+            int? companionAudiobookId,
+            string? registeredDestinationRecoveryIdentity = null,
+            int? registeredDestinationRecoveryAudiobookId = null)
     {
         if (_fileMutationJournalStore == null)
         {
@@ -151,9 +153,31 @@ public partial class FileMover
             }
         }
 
+        if (string.IsNullOrWhiteSpace(registeredDestinationRecoveryIdentity)
+            != !registeredDestinationRecoveryAudiobookId.HasValue
+            || registeredDestinationRecoveryAudiobookId is <= 0)
+        {
+            throw new ArgumentException(
+                "Registered destination recovery requires both a durable file identity and audiobook ID.");
+        }
+
         if (journal.State == FileMutationJournalState.NeedsAttention)
         {
-            return new MarkerlessRegistrationPreparation(true, null);
+            if (!await TryRecoverRegisteredDestinationAsync(
+                    gate,
+                    journal,
+                    registeredDestinationRecoveryIdentity,
+                    registeredDestinationRecoveryAudiobookId,
+                    cancellationToken))
+            {
+                return new MarkerlessRegistrationPreparation(true, null);
+            }
+
+            journal = await _fileMutationJournalStore.GetAsync(
+                operationId,
+                cancellationToken)
+                ?? throw new InvalidOperationException(
+                    "The markerless registration journal disappeared after registered-target recovery.");
         }
 
         if (action != FileAction.Move)
@@ -400,6 +424,7 @@ public partial class FileMover
         string reason,
         CancellationToken cancellationToken)
     {
+        var journalState = journal.State;
         _ = await _fileMutationJournalStore!.AdvanceAsync(
             journal.OperationId,
             FileMutationJournalState.NeedsAttention,
@@ -408,8 +433,13 @@ public partial class FileMover
             reason,
             cancellationToken);
         _logger.LogWarning(
-            "Markerless registration publication {OperationId} requires attention: {Reason}",
-            journal.OperationId,
+            "Markerless registration operation {OperationIdPrefix} requires attention during {JournalState} for {Action}; expected target identity fingerprint {ExpectedIdentityFingerprint}: {Reason}",
+            journal.OperationId.ToString("N")[..8],
+            journalState,
+            journal.Action,
+            FileMoverIdentityDiagnostics.Fingerprint(
+                journal.TargetPhysicalObjectIdentity),
             reason);
     }
+
 }

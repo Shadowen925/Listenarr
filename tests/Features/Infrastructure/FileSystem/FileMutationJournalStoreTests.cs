@@ -403,6 +403,48 @@ public sealed class FileMutationJournalStoreTests : BaseTests
                 CancellationToken.None));
     }
 
+    [Fact]
+    public async Task AdvanceAsync_RegisteredTargetIdentityMismatchCanOnlyResumeWithOwnerEvidence()
+    {
+        var operationId = Guid.NewGuid();
+        var store = CreateStore();
+        await store.GetOrCreateAsync(
+            CreateClaim(operationId),
+            CancellationToken.None);
+        await store.AdvanceAsync(
+            operationId,
+            FileMutationJournalState.NeedsAttention,
+            targetPhysicalObjectIdentity: "previous-target-generation",
+            audiobookId: null,
+            error: FileMutationJournalRecoveryPolicy
+                .RegisteredTargetIdentityMismatch,
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.AdvanceAsync(
+                operationId,
+                FileMutationJournalState.TargetIdentityPersisted,
+                "replacement-target-generation",
+                audiobookId: null,
+                error: null,
+                CancellationToken.None));
+
+        var recovered = await store.AdvanceAsync(
+            operationId,
+            FileMutationJournalState.TargetIdentityPersisted,
+            "registered-target-generation",
+            audiobookId: 42,
+            error: null,
+            CancellationToken.None);
+
+        Assert.Equal(
+            FileMutationJournalState.TargetIdentityPersisted,
+            recovered.State);
+        Assert.Equal("registered-target-generation", recovered.TargetPhysicalObjectIdentity);
+        Assert.Equal(42, recovered.AudiobookId);
+        Assert.Null(recovered.Error);
+    }
+
     private EfFileMutationJournalStore CreateStore() =>
         CreateStore(_provider.GetRequiredService<
             IDbContextFactory<ListenArrDbContext>>());
