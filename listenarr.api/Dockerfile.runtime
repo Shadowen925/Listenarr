@@ -4,6 +4,18 @@ FROM golang:1.26.2-alpine AS gosu-builder
 ARG GOSU_VERSION=1.19
 RUN CGO_ENABLED=0 go install github.com/tianon/gosu@${GOSU_VERSION}
 
+FROM --platform=$TARGETPLATFORM node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d AS discord-bot-dependencies
+ARG TARGETARCH
+WORKDIR /build/discord-bot
+COPY tools/discord-bot/package.json tools/discord-bot/package-lock.json ./
+RUN case "${TARGETARCH}:$(node -p 'process.arch')" in \
+	amd64:x64|arm64:arm64) ;; \
+	*) echo "ERROR: Node architecture does not match Docker target ${TARGETARCH}." >&2; exit 1 ;; \
+	esac \
+	&& npm ci --omit=dev --no-audit --no-fund \
+	&& find node_modules -type f -name "*.map" -delete \
+	&& npm cache clean --force
+
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 EXPOSE 4545
@@ -32,8 +44,10 @@ RUN sh /tmp/listenarr-runtime/finalize-app.sh
 # publish skipped optional tool copying.
 COPY tools/discord-bot/ /app/tools/discord-bot/
 
-# Install Node.js only for the Discord bot runtime. npm is used for the install
-# and then removed from the final filesystem; the bot only needs node.
+# Copy only the Node runtime and production dependencies; npm remains in the
+# build stage and is not included in the final image.
+COPY --from=discord-bot-dependencies /usr/local/bin/node /usr/local/bin/node
+COPY --from=discord-bot-dependencies /build/discord-bot/node_modules /app/tools/discord-bot/node_modules
 RUN sh /tmp/listenarr-runtime/install-discord-bot-runtime.sh
 
 # Return to app root
