@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Listenarr.Infrastructure.Downloads.Import;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Mocks;
@@ -643,6 +644,17 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
 
             job = (await _downloadProcessingJobRepository.GetByIdAsync(job.Id))!;
             Assert.True(job.HasCheckpoint("FilesImported"));
+            Assert.True(job.TryGetJobDataString(
+                ImportFinalizationService.ImportedAudioOutputsJobDataKey,
+                out var serializedOutputs));
+            using (var outputs = JsonDocument.Parse(serializedOutputs))
+            {
+                var output = Assert.Single(outputs.RootElement.EnumerateArray().ToArray());
+                var outputPath = output.GetProperty("Path").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(outputPath));
+                Assert.True(File.Exists(outputPath));
+                Assert.True(output.GetProperty("Length").GetInt64() > 0);
+            }
             Assert.False(job.HasCheckpoint("ClientMarkedImported"));
             Assert.Equal(DownloadStatus.ImportPending, (await _downloadRepository.GetByIdAsync(download.Id))!.Status);
             Assert.Equal(1, downloadClientGatewayMock.GetCallCount(nameof(downloadClientGatewayMock.GetQueueItemAsync)));

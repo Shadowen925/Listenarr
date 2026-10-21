@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 using System.Text.Json;
+using Listenarr.Infrastructure.Downloads.Import;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Mocks;
@@ -283,6 +284,12 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Cleanup
             var client = await CreateRemovableClientAsync("remove_and_delete");
             _gateway.RemoveResult = true;
             var audiobook = await CreateAudiobook();
+            var outputPath = Path.Combine(
+                audiobook.BasePath!,
+                $"{Guid.NewGuid():N}.m4b");
+            await File.WriteAllBytesAsync(outputPath, [1, 2, 3, 4]);
+            Assert.True(await _provider.GetRequiredService<IAudiobookFileService>()
+                .EnsureAudiobookFileAsync(audiobook, outputPath, "test"));
             var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithAudiobook(audiobook)
                 .WithDownloadClientConfiguration(client)
@@ -298,6 +305,11 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Cleanup
             job.SetCheckpoint("FilesImported");
             job.SetCheckpoint("ClientMarkedImported");
             job.SetCheckpoint("ScanEnqueued", Guid.NewGuid().ToString());
+            job.JobData[ImportFinalizationService.ImportedAudioOutputsJobDataKey] =
+                JsonSerializer.Serialize(new[]
+                {
+                    new { Path = outputPath, Length = new FileInfo(outputPath).Length }
+                });
             job.JobData[Download.SourceRetainedMetadataKey] = true;
             await _downloadProcessingJobRepository.AddAsync(job);
 

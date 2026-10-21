@@ -850,6 +850,71 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
         }
 
         [Fact]
+        [Trait("Scenario", "ImportedClientQueueItemDoesNotReappear")]
+        public async Task GetQueueAsync_SuppressesLiveClientItem_WhenTrackedDownloadIsMoved()
+        {
+            const string clientItemId = "061850ead3eb6f1c5c6d8420211b4bbf2d4ee3e2";
+            var client = new DownloadClientConfiguration
+            {
+                Id = "qb-1",
+                Name = "local qbit",
+                Type = "qbittorrent",
+                IsEnabled = true
+            };
+            var configMock = new Mock<IConfigurationService>();
+            configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
+                .ReturnsAsync(new List<DownloadClientConfiguration> { client });
+            configMock.Setup(c => c.GetApplicationSettingsAsync())
+                .ReturnsAsync(new ApplicationSettings { ShowCompletedExternalDownloads = true });
+
+            var trackedDownload = new Download
+            {
+                Id = "tracked-imported",
+                DownloadClientId = client.Id,
+                Title = "The Great Gatsby",
+                Status = DownloadStatus.Moved,
+                StartedAt = DateTime.UtcNow.AddHours(-1),
+                Metadata = new Dictionary<string, object>
+                {
+                    ["TorrentHash"] = clientItemId
+                }
+            };
+            var downloadRepoMock = new Mock<IDownloadRepository>();
+            SetupQueueRepository(downloadRepoMock, [trackedDownload]);
+            var processingJobRepoMock = new Mock<IDownloadProcessingJobRepository>();
+            processingJobRepoMock
+                .Setup(r => r.GetPendingDownloadIdsAsync(It.IsAny<IEnumerable<string>>()))
+                .ReturnsAsync([]);
+            processingJobRepoMock
+                .Setup(r => r.GetAllJobDownloadIdsAsync(It.IsAny<IEnumerable<string>>()))
+                .ReturnsAsync([]);
+
+            var gatewayMock = new Mock<IDownloadClientGateway>();
+            gatewayMock.Setup(g => g.GetQueueAsync(client, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([
+                    new QueueItem
+                    {
+                        Id = clientItemId,
+                        Title = "The Great Gatsby",
+                        Status = "completed",
+                        Progress = 100,
+                        DownloadClient = client.Name!,
+                        DownloadClientId = client.Id,
+                        DownloadClientType = "qbittorrent"
+                    }
+                ]);
+
+            var service = CreateService(
+                configMock.Object,
+                downloadRepoMock.Object,
+                processingJobRepoMock.Object,
+                gatewayMock.Object,
+                new Mock<IAppMetricsService>().Object);
+
+            Assert.Empty(await service.GetQueueAsync());
+        }
+
+        [Fact]
         [Trait("Scenario", "ShortTitleArtistAwareReconciliation")]
         public async Task GetQueueAsync_MatchesShortTitleUsingArtistAwareFallback_AndAvoidsDuplicateCompletedEntry()
         {

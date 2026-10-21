@@ -214,6 +214,7 @@ export interface QueueItem {
   ratio?: number
   remotePath?: string // Path as seen by download client
   localPath?: string // Path translated for Listenarr
+  contentPath?: string // Download client content path, translated to Listenarr's filesystem
   stallState?: string | null // Stalled | MetadataPending | MissingFromClient
   stallReason?: string | null
   stallSince?: string | null

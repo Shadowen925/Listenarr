@@ -34,64 +34,6 @@ namespace Listenarr.Infrastructure.Downloads.Processing
     {
         private readonly TimeSpan _processingInterval = TimeSpan.FromSeconds(10); // Check every 10 seconds
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            logger.LogInformation("Download Processing Background Service waiting for library filesystem initialization");
-            await filesystemReadiness.WaitUntilReadyAsync(stoppingToken);
-            logger.LogInformation("Download Processing Background Service started");
-
-            // On startup, reset any jobs stuck in Processing status (from previous crash/restart)
-            try
-            {
-                using var scope = scopeFactory.CreateScope();
-                var downloadProcessingJobService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobService>();
-                await downloadProcessingJobService.ResetStuckJobsAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                logger.LogInformation("Download processing startup reset canceled during shutdown");
-            }
-            catch (OperationCanceledException ex)
-            {
-                logger.LogWarning(ex, "Download processing startup reset canceled/timed out; continuing");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-            {
-                logger.LogError(ex, "Failed to reset stuck jobs on startup");
-            }
-
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await ProcessQueueAsync(stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (OperationCanceledException ex)
-                {
-                    logger.LogWarning(ex, "Download processing cycle canceled/timed out; continuing");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                {
-                    logger.LogError(ex, "Error processing download queue");
-                }
-
-                try
-                {
-                    await Task.Delay(_processingInterval, stoppingToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            logger.LogInformation("Download Processing Background Service stopped");
-        }
-
         public async Task ProcessQueueAsync(CancellationToken cancellationToken)
         {
             await filesystemReadiness.WaitUntilReadyAsync(cancellationToken);
@@ -317,17 +259,23 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                     return;
                 }
 
-                var wasRegisteredToAudiobook = results.Any(result => result.WasRegisteredToAudiobook);
-                if (!wasRegisteredToAudiobook)
+                var outputProof = await CaptureImportedAudioOutputsAsync(
+                    scope.ServiceProvider,
+                    audiobook,
+                    results,
+                    cancellationToken);
+                if (outputProof.Error != null)
                 {
-                    var audiobookFileRepository = scope.ServiceProvider.GetRequiredService<IAudiobookFileRepository>();
-                    var existingAudiobookFiles = await audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id, cancellationToken);
-                    if (existingAudiobookFiles.Count <= 0)
-                    {
-                        await FailImportAsync(job, downloadProcessingJobService, historyRepository, download, audiobook,
-                            correlationId, "No audio files were registered after file import", cancellationToken);
-                        return;
-                    }
+                    await FailImportAsync(
+                        job,
+                        downloadProcessingJobService,
+                        historyRepository,
+                        download,
+                        audiobook,
+                        correlationId,
+                        outputProof.Error,
+                        cancellationToken);
+                    return;
                 }
 
                 foreach (var result in results)
@@ -371,6 +319,8 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                 job.JobData[Download.SourceRetainedMetadataKey] = results.Any(result =>
                     result.SourceDisposition
                         == ImportSourceDisposition.Retained);
+                job.JobData[ImportFinalizationService.ImportedAudioOutputsJobDataKey] =
+                    JsonSerializer.Serialize(outputProof.Outputs);
                 job.SetCheckpoint("FilesImported", results.Count);
                 await downloadProcessingJobService.UpdateJobAsync(job);
             }
@@ -493,5 +443,6 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                     correlationId, $"Unable to commit import finalization: {exception.Message}", cancellationToken);
             }
         }
+
     }
 }

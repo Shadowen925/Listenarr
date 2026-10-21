@@ -134,7 +134,8 @@ internal sealed partial class PinnedDirectoryCreation
 
         internal PinnedRenameAttempt TryMoveToNoReplace(
             PinnedDirectoryAnchor destinationParent,
-            string destinationName)
+            string destinationName,
+            bool forceHardLinkFallbackForTest = false)
         {
             ThrowIfDisposed();
             ArgumentNullException.ThrowIfNull(destinationParent);
@@ -165,11 +166,15 @@ internal sealed partial class PinnedDirectoryCreation
             using var destinationHandle = destinationParent.DuplicateHandleForOperation();
             if (OperatingSystem.IsLinux())
             {
-                var nativeError = TryRenameRelativeEntryNoReplaceLinux(
+                var nativeError = TryPublishRelativeFileNoReplaceLinux(
                     _parentHandle,
+                    _fileHandle,
                     _fileName,
+                    Path.Join(_parentPath, _fileName),
                     destinationHandle,
-                    destinationName);
+                    destinationName,
+                    Path.Join(destinationParent.FullPath, destinationName),
+                    forceHardLinkFallbackForTest);
                 if (nativeError != 0)
                 {
                     return new PinnedRenameAttempt(false, nativeError);
@@ -211,7 +216,9 @@ internal sealed partial class PinnedDirectoryCreation
             return new PinnedRenameAttempt(true, 0);
         }
 
-        internal void MoveWithinParent(string destinationName)
+        internal void MoveWithinParent(
+            string destinationName,
+            bool forceHardLinkFallbackForTest = false)
         {
             ThrowIfDisposed();
             ValidateLeafName(destinationName);
@@ -227,12 +234,33 @@ internal sealed partial class PinnedDirectoryCreation
                     "The source file changed before its pinned publication.");
             }
 
-            RenameRelativeEntry(
-                _parentHandle,
-                _fileHandle,
-                _fileName,
-                _parentHandle,
-                destinationName);
+            if (OperatingSystem.IsLinux())
+            {
+                var nativeError = TryPublishRelativeFileNoReplaceLinux(
+                    _parentHandle,
+                    _fileHandle,
+                    _fileName,
+                    Path.Join(_parentPath, _fileName),
+                    _parentHandle,
+                    destinationName,
+                    Path.Join(_parentPath, destinationName),
+                    forceHardLinkFallbackForTest);
+                if (nativeError != 0)
+                {
+                    throw new Win32Exception(
+                        nativeError,
+                        "Could not publish the staged file with no-replace semantics using renameat2 or a verified hardlink fallback.");
+                }
+            }
+            else
+            {
+                RenameRelativeEntry(
+                    _parentHandle,
+                    _fileHandle,
+                    _fileName,
+                    _parentHandle,
+                    destinationName);
+            }
             using var published = OperatingSystem.IsWindows()
                 ? OpenRelativeFileWindows(
                     _parentHandle,

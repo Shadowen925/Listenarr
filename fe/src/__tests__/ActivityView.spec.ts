@@ -181,7 +181,7 @@ describe('ActivityView', () => {
   it('includes completed external downloads from the downloads store in the unified list', async () => {
     mockSignalR()
     mockApi()
-    mockConfigurationStore(false)
+    mockConfigurationStore(true)
     mockLibraryStore()
     mockDownloadsStore({
       completedDownloads: [
@@ -235,7 +235,61 @@ describe('ActivityView', () => {
       expect.arrayContaining(['d1', 'd2', 'd3', 'd4']),
     )
     expect(vm.filteredQueue).toHaveLength(4)
-    expect(wrapper.find('[data-testid="import-download-d1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="import-download-d1"]').exists()).toBe(true)
+  })
+
+  it('does not show completed external downloads when the setting is disabled', async () => {
+    mockSignalR()
+    mockApi()
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore({
+      completedDownloads: [
+        {
+          id: 'completed-hidden',
+          status: 'Completed',
+          progress: 100,
+          downloadClientId: 'SABnzbd',
+          startedAt: new Date().toISOString(),
+          title: 'Completed but hidden',
+          downloadedSize: 1000,
+          totalSize: 1000,
+        },
+      ],
+    })
+
+    const wrapper = await mountActivityView()
+    const vm = wrapper.vm as unknown as ActivityViewVm
+
+    expect(vm.allActivityItems).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('Completed but hidden')
+  })
+
+  it('does not show already imported downloads in the completed external list', async () => {
+    mockSignalR()
+    mockApi()
+    mockConfigurationStore(true)
+    mockLibraryStore()
+    mockDownloadsStore({
+      completedDownloads: [
+        {
+          id: 'already-imported',
+          status: 'Moved',
+          progress: 100,
+          downloadClientId: 'SABnzbd',
+          startedAt: new Date().toISOString(),
+          title: 'Already imported',
+          downloadedSize: 1000,
+          totalSize: 1000,
+        },
+      ],
+    })
+
+    const wrapper = await mountActivityView()
+    const vm = wrapper.vm as unknown as ActivityViewVm
+
+    expect(vm.allActivityItems).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('Already imported')
   })
 
   it('offers manual import for completed external downloads and resolves their Listenarr path', async () => {
@@ -454,7 +508,7 @@ describe('ActivityView', () => {
     const apiService = mockApi({
       getQueue: vi.fn(async () => []),
     })
-    mockConfigurationStore(false)
+    mockConfigurationStore(true)
     mockLibraryStore()
     const downloadsStore = mockDownloadsStore({
       completedDownloads: [
@@ -672,7 +726,7 @@ describe('ActivityView', () => {
     const wrapper = await mountActivityView()
     const vm = wrapper.vm as unknown as ActivityViewVm
     const status = wrapper.get('.queue-health-details')
-    const queue = wrapper.get('.queue-grid-container')
+    const queue = wrapper.get('.activity-list')
 
     expect(status.element.tagName).toBe('DETAILS')
     expect(wrapper.find('.queue-health-banner').exists()).toBe(false)
@@ -709,7 +763,7 @@ describe('ActivityView', () => {
     await flushPromises()
 
     expect(wrapper.get('.queue-health-details').element).toBe(status.element)
-    expect(wrapper.get('.queue-grid-container').element).toBe(queue.element)
+    expect(wrapper.get('.activity-list').element).toBe(queue.element)
     expect(wrapper.text()).toContain('All download clients healthy')
     expect(wrapper.find('.queue-health-banner').exists()).toBe(false)
   })

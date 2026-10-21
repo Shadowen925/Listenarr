@@ -114,6 +114,8 @@ namespace Listenarr.Application.Downloads.Queue
                     }
 
                     var mappedQueueItems = new List<QueueItem>();
+                    var suppressedCompletedClientIds = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
                     foreach (var queueItem in clientQueue)
                     {
                         var ownershipEstablished = false;
@@ -130,11 +132,17 @@ namespace Listenarr.Application.Downloads.Queue
                                 var originalClientId = queueItem.Id;
                                 ownershipEstablished = true;
 
-                                // Establish user-visible Listenarr ownership before optional
-                                // metadata persistence. If rebinding persistence fails, the
-                                // catch below can still keep the matched Listenarr item visible
-                                // instead of leaking the raw external client row or hiding work
-                                // that we already proved belongs to Listenarr.
+                                if (matchedDownload.Status == DownloadStatus.Moved)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(originalClientId))
+                                    {
+                                        suppressedCompletedClientIds.Add(originalClientId);
+                                    }
+
+                                    logger.LogDebug("Suppressing already-imported client item {QueueId}", originalClientId);
+                                    continue;
+                                }
+                                // Retain proven ownership before optional metadata persistence.
                                 queueItem.Id = matchedDownload.Id;
 
                                 await PersistDiscoveredClientIdentifiersAsync(matchedDownload, client, originalClientId, allKnownClientItemIds);
@@ -229,6 +237,7 @@ namespace Listenarr.Application.Downloads.Queue
                         var unmatchedCompleted = clientQueue
                             .Where(q => (q.Status ?? string.Empty).Equals("completed", StringComparison.OrdinalIgnoreCase))
                             .Where(q => !existingIds.Contains(q.Id))
+                            .Where(q => !suppressedCompletedClientIds.Contains(q.Id))
                             .Where(q => string.IsNullOrEmpty(q.Id) || !allKnownClientItemIds.Contains(q.Id))
                             .ToList();
 

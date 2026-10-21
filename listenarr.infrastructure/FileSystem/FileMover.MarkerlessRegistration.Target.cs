@@ -51,6 +51,28 @@ public partial class FileMover
                         journal,
                         cancellationToken))
                 {
+                    using var interruptedStage = gate.DestinationParent.TryOpenExistingFile(
+                        stageName,
+                        requireDeleteAccess: true);
+                    if (interruptedStage != null)
+                    {
+                        if (!interruptedStage.IdentifiesSameEntry(publishedTarget)
+                            || !interruptedStage.VisiblePathMatches())
+                        {
+                            await MarkMarkerlessRegistrationNeedsAttentionAsync(
+                                journal,
+                                "The interrupted registration stage does not identify the already-published target.",
+                                cancellationToken);
+                            return await _fileMutationJournalStore!.GetAsync(
+                                journal.OperationId,
+                                cancellationToken)
+                                ?? throw new InvalidOperationException(
+                                    "The markerless registration journal disappeared.");
+                        }
+
+                        interruptedStage.Delete(immediateWindows: true);
+                    }
+
                     if (renamedTargetIdentityMatches)
                     {
                         journal = await _fileMutationJournalStore!.AdvanceAsync(

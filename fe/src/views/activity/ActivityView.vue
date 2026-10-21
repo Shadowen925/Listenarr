@@ -58,154 +58,171 @@
       </div>
     </details>
 
-    <!-- Queue Grid -->
-    <div
-      v-if="filteredQueue.length > 0"
-      ref="scrollContainer"
-      :class="['queue-grid-container', { 'is-static': !useVirtualActivityList }]"
-      @scroll="updateVisibleRange"
-    >
-      <div class="queue-header">
-        <div class="col-title">Title</div>
-        <div class="col-quality">Quality</div>
-        <div class="col-language">Language</div>
-        <div class="col-progress">Progress</div>
-        <div class="col-eta">ETA</div>
-        <div class="col-status">Status</div>
-        <div class="col-actions"></div>
-      </div>
-      <div
-        :class="['queue-body-spacer', { 'is-static': !useVirtualActivityList }]"
-        :style="useVirtualActivityList ? { height: `${totalHeight}px` } : undefined"
-      >
-        <div
-          :class="['queue-body', { 'is-static': !useVirtualActivityList }]"
-          :style="useVirtualActivityList ? { transform: `translateY(${topPadding}px)` } : undefined"
-        >
-          <div
-            v-for="item in visibleQueueItems"
-            :key="item.id"
-            v-memo="[
-              item.id,
-              item.status,
-              item.progress,
-              item.eta,
-              item.downloadSpeed,
-              item.downloadClient,
-              item.stallState,
-              item.replacementState,
-              item.lastProgressAt,
-              item.replacementAttempts,
-              item.errorMessage,
-            ]"
-            class="queue-row"
-          >
-            <div class="col-title">
-              <div class="title-cell">
-                <RouterLink
-                  v-if="item.audiobookId"
-                  :to="`/audiobooks/${item.audiobookId}`"
-                  class="title-link"
-                  >{{ getDisplayTitle(item) }}</RouterLink
-                >
-                <span v-else class="title-text">{{ getDisplayTitle(item) }}</span>
-                <div class="queue-details" data-test="queue-details">{{ detailsLine(item) }}</div>
-              </div>
-            </div>
-            <div class="col-quality">
-              <span v-if="item.quality && item.quality !== '*'" class="quality-tag">{{
-                item.quality
-              }}</span>
-              <span v-else class="muted">-</span>
-            </div>
-            <div class="col-language">
-              <span v-if="item.language" class="language-text">{{ item.language }}</span>
-              <span v-else class="muted">-</span>
-            </div>
-            <div class="col-progress">
-              <div class="progress-cell">
-                <ProgressBar
-                  :value="item.progress"
-                  :downloaded="item.downloaded"
-                  :total="item.size"
-                  :showPercentage="item.downloadClientType === 'move'"
-                  variant="activity"
-                  height="small"
-                  :animating="item.status === 'downloading' || item.status === 'moving'"
-                />
-              </div>
-            </div>
+    <div class="activity-summary" aria-live="polite">
+      <span>{{ activeActivityCount }} active</span>
+      <span>{{ attentionActivityCount }} need attention</span>
+    </div>
 
-            <div class="col-eta">
-              <span v-if="item.eta" class="eta-text">{{ formatEta(item.eta) }}</span>
-              <span v-else class="muted">-</span>
-            </div>
-            <div class="col-status">
-              <span
-                :class="['status-badge', item.status, statusClass(item)]"
-                :title="item.recoveryReason || undefined"
-                :aria-label="
-                  item.recoveryReason
-                    ? `${displayStatus(item)}: ${item.recoveryReason}`
-                    : displayStatus(item)
-                "
-              >
-                {{ displayStatus(item) }}
+    <div v-if="filteredQueue.length > 0" class="activity-list">
+      <article v-for="item in filteredQueue" :key="item.id" class="activity-row">
+        <div class="activity-row-main">
+          <div class="activity-copy">
+            <RouterLink
+              v-if="item.audiobookId"
+              :to="`/audiobooks/${item.audiobookId}`"
+              class="activity-title"
+              :title="getDisplayTitle(item)"
+            >
+              {{ getDisplayTitle(item) }}
+            </RouterLink>
+            <span v-else class="activity-title" :title="getDisplayTitle(item)">
+              {{ getDisplayTitle(item) }}
+            </span>
+            <div class="activity-meta">
+              <span>{{ item.downloadClient || 'Download client' }}</span>
+              <span v-if="item.size > 0">
+                {{ formatBytes(item.downloaded ?? 0) }} / {{ formatBytes(item.size) }}
               </span>
-              <span
-                v-if="item.isStaleSnapshot"
-                class="stale-badge"
-                :title="getSnapshotStatusTitle(item)"
-              >
-                Cached
+              <span v-if="item.downloadSpeed > 0" class="speed-text">
+                {{ formatBytes(item.downloadSpeed) }}/s
               </span>
-              <span
-                v-if="item.sourcePathUnavailable"
-                class="stale-badge source-unavailable-badge"
-                :title="item.sourcePathUnavailableReason || 'Completed source path is unavailable'"
-              >
-                Source unavailable
-              </span>
-              <span v-if="item.missingFromClient" class="stale-badge">Missing from client</span>
-            </div>
-            <div class="col-actions">
-              <button
-                v-if="item.canRemove"
-                class="btn-icon btn-danger-icon"
-                @click="removeFromQueue(item)"
-                title="Remove from Queue"
-              >
-                <PhX />
-              </button>
-              <button
-                v-if="canRetryRecoveredImport(item)"
-                class="btn btn-secondary activity-import-button"
-                :data-testid="`retry-import-${item.id}`"
-                @click="retryRecoveredImport(item)"
-              >
-                Retry Import
-              </button>
-              <button
-                v-if="canImportCompletedExternal(item) || canManuallyMatchRecovery(item)"
-                class="btn btn-secondary activity-import-button"
-                :data-testid="`import-download-${item.id}`"
-                @click="openManualImport(item)"
-              >
-                {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
-              </button>
-              <button
-                class="btn-icon"
-                data-testid="download-event-history"
-                @click="openDownloadEvents(item)"
-                title="View download event history"
-                aria-label="View download event history"
-              >
-                <PhClock />
-              </button>
+              <span v-if="item.eta" class="eta-text">ETA {{ formatEta(item.eta) }}</span>
             </div>
           </div>
+
+          <div class="activity-controls">
+            <span
+              :class="['status-badge', item.status, statusClass(item)]"
+              :title="item.recoveryReason || undefined"
+              :aria-label="
+                item.recoveryReason
+                  ? `${displayStatus(item)}: ${item.recoveryReason}`
+                  : displayStatus(item)
+              "
+            >
+              {{ displayStatus(item) }}
+            </span>
+            <span
+              v-if="item.isStaleSnapshot"
+              class="stale-badge"
+              :title="getSnapshotStatusTitle(item)"
+            >
+              Cached
+            </span>
+            <button
+              v-if="canRetryRecoveredImport(item)"
+              class="btn btn-secondary activity-import-button"
+              :data-testid="`retry-import-${item.id}`"
+              @click="retryRecoveredImport(item)"
+            >
+              Retry Import
+            </button>
+            <button
+              v-else-if="canImportCompletedExternal(item) || canManuallyMatchRecovery(item)"
+              class="btn btn-secondary activity-import-button"
+              :data-testid="`import-download-${item.id}`"
+              @click="openManualImport(item)"
+            >
+              {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
+            </button>
+            <details class="activity-details">
+              <summary>Details</summary>
+              <dl>
+                <div>
+                  <dt>Download ID</dt>
+                  <dd>{{ item.id }}</dd>
+                </div>
+                <div v-if="item.quality && item.quality !== '*'">
+                  <dt>Quality</dt>
+                  <dd>{{ item.quality }}</dd>
+                </div>
+                <div v-if="item.language">
+                  <dt>Language</dt>
+                  <dd>{{ item.language }}</dd>
+                </div>
+                <div v-if="item.remotePath">
+                  <dt>Remote path</dt>
+                  <dd>{{ item.remotePath }}</dd>
+                </div>
+                <div v-if="item.localPath">
+                  <dt>Local path</dt>
+                  <dd>{{ item.localPath }}</dd>
+                </div>
+                <div v-if="item.contentPath">
+                  <dt>Content path</dt>
+                  <dd>{{ item.contentPath }}</dd>
+                </div>
+                <div v-if="item.seeders != null">
+                  <dt>Seeders</dt>
+                  <dd>{{ item.seeders }}</dd>
+                </div>
+                <div v-if="item.ratio != null">
+                  <dt>Ratio</dt>
+                  <dd>{{ item.ratio.toFixed(2) }}</dd>
+                </div>
+                <div v-if="item.recoveryReason">
+                  <dt>Recovery</dt>
+                  <dd>{{ item.recoveryReason }}</dd>
+                </div>
+                <div v-if="item.sourcePathUnavailableReason">
+                  <dt>Source</dt>
+                  <dd>{{ item.sourcePathUnavailableReason }}</dd>
+                </div>
+                <div v-if="item.errorMessage">
+                  <dt>Error</dt>
+                  <dd>{{ item.errorMessage }}</dd>
+                </div>
+                <div v-if="detailsLine(item)">
+                  <dt>Diagnostics</dt>
+                  <dd>{{ detailsLine(item) }}</dd>
+                </div>
+              </dl>
+              <div class="activity-secondary-actions">
+                <button
+                  v-if="item.canRemove"
+                  class="btn-icon btn-danger-icon"
+                  @click="removeFromQueue(item)"
+                  title="Remove from Queue"
+                >
+                  <PhX />
+                  <span>Remove</span>
+                </button>
+                <button
+                  class="btn-icon"
+                  data-testid="download-event-history"
+                  @click="openDownloadEvents(item)"
+                  title="View download event history"
+                  aria-label="View download event history"
+                >
+                  <PhClock />
+                  <span>History</span>
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
-      </div>
+        <div class="activity-progress-row">
+          <ProgressBar
+            v-if="activityProgress(item) !== null"
+            :value="activityProgress(item) ?? 0"
+            :downloaded="item.downloaded"
+            :total="item.size"
+            variant="activity"
+            height="small"
+            :animating="item.status === 'downloading' || item.status === 'moving'"
+          />
+          <span v-else class="activity-progress-state">{{ displayStatus(item) }}</span>
+          <span v-if="activityProgress(item) !== null" class="progress-label">
+            {{ Math.round(activityProgress(item) ?? 0) }}%
+          </span>
+          <span
+            v-if="item.sourcePathUnavailable || item.missingFromClient"
+            class="stale-badge source-unavailable-badge"
+          >
+            {{ item.sourcePathUnavailable ? 'Source unavailable' : 'Missing from client' }}
+          </span>
+        </div>
+      </article>
     </div>
 
     <!-- Empty State -->
@@ -292,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, unref } from 'vue'
+import { ref, computed, onMounted, onUnmounted, unref } from 'vue'
 import {
   PhActivity,
   PhSpinner,
@@ -463,79 +480,6 @@ const queueHealthMessage = computed(() => {
     .join(', ')
 })
 
-// Virtual scrolling setup
-const scrollContainer = ref<HTMLElement | null>(null)
-const ROW_HEIGHT = 52
-const BUFFER_ROWS = 5
-const MOBILE_ACTIVITY_BREAKPOINT = 768
-
-const visibleRange = ref({ start: 0, end: 30 })
-
-const isMobileActivityLayout = ref(false)
-const useVirtualActivityList = computed(() => !isMobileActivityLayout.value)
-
-const updateActivityLayoutMode = () => {
-  if (typeof window === 'undefined') return
-
-  if (typeof window.matchMedia === 'function') {
-    isMobileActivityLayout.value = window.matchMedia(
-      `(max-width: ${MOBILE_ACTIVITY_BREAKPOINT}px)`,
-    ).matches
-    return
-  }
-
-  isMobileActivityLayout.value = window.innerWidth <= MOBILE_ACTIVITY_BREAKPOINT
-}
-
-const visibleQueueItems = computed(() => {
-  if (!useVirtualActivityList.value) {
-    return filteredQueue.value
-  }
-
-  return filteredQueue.value.slice(visibleRange.value.start, visibleRange.value.end)
-})
-
-const updateVisibleRange = () => {
-  if (!useVirtualActivityList.value) {
-    visibleRange.value = { start: 0, end: filteredQueue.value.length }
-    return
-  }
-
-  if (!scrollContainer.value) return
-
-  const scrollTop = scrollContainer.value.scrollTop
-  const viewportHeight = scrollContainer.value.clientHeight
-
-  const firstVisibleIndex = Math.floor(scrollTop / ROW_HEIGHT)
-  const visibleItemCount = Math.ceil(viewportHeight / ROW_HEIGHT)
-
-  const startIndex = Math.max(0, firstVisibleIndex - BUFFER_ROWS)
-  const endIndex = Math.min(
-    firstVisibleIndex + visibleItemCount + BUFFER_ROWS,
-    filteredQueue.value.length,
-  )
-
-  visibleRange.value = { start: startIndex, end: endIndex }
-}
-
-const totalHeight = computed(() => {
-  return filteredQueue.value.length * ROW_HEIGHT
-})
-
-const topPadding = computed(() => {
-  return visibleRange.value.start * ROW_HEIGHT
-})
-
-const syncActivityLayout = async () => {
-  await nextTick()
-  updateVisibleRange()
-}
-
-const handleViewportResize = () => {
-  updateActivityLayoutMode()
-  void syncActivityLayout()
-}
-
 // Convert Download to QueueItem format for unified display
 const convertDownloadToQueueItem = (download: Download): QueueItem => {
   const statusMap: Record<string, string> = {
@@ -612,7 +556,9 @@ const isDirectDownload = (downloadClientId?: string): boolean =>
   (downloadClientId || '').toString().toUpperCase() === 'DDL'
 
 const allActivityItems = computed(() => {
-  const queueItems = [...queue.value]
+  const queueItems = queue.value.filter(
+    (item) => !['moved', 'imported'].includes(item.status.toLowerCase()),
+  )
   const trackedQueueIds = new Set(queueItems.map((item) => item.id))
 
   const activeDownloadsList = unref(downloadsStore.activeDownloads || [])
@@ -640,6 +586,7 @@ const allActivityItems = computed(() => {
       .filter(
         (d) => d.downloadClientId && (d.downloadClientId || '').toString().toUpperCase() !== 'DDL',
       )
+      .filter((d) => d.status !== 'Moved')
       .map(convertDownloadToQueueItem)
 
     const map = new Map<string, QueueItem>()
@@ -660,14 +607,6 @@ const allActivityItems = computed(() => {
     })
   }
 
-  // Also include completed external downloads from the downloads store
-  // so completed items are visible in the unified table
-  const completedExternal = (downloadsStore.completedDownloads || [])
-    .filter(
-      (d) => d.downloadClientId && (d.downloadClientId || '').toString().toUpperCase() !== 'DDL',
-    )
-    .map(convertDownloadToQueueItem)
-
   const failedFromDownloads = (downloadsStore.failedDownloads || []).map(convertDownloadToQueueItem)
 
   const finalMap = new Map<string, QueueItem>()
@@ -683,7 +622,6 @@ const allActivityItems = computed(() => {
     }
   }
   for (const it of combined) finalMap.set(it.id, it)
-  for (const it of completedExternal) if (!finalMap.has(it.id)) finalMap.set(it.id, it)
   for (const it of failedFromDownloads) if (!finalMap.has(it.id)) finalMap.set(it.id, it)
 
   return Array.from(finalMap.values())
@@ -722,6 +660,36 @@ const filteredQueue = computed(() => {
     )
   })
 })
+
+const activeActivityCount = computed(
+  () =>
+    allActivityItems.value.filter((item) =>
+      ['queued', 'downloading', 'paused', 'processing', 'moving', 'importpending'].includes(
+        item.status.toLowerCase(),
+      ),
+    ).length,
+)
+
+const attentionActivityCount = computed(
+  () =>
+    allActivityItems.value.filter(
+      (item) =>
+        ['failed', 'importblocked'].includes(item.status.toLowerCase()) ||
+        ['ImportFailed', 'NeedsAttention', 'RecoveryPending'].includes(item.recoveryState ?? '') ||
+        item.stallState === 'Stalled',
+    ).length,
+)
+
+const activityProgress = (item: QueueItem): number | null => {
+  const status = item.status.toLowerCase()
+  if (
+    item.downloadClientType === 'move' ||
+    ['queued', 'downloading', 'paused', 'completed'].includes(status)
+  ) {
+    return Math.min(100, Math.max(0, item.progress ?? 0))
+  }
+  return null
+}
 
 const refreshQueue = async () => {
   loading.value = true
@@ -963,10 +931,6 @@ const formatEta = (seconds: number): string => {
 // Subscribe to SignalR for real-time updates
 onMounted(async () => {
   moveJobsStore.start()
-  updateActivityLayoutMode()
-  if (typeof window !== 'undefined') {
-    window.addEventListener('resize', handleViewportResize, { passive: true })
-  }
 
   await downloadsStore.loadDownloads()
   await configStore.loadApplicationSettings()
@@ -974,9 +938,8 @@ onMounted(async () => {
   unsubscribeQueue = signalRService.onQueueUpdate((updatedQueue) => {
     applyQueueSnapshot(updatedQueue)
   })
-
   await refreshQueue()
-  await syncActivityLayout()
+  await refreshQueue()
 
   queueRefreshInterval = setInterval(async () => {
     try {
@@ -991,10 +954,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('resize', handleViewportResize)
-  }
-
   if (unsubscribeQueue) {
     unsubscribeQueue()
   }
@@ -1165,157 +1124,191 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 
-/* Grid container with virtual scrolling */
-.queue-grid-container {
-  height: calc(100vh - 200px);
-  overflow-y: auto;
-  position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px;
-  background: #1e1e1e;
-}
-
-.queue-grid-container.is-static {
-  height: auto;
-  overflow-y: visible;
-}
-
-/* Desktop grid columns shared by header and rows */
-.queue-header,
-.queue-row {
-  display: grid;
-  grid-template-columns:
-    minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr)
-    minmax(0, 1fr) 40px;
-  align-items: center;
-}
-
-.queue-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #252525;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.queue-header > div {
-  padding: 0 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #868e96;
-  white-space: nowrap;
-}
-
-.queue-body-spacer {
-  position: relative;
-  width: 100%;
-}
-
-.queue-body-spacer.is-static {
-  position: static;
-}
-
-.queue-body {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  overflow: hidden;
-}
-
-.queue-body.is-static {
-  position: static;
-}
-
-/* Grid rows */
-.queue-row {
-  transition: background-color 0.15s;
-}
-
-.queue-row:hover {
-  background-color: rgba(255, 255, 255, 0.03);
-}
-
-.queue-row > div {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.85rem;
-  color: #adb5bd;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.activity-summary {
   display: flex;
-  align-items: center;
-  align-self: stretch;
-}
-
-/* Progress column needs visible overflow for its flex layout */
-.queue-row > .col-progress {
-  overflow: visible;
-}
-
-/* Actions column: center the button */
-.queue-row > .col-actions {
-  justify-content: center;
-  overflow: visible;
-}
-
-/* Title cell */
-.title-cell {
-  display: flex;
-  align-items: center;
   gap: 0.5rem;
-  min-width: 0;
-}
-
-.title-text,
-.title-link {
-  color: white;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.title-link {
-  text-decoration: none;
-}
-
-.title-link:hover {
-  color: #4dabf7;
-}
-
-.quality-tag {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  background: rgba(81, 207, 102, 0.12);
-  color: #51cf66;
-  font-weight: 500;
-}
-
-/* Language cell */
-.language-text {
-  color: #adb5bd;
+  margin: 0.25rem 0 0.75rem;
+  color: var(--color-text-muted, #94a3b8);
   font-size: 0.8rem;
 }
 
-/* Progress cell */
-.progress-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
+.activity-summary span {
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+
+.activity-summary span:last-child {
+  color: #ffc078;
+}
+
+.activity-list {
+  display: grid;
+  gap: 0.6rem;
+  max-height: calc(100vh - 240px);
+  min-height: 0;
+  overflow: auto;
+  padding: 0.15rem 0.25rem 0.75rem 0;
+}
+
+.activity-row {
+  min-width: 0;
+  padding: 0.85rem 1rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.75rem;
+  background: var(--color-surface, #1e1e1e);
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+
+.activity-row:hover {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: #222;
+}
+
+.activity-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem 1rem;
+}
+
+.activity-copy {
   min-width: 0;
 }
 
-.progress-cell :deep(.progress-wrapper) {
-  flex: 1;
+.activity-title {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: #f8fafc;
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.activity-title:hover {
+  color: #4dabf7;
+}
+
+.activity-meta {
+  display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.8rem;
+  margin-top: 0.25rem;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.activity-controls {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.activity-progress-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.7rem;
+}
+
+.activity-progress-row :deep(.progress-wrapper) {
+  flex: 1;
+  min-width: 2rem;
+}
+
+.activity-progress-state {
+  flex: 1;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.activity-details {
+  position: relative;
+}
+
+.activity-details summary {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.4rem;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 0.78rem;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.activity-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.activity-details summary::after {
+  content: 'v';
+  margin-left: 0.35rem;
+  color: #94a3b8;
+}
+
+.activity-details[open] summary::after {
+  content: '^';
+}
+
+.activity-details dl {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  z-index: 5;
+  display: grid;
+  gap: 0.45rem;
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: min(65vh, 28rem);
+  overflow: auto;
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.65rem;
+  background: #181818;
+  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.35);
+}
+
+.activity-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
+  gap: 0.75rem;
+  font-size: 0.78rem;
+}
+
+.activity-details dt {
+  color: #94a3b8;
+}
+
+.activity-details dd {
+  min-width: 0;
+  margin: 0;
+  color: #e2e8f0;
+  overflow-wrap: anywhere;
+}
+
+.activity-secondary-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.activity-secondary-actions .btn-icon {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
 }
 
 .progress-label {
@@ -1738,85 +1731,41 @@ h3 {
     width: 100%;
   }
 
-  .queue-grid-container {
-    height: auto;
-    overflow-y: visible;
-    border: none;
-    background: transparent;
+  .activity-summary {
+    margin-top: 0;
   }
 
-  .queue-header {
-    display: none;
-  }
-
-  .queue-body-spacer {
-    height: auto !important;
-    position: static !important;
-  }
-
-  .queue-body {
-    position: static !important;
-    transform: none !important;
-  }
-
-  /* Each row becomes a card */
-  .queue-row {
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto auto;
-    gap: 0.3rem 0.5rem;
-    padding: 0.75rem;
-    margin-bottom: 0.5rem;
-    background: #2a2a2a;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .queue-row:hover {
-    background-color: #2f2f2f;
-  }
-
-  .queue-row > div {
-    padding: 0;
-    border: none;
+  .activity-list {
+    max-height: none;
     overflow: visible;
-    white-space: normal;
+    padding-right: 0;
   }
 
-  /* Hide columns that don't fit mobile */
-  .queue-row .col-quality,
-  .queue-row .col-language,
-  .queue-row .col-eta {
-    display: none;
+  .activity-row {
+    padding: 0.75rem;
   }
 
-  /* Row 1: Title (left) + Status badge (right) */
-  .queue-row .col-title {
-    grid-column: 1;
-    grid-row: 1;
-    min-width: 0;
+  .activity-row-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.6rem;
   }
 
-  .queue-row .col-status {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    white-space: nowrap;
+  .activity-controls {
+    justify-content: flex-start;
   }
 
-  /* Row 2: Progress bar (left) + Actions (right) */
-  .queue-row .col-progress {
-    grid-column: 1;
-    grid-row: 2;
+  .activity-progress-row {
+    gap: 0.45rem;
   }
 
-  .queue-row .col-actions {
-    grid-column: 2;
-    grid-row: 2;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+  .progress-label {
+    min-width: 2.5rem;
+  }
+
+  .activity-details dl {
+    right: auto;
+    left: 0;
+    width: min(36rem, calc(100vw - 2rem));
   }
 }
 </style>

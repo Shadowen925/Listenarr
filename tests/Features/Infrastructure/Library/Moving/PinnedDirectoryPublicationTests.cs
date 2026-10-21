@@ -81,6 +81,72 @@ public sealed partial class PinnedDirectoryCreationTests : BaseTests
         Assert.False(entry.IsRegularFile());
     }
 
+    [LinuxFact]
+    public async Task MoveWithinParent_WhenRenameAt2IsUnsupported_UsesVerifiedNoReplaceHardlinkPublication()
+    {
+        var parent = FileService.GetTempDirectory("pinned-publication-hardlink-fallback");
+        var stagePath = Path.Join(parent, ".staging-book.partial");
+        var destinationPath = Path.Join(parent, "book.m4b");
+        await File.WriteAllTextAsync(stagePath, "prepared audiobook");
+
+        try
+        {
+            using (var anchor = PinnedDirectoryCreation.OpenPinnedDirectoryNoFollow(parent))
+            using (var stagedFile = anchor.OpenExistingFile(
+                       Path.GetFileName(stagePath),
+                       requireDeleteAccess: true))
+            {
+                stagedFile.MoveWithinParent(
+                    Path.GetFileName(destinationPath),
+                    forceHardLinkFallbackForTest: true);
+            }
+
+            Assert.False(File.Exists(stagePath));
+            Assert.Equal("prepared audiobook", await File.ReadAllTextAsync(destinationPath));
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
+    [LinuxFact]
+    public async Task MoveWithinParent_HardlinkFallback_DoesNotReplaceExistingDestination()
+    {
+        var parent = FileService.GetTempDirectory("pinned-publication-hardlink-conflict");
+        var stagePath = Path.Join(parent, ".staging-book.partial");
+        var destinationPath = Path.Join(parent, "book.m4b");
+        await File.WriteAllTextAsync(stagePath, "prepared audiobook");
+        await File.WriteAllTextAsync(destinationPath, "existing audiobook");
+
+        try
+        {
+            using var anchor = PinnedDirectoryCreation.OpenPinnedDirectoryNoFollow(parent);
+            using var stagedFile = anchor.OpenExistingFile(
+                Path.GetFileName(stagePath),
+                requireDeleteAccess: true);
+
+            var exception = Assert.Throws<Win32Exception>(() =>
+                stagedFile.MoveWithinParent(
+                    Path.GetFileName(destinationPath),
+                    forceHardLinkFallbackForTest: true));
+
+            Assert.Equal(17, exception.NativeErrorCode);
+            Assert.Equal("prepared audiobook", await File.ReadAllTextAsync(stagePath));
+            Assert.Equal("existing audiobook", await File.ReadAllTextAsync(destinationPath));
+        }
+        finally
+        {
+            if (Directory.Exists(parent))
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public async Task FileVisiblePathProbe_ReplacedGeneration_IsMismatch()
     {

@@ -32,6 +32,84 @@ internal sealed partial class PinnedDirectoryCreation
         return result == 0 ? 0 : Marshal.GetLastWin32Error();
     }
 
+    private static int TryPublishRelativeFileNoReplaceLinux(
+        SafeFileHandle sourceDirectoryHandle,
+        SafeFileHandle sourceFileHandle,
+        string sourceName,
+        string sourcePath,
+        SafeFileHandle destinationDirectoryHandle,
+        string destinationName,
+        string destinationPath,
+        bool forceHardLinkFallbackForTest)
+    {
+        const int invalidArgument = 22;
+        const int functionNotImplemented = 38;
+        const int operationNotSupported = 95;
+
+        var renameError = forceHardLinkFallbackForTest
+            ? invalidArgument
+            : TryRenameRelativeEntryNoReplaceLinux(
+                sourceDirectoryHandle,
+                sourceName,
+                destinationDirectoryHandle,
+                destinationName);
+        if (renameError == 0)
+        {
+            return 0;
+        }
+
+        if (!forceHardLinkFallbackForTest
+            && renameError is not (invalidArgument or functionNotImplemented or operationNotSupported))
+        {
+            return renameError;
+        }
+
+        if (!HandleIsRegularFile(sourceFileHandle))
+        {
+            return operationNotSupported;
+        }
+
+        if (LinkAt(
+                sourceDirectoryHandle.DangerousGetHandle().ToInt32(),
+                sourceName,
+                destinationDirectoryHandle.DangerousGetHandle().ToInt32(),
+                destinationName,
+                flags: 0) != 0)
+        {
+            return Marshal.GetLastWin32Error();
+        }
+
+        using var published = OpenRelativeFileUnix(
+            destinationDirectoryHandle,
+            destinationName,
+            destinationPath);
+        if (!HandlesIdentifySameDirectory(sourceFileHandle, published))
+        {
+            throw new InvalidOperationException(
+                "The no-replace hardlink publication does not identify the pinned source file.");
+        }
+
+        using var visibleSource = OpenRelativeFileUnix(
+            sourceDirectoryHandle,
+            sourceName,
+            sourcePath);
+        if (!HandlesIdentifySameDirectory(sourceFileHandle, visibleSource))
+        {
+            throw new InvalidOperationException(
+                "The pinned source file changed before the hardlink publication could be completed.");
+        }
+
+        if (UnlinkAt(
+                sourceDirectoryHandle.DangerousGetHandle().ToInt32(),
+                sourceName,
+                flags: 0) != 0)
+        {
+            return Marshal.GetLastWin32Error();
+        }
+
+        return 0;
+    }
+
     private static void RenameRelativeEntry(
         SafeFileHandle sourceDirectoryHandle,
         SafeFileHandle entryHandle,

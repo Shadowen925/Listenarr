@@ -18,7 +18,7 @@
 import { describe, it, beforeEach, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
-describe('ActivityView mobile virtualization', () => {
+describe('ActivityView responsive list', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
@@ -37,7 +37,7 @@ describe('ActivityView mobile virtualization', () => {
     )
   })
 
-  it('renders the full activity list without virtualization on mobile', async () => {
+  it('renders expandable variable-height activity rows on mobile', async () => {
     const queueItems = Array.from({ length: 25 }, (_, index) => ({
       id: `queue-${index + 1}`,
       title: `Queued Item ${index + 1}`,
@@ -116,9 +116,9 @@ describe('ActivityView mobile virtualization', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(wrapper.find('.queue-grid-container').classes()).toContain('is-static')
-    expect(wrapper.find('.queue-body.is-static').exists()).toBe(true)
-    expect(wrapper.findAll('.queue-row')).toHaveLength(25)
+    expect(wrapper.findAll('.activity-row')).toHaveLength(25)
+    expect(wrapper.find('.activity-details summary').text()).toBe('Details')
+    expect(wrapper.find('.activity-progress-row').exists()).toBe(true)
 
     wrapper.unmount()
   })
