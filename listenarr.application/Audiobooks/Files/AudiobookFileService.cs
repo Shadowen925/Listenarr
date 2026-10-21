@@ -327,10 +327,27 @@ namespace Listenarr.Application.Audiobooks.Files
                     cacheIdentity,
                     filePath);
 
-                var fi = new FileInfo(metadataPath);
+                long? fileSize;
+                if (registrationLease == null)
+                {
+                    var fileInfo = new FileInfo(metadataPath);
+                    fileSize = fileInfo.Exists ? fileInfo.Length : null;
+                }
+                else
+                {
+                    using var metadataReadStream = registrationLease.OpenMetadataReadStream();
+                    if (!metadataReadStream.CanSeek)
+                    {
+                        throw new InvalidOperationException(
+                            "The pinned audiobook file stream does not expose its length.");
+                    }
+
+                    fileSize = metadataReadStream.Length;
+                }
+
                 var fileRecord = AudiobookFile.CreateUnresolved(filePath);
                 fileRecord.AudiobookId = audiobook.Id;
-                fileRecord.Size = fi.Exists ? fi.Length : null;
+                fileRecord.Size = fileSize;
                 fileRecord.Source = source;
                 fileRecord.CreatedAt = DateTime.UtcNow;
                 fileRecord.DurationSeconds = meta?.Duration.TotalSeconds;

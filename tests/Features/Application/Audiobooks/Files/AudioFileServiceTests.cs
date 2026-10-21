@@ -79,6 +79,31 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.Files
         }
 
         [Fact]
+        public async Task EnsureAudiobookFileAsync_RegistrationLease_UsesPinnedFileLength()
+        {
+            var basePath = FileService.GetTempDirectory("audio-file-pinned-size");
+            var audioPath = await FileService.GetFileAsync(basePath, "book.m4b", "test");
+            _audiobook.BasePath = basePath;
+            await _audiobookRepository.UpdateAsync(_audiobook);
+            using var registrationLease = PinnedAudiobookFileRegistrationLease.Open(audioPath);
+
+            var created = await _provider
+                .GetRequiredService<IAudiobookFileService>()
+                .EnsureAudiobookFileAsync(_audiobook, registrationLease, "test");
+
+            Assert.True(created);
+            var registeredFile = Assert.Single(
+                await _audiobookFileRepository.GetByAudiobookIdAsync(_audiobook.Id));
+            Assert.Equal(new FileInfo(audioPath).Length, registeredFile.Size);
+            if (OperatingSystem.IsLinux())
+            {
+                Assert.NotEqual(
+                    new FileInfo(registrationLease.MetadataPath).Length,
+                    registeredFile.Size);
+            }
+        }
+
+        [Fact]
         public async Task EnsureAudiobookFileAsync_HandlesUniqueConstraintViolation_ReturnsFalse()
         {
             var result = await _provider.GetRequiredService<IAudiobookFileService>().EnsureAudiobookFileAsync(_audiobook, "C:\\fake\\path.m4b", "test");
@@ -1032,6 +1057,8 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.Files
             public bool HasDurablePhysicalObjectIdentity { get; } =
                 hasDurablePhysicalObjectIdentity;
             public string? SourcePhysicalObjectIdentity => null;
+
+            public Stream OpenMetadataReadStream() => File.OpenRead(PublicPath);
 
             public bool MatchesCurrentPublication()
             {

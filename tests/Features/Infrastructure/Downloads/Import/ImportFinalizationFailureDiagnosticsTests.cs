@@ -5,6 +5,8 @@ using Listenarr.Tests.Common;
 
 namespace Listenarr.Tests.Features.Infrastructure.Downloads.Import;
 
+[Trait("Name", "ImportFinalizationFailureDiagnosticsTests")]
+[Trait("Category", "ImportFinalization")]
 public sealed class ImportFinalizationFailureDiagnosticsTests : BaseTests
 {
     [Fact]

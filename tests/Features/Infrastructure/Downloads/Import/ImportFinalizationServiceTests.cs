@@ -94,6 +94,49 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Import
         }
 
         [Fact]
+        public async Task FinalizeAsync_RejectsRegisteredFileSizeThatDiffersFromOutputProof()
+        {
+            var audiobook = await CreateAudiobook();
+            var importedOutput = await RegisterAudioOutputAsync(audiobook);
+            var client = await CreateDownloadClientConfiguration();
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithAudiobook(audiobook)
+                .WithDownloadClientConfiguration(client)
+                .WithStatus(DownloadStatus.ImportPending)
+                .Build());
+            var job = CreateFinalizableJob(download);
+            job.JobData[ImportFinalizationService.ImportedAudioOutputsJobDataKey] =
+                JsonSerializer.Serialize(new[] { importedOutput });
+            await _downloadProcessingJobRepository.AddAsync(job);
+
+            var contextFactory = _provider.GetRequiredService<IDbContextFactory<ListenArrDbContext>>();
+            await using (var db = await contextFactory.CreateDbContextAsync())
+            {
+                var registeredFile = await db.AudiobookFiles
+                    .SingleAsync(file => file.Path == importedOutput.Path);
+                registeredFile.Size = importedOutput.Length + 60;
+                await db.SaveChangesAsync();
+            }
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                _provider.GetRequiredService<IImportFinalizationService>().FinalizeAsync(
+                    job.Id,
+                    download.Id,
+                    audiobook.Id,
+                    audiobook.Title ?? download.Title,
+                    client.Id,
+                    "finalization-registered-size-mismatch",
+                    sourceRetained: null));
+
+            Assert.Equal(
+                DownloadStatus.ImportPending,
+                (await _downloadRepository.GetByIdAsync(download.Id))!.Status);
+            Assert.Equal(
+                ProcessingJobStatus.Processing,
+                (await _downloadProcessingJobRepository.GetByIdAsync(job.Id))!.Status);
+        }
+
+        [Fact]
         public async Task FinalizeAsync_RejectsMissingDurableAudioOutputProof()
         {
             var audiobook = await CreateAudiobook();
