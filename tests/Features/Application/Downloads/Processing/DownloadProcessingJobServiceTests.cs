@@ -75,6 +75,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
                 .ThrowsAsync(new InvalidOperationException("Database unavailable"));
             var service = new DownloadProcessingJobService(
                 repository.Object,
+                Mock.Of<IQuickAddOperationRepository>(),
                 NullLogger<DownloadProcessingJobService>.Instance,
                 TimeProvider.System);
 
@@ -192,6 +193,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
                     new InvalidOperationException()));
             var service = new DownloadProcessingJobService(
                 repository.Object,
+                Mock.Of<IQuickAddOperationRepository>(),
                 NullLogger<DownloadProcessingJobService>.Instance,
                 TimeProvider.System);
 

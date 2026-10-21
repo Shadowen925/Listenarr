@@ -104,6 +104,18 @@ namespace Listenarr.Infrastructure.Downloads.Import
             job.MarkAsCompleted();
             job.ActiveDeduplicationKey = null;
             job.SetCheckpoint("ImportCommitted");
+            if (!string.IsNullOrWhiteSpace(job.QuickAddOperationId))
+            {
+                var operation = await db.QuickAddOperations.FindAsync(
+                    [job.QuickAddOperationId],
+                    ct);
+                if (operation != null)
+                {
+                    operation.State = QuickAddOperationState.Imported;
+                    operation.FailureReason = null;
+                    operation.UpdatedAt = DateTime.UtcNow;
+                }
+            }
 
             await db.SaveChangesAsync(ct);
         }

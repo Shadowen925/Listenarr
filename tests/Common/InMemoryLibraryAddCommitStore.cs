@@ -6,7 +6,8 @@ internal sealed class InMemoryLibraryAddCommitStore(ListenArrDbContext db)
     public async Task CommitAsync(
         Audiobook audiobook,
         History history,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        QuickAddOperation? operation = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         db.Audiobooks.Add(audiobook);
@@ -18,6 +19,12 @@ internal sealed class InMemoryLibraryAddCommitStore(ListenArrDbContext db)
 
         history.AudiobookId = audiobook.Id;
         db.History.Add(history);
+        if (operation != null)
+        {
+            operation.AudiobookId = audiobook.Id;
+            operation.AudiobookTitle = audiobook.Title;
+            db.QuickAddOperations.Add(operation);
+        }
         await db.SaveChangesAsync(cancellationToken);
     }
 }

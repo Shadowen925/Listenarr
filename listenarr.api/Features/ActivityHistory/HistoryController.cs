@@ -29,15 +29,18 @@ namespace Listenarr.Api.Features.ActivityHistory
         private readonly IHistoryRepository _history;
         private readonly ILogger<HistoryController> _logger;
         private readonly IConfigurationService _configuration;
+        private readonly IQuickAddOperationRepository _quickAddOperations;
 
         public HistoryController(
             IHistoryRepository history,
             IConfigurationService configuration,
-            ILogger<HistoryController> logger)
+            ILogger<HistoryController> logger,
+            IQuickAddOperationRepository quickAddOperations)
         {
             _history = history;
             _configuration = configuration;
             _logger = logger;
+            _quickAddOperations = quickAddOperations;
         }
 
         /// <summary>
@@ -158,6 +161,112 @@ namespace Listenarr.Api.Features.ActivityHistory
             return Ok(history);
         }
 
+        [HttpGet("activity/dismissals")]
+        public async Task<IActionResult> GetActivityDismissals()
+        {
+            var dismissals = await _history.GetByEventTypeAsync("ActivityDismissed");
+            return Ok(dismissals
+                .Select(entry => entry.SourceTitle)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray());
+        }
+
+        [HttpGet("activity/verified-import-download-ids")]
+        public async Task<IActionResult> GetVerifiedImportDownloadIds(CancellationToken ct)
+        {
+            var downloadIds = await _history.GetSucceededImportedDownloadIdsAsync(ct);
+            return Ok(downloadIds);
+        }
+
+        [HttpGet("activity/quick-add-operations")]
+        public async Task<IActionResult> GetQuickAddOperations(CancellationToken cancellationToken)
+        {
+            var operations = await _quickAddOperations.GetUnresolvedAsync(cancellationToken);
+            return Ok(operations.Select(operation => new QuickAddOperationActivityItem(
+                operation.Id,
+                operation.AudiobookId,
+                operation.AudiobookTitle,
+                operation.State.ToString(),
+                operation.Attempt,
+                operation.DiagnosticId,
+                operation.SelectedRelease,
+                operation.DownloadClientId,
+                operation.DownloadId,
+                operation.ProcessingJobId,
+                operation.FailureReason,
+                operation.CreatedAt,
+                operation.UpdatedAt)));
+        }
+
+        [HttpPost("activity/quick-add-operations/{operationId}/retry")]
+        [RequireAdministratorSession]
+        public async Task<IActionResult> RetryQuickAddOperation(
+            string operationId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(operationId) || operationId.Length > 32)
+            {
+                return BadRequest(new { message = "A valid Quick Add operation ID is required." });
+            }
+
+            if (!await _quickAddOperations.RetryAsync(operationId, cancellationToken))
+            {
+                return Conflict(new
+                {
+                    message = "This operation is not in a retryable search or failure state."
+                });
+            }
+
+            return Accepted(new { operationId, state = QuickAddOperationState.SearchPending.ToString() });
+        }
+
+        [HttpPost("activity/dismissals")]
+        [RequireAdministratorSession]
+        public async Task<IActionResult> DismissActivityEntries(
+            [FromBody] ActivityDismissalRequest request)
+        {
+            if (request.Entries == null || request.Entries.Count == 0 || request.Entries.Count > 500)
+            {
+                return BadRequest(new { message = "Provide between 1 and 500 activity entries to dismiss." });
+            }
+
+            var entries = request.Entries
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
+                .Select(entry => entry with { Key = entry.Key.Trim() })
+                .DistinctBy(entry => entry.Key, StringComparer.Ordinal)
+                .ToArray();
+            if (entries.Length == 0 || entries.Any(entry => entry.Key.Length > 200))
+            {
+                return BadRequest(new { message = "Activity entry keys must contain between 1 and 200 characters." });
+            }
+
+            var existing = await _history.GetByEventTypeAsync("ActivityDismissed");
+            var existingKeys = existing
+                .Select(entry => entry.SourceTitle)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+
+            foreach (var entry in entries.Where(entry => !existingKeys.Contains(entry.Key)))
+            {
+                await _history.AddAsync(new History
+                {
+                    AudiobookId = entry.AudiobookId,
+                    AudiobookTitle = entry.Title,
+                    SourceTitle = entry.Key,
+                    EventType = "ActivityDismissed",
+                    Message = "Activity entry dismissed; the underlying download or job was not changed.",
+                    Source = "Activity",
+                    Timestamp = DateTime.UtcNow,
+                    Outcome = HistoryOutcome.Succeeded,
+                    DownloadId = entry.DownloadId,
+                    IdempotencyKey = $"activity-dismiss:{entry.Key}"
+                });
+            }
+
+            return Ok(new { dismissed = entries.Length });
+        }
+
         /// <summary>
         /// Delete a single history entry.
         /// </summary>
@@ -221,5 +330,28 @@ namespace Listenarr.Api.Features.ActivityHistory
                 deletedCount
             });
         }
+
+        public sealed record ActivityDismissalEntry(
+            string Key,
+            int? AudiobookId,
+            string? Title,
+            string? DownloadId);
+
+        public sealed record ActivityDismissalRequest(List<ActivityDismissalEntry> Entries);
+
+        public sealed record QuickAddOperationActivityItem(
+            string Id,
+            int AudiobookId,
+            string AudiobookTitle,
+            string State,
+            int Attempt,
+            int? DiagnosticId,
+            string? SelectedRelease,
+            string? DownloadClientId,
+            string? DownloadId,
+            string? ProcessingJobId,
+            string? FailureReason,
+            DateTime CreatedAt,
+            DateTime UpdatedAt);
     }
 }

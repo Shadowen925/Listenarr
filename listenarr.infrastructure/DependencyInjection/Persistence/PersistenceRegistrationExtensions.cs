@@ -37,6 +37,7 @@ internal static class PersistenceRegistrationExtensions
         services.AddSingleton<IMoveExecutionStore, EfMoveExecutionStore>();
         services.AddSingleton<IMoveScanHandoffStore, EfMoveScanHandoffStore>();
         services.AddScoped<IHistoryRepository, EfHistoryRepository>();
+        services.AddScoped<IQuickAddOperationRepository, EfQuickAddOperationRepository>();
         return services;
     }
 }

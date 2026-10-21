@@ -53,6 +53,14 @@ const mockSignalR = () => {
 const mockApi = (overrides: Record<string, unknown> = {}) => {
   const apiService = {
     getQueue: vi.fn(async () => []),
+    getRecentHistory: vi.fn(async () => []),
+    getActivityDismissals: vi.fn(async () => []),
+    getVerifiedImportDownloadIds: vi.fn(async () => []),
+    getQuickAddOperations: vi.fn(async () => []),
+    retryQuickAddOperation: vi.fn(async () => undefined),
+    getAutomaticSearchHistory: vi.fn(async () => []),
+    dismissActivityEntries: vi.fn(async () => ({ dismissed: 1 })),
+    searchAndDownload: vi.fn(async () => ({ success: true })),
     removeFromQueue: vi.fn(async () => undefined),
     cancelDownload: vi.fn(async () => undefined),
     removeQueueItem: vi.fn(async () => ({ success: true, message: 'ok' })),
@@ -290,6 +298,79 @@ describe('ActivityView', () => {
 
     expect(vm.allActivityItems).toHaveLength(0)
     expect(wrapper.text()).not.toContain('Already imported')
+  })
+
+  it('does not recreate old completed entries after imported history leaves the recent window', async () => {
+    mockSignalR()
+    mockApi({
+      getQueue: vi.fn(async () => ({
+        items: [
+          {
+            id: 'old-imported-download',
+            title: 'Old imported audiobook',
+            status: 'completed',
+            progress: 100,
+            downloadClient: 'SABnzbd',
+            downloadClientId: 'sab-client-1',
+            downloadClientType: 'external',
+            canPause: false,
+            canRemove: true,
+          },
+        ],
+        clients: [],
+      })),
+      getVerifiedImportDownloadIds: vi.fn(async () => ['old-imported-download']),
+    })
+    mockConfigurationStore(true)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.text()).not.toContain('Old imported audiobook')
+  })
+
+  it('Clear Completed dismisses visible completed entries without deleting download data', async () => {
+    const dismiss = vi.fn(async () => ({ dismissed: 1 }))
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    mockSignalR()
+    const api = mockApi({
+      getQueue: vi.fn(async () => ({
+        items: [
+          {
+            id: 'completed-to-dismiss',
+            title: 'Completed but retained',
+            status: 'completed',
+            progress: 100,
+            downloadClient: 'SABnzbd',
+            downloadClientId: 'sab-client-1',
+            downloadClientType: 'external',
+            canPause: false,
+            canRemove: true,
+          },
+        ],
+        clients: [],
+      })),
+      dismissActivityEntries: dismiss,
+    })
+    mockConfigurationStore(true)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(dismiss).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: 'download:external:sab-client-1:completed-to-dismiss',
+        downloadId: 'completed-to-dismiss',
+      }),
+    ])
+    expect(api.cancelDownload).not.toHaveBeenCalled()
+    expect(api.removeFromQueue).not.toHaveBeenCalled()
   })
 
   it('offers manual import for completed external downloads and resolves their Listenarr path', async () => {
@@ -875,5 +956,161 @@ describe('ActivityView', () => {
     expect(vm.allActivityItems[0]?.id).toBe('tracked-artemis')
     expect(vm.allActivityItems[0]?.status).toBe('completed')
     expect(vm.allActivityItems[0]?.title).toBe('Artemis')
+  })
+
+  it('shows a durable Quick Add operation before a download-client ID exists', async () => {
+    mockSignalR()
+    mockApi({
+      getQuickAddOperations: vi.fn(async () => [
+        {
+          id: 'operation-42',
+          audiobookId: 42,
+          audiobookTitle: 'Quick Added Book',
+          state: 'SearchPending',
+          attempt: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore([{ id: 42, title: 'Quick Added Book' }])
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.text()).toContain('Quick Added Book')
+    expect(wrapper.text()).toContain('Search Pending')
+    expect(wrapper.findAll('.activity-row')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('Retry Search')
+    expect(wrapper.text()).toContain('Manual Search')
+  })
+
+  it('shows no matching releases and persists dismissal without removing files or jobs', async () => {
+    mockSignalR()
+    const api = mockApi({
+      getQuickAddOperations: vi.fn(async () => [
+        {
+          id: 'operation-43',
+          audiobookId: 43,
+          audiobookTitle: 'No Match Book',
+          state: 'NoMatchingReleases',
+          attempt: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+      getAutomaticSearchHistory: vi.fn(async () => [
+        {
+          id: 5,
+          audiobookId: 43,
+          searchTimestamp: new Date().toISOString(),
+          finalOutcome: 'NoReleases',
+          rejectionReasons: [],
+          submissionAttempts: [],
+          indexersQueried: [],
+          resultsReturned: 0,
+        },
+      ]),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore([{ id: 43, title: 'No Match Book' }])
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.text()).toContain('No Matching Releases')
+    expect(wrapper.text()).toContain('Retry Search')
+    await wrapper.get('button.activity-action-button').trigger('click')
+    await flushPromises()
+    expect(api.retryQuickAddOperation).toHaveBeenCalledWith('operation-43')
+    await wrapper.get('[aria-label="Dismiss No Match Book from Activity"]').trigger('click')
+    await flushPromises()
+
+    expect(api.dismissActivityEntries).toHaveBeenCalledWith([
+      expect.objectContaining({ key: 'quick-add:operation-43', audiobookId: 43 }),
+    ])
+    expect(wrapper.findAll('.activity-row')).toHaveLength(0)
+  })
+
+  it('does not show a Quick Add row when its associated download is already visible', async () => {
+    mockSignalR()
+    mockApi({
+      getQueue: vi.fn(async () => [
+        {
+          id: 'download-1',
+          title: 'Queued Book',
+          audiobookId: 44,
+          status: 'downloading',
+          progress: 20,
+          size: 100,
+          downloaded: 20,
+          downloadSpeed: 1,
+          quality: '',
+          downloadClient: 'Deluge',
+          downloadClientId: 'deluge',
+          downloadClientType: 'torrent',
+          addedAt: new Date().toISOString(),
+          canPause: false,
+          canRemove: false,
+        },
+      ]),
+      getRecentHistory: vi.fn(async () => [
+        {
+          id: 103,
+          audiobookId: 44,
+          audiobookTitle: 'Queued Book',
+          eventType: 'Added',
+          source: 'AddNew',
+          timestamp: new Date().toISOString(),
+          data: '{"autoSearch":true}',
+        },
+      ]),
+      getQuickAddOperations: vi.fn(async () => [
+        {
+          id: 'operation-44',
+          audiobookId: 44,
+          audiobookTitle: 'Queued Book',
+          state: 'Downloading',
+          downloadId: 'download-1',
+          attempt: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore([{ id: 44, title: 'Queued Book' }])
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.findAll('.activity-row')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('Search Queued')
+  })
+
+  it('restores dismissed Quick Add operations from persistent server state', async () => {
+    mockSignalR()
+    mockApi({
+      getQuickAddOperations: vi.fn(async () => [
+        {
+          id: 'operation-45',
+          audiobookId: 45,
+          audiobookTitle: 'Dismissed Book',
+          state: 'SearchPending',
+          attempt: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+      getActivityDismissals: vi.fn(async () => ['quick-add:operation-45']),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore([{ id: 45, title: 'Dismissed Book' }])
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+
+    expect(wrapper.findAll('.activity-row')).toHaveLength(0)
   })
 })

@@ -219,6 +219,74 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.ToTable("ProcessExecutionLogs");
                 });
 
+            modelBuilder.Entity("Listenarr.Domain.ActivityHistory.QuickAddOperation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AudiobookId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AudiobookTitle")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DiagnosticId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DownloadClientId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DownloadId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProcessingJobId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SelectedRelease")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AudiobookId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestKey")
+                        .IsUnique()
+                        .HasFilter("\"State\" <> 12");
+
+                    b.HasIndex("State", "UpdatedAt");
+
+                    b.ToTable("QuickAddOperations", (string)null);
+                });
+
             modelBuilder.Entity("Listenarr.Domain.Audiobooks.Audiobook", b =>
                 {
                     b.Property<int>("Id")
@@ -2222,6 +2290,10 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("Publisher")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("QuickAddOperationId")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("Runtime")
                         .HasColumnType("INTEGER");
 
@@ -2416,6 +2488,10 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
 
                     b.PrimitiveCollection<string>("ProcessingLog")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QuickAddOperationId")
+                        .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("RetryCount")
@@ -2707,6 +2783,9 @@ namespace Listenarr.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("QueriesAttempted")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QuickAddOperationId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("RejectionReasons")

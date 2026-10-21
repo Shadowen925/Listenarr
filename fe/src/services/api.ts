@@ -30,6 +30,7 @@ import type {
   AudiobookshelfSeriesSyncResult,
   Audiobook,
   AutomaticSearchDiagnosticHistoryItem,
+  QuickAddOperationActivityItem,
   AudiobookUpdateRequest,
   History,
   Indexer,
@@ -2024,6 +2025,41 @@ class ApiService {
     return this.request<History[]>(`/history/recent?limit=${limit}`)
   }
 
+  async getActivityDismissals(): Promise<string[]> {
+    return this.request<string[]>('/history/activity/dismissals')
+  }
+
+  async getVerifiedImportDownloadIds(): Promise<string[]> {
+    return this.request<string[]>('/history/activity/verified-import-download-ids')
+  }
+
+  async getQuickAddOperations(): Promise<QuickAddOperationActivityItem[]> {
+    return this.request<QuickAddOperationActivityItem[]>('/history/activity/quick-add-operations')
+  }
+
+  async retryQuickAddOperation(operationId: string): Promise<void> {
+    await this.request(
+      `/history/activity/quick-add-operations/${encodeURIComponent(operationId)}/retry`,
+      {
+        method: 'POST',
+      },
+    )
+  }
+
+  async dismissActivityEntries(
+    entries: Array<{
+      key: string
+      audiobookId?: number
+      title?: string
+      downloadId?: string
+    }>,
+  ): Promise<{ dismissed: number }> {
+    return this.request<{ dismissed: number }>('/history/activity/dismissals', {
+      method: 'POST',
+      body: JSON.stringify({ entries }),
+    })
+  }
+
   async deleteHistoryEntry(id: number): Promise<{ message: string; id: number }> {
     return this.request<{ message: string; id: number }>(`/history/${id}`, {
       method: 'DELETE',
@@ -2301,8 +2337,11 @@ class ApiService {
   async scoreSearchResults(
     profileId: number,
     searchResults: SearchResult[],
+    audiobookId?: number,
   ): Promise<QualityScore[]> {
-    return this.request<QualityScore[]>(`/qualityprofile/${profileId}/score`, {
+    const query =
+      audiobookId !== undefined ? `?audiobookId=${encodeURIComponent(String(audiobookId))}` : ''
+    return this.request<QualityScore[]>(`/qualityprofile/${profileId}/score${query}`, {
       method: 'POST',
       body: JSON.stringify(searchResults),
     })

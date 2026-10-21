@@ -121,29 +121,42 @@ namespace Listenarr.Tests.Features.Api.Features.Library
         }
 
         [Fact]
-        public async Task AddToLibrary_WhenAutoSearchEnabled_TriggersImmediateSearchForCreatedAudiobook()
+        public async Task AddToLibrary_WhenAutoSearchEnabled_PersistsQuickAddBeforeScheduledSearch()
         {
             var automaticSearchProcessor = new Mock<IAutomaticSearchProcessor>();
             await ReinitializeAsync(builder => builder
                 .WithSingleton<IAutomaticSearchProcessor>(automaticSearchProcessor.Object));
 
-            var result = await _provider.GetRequiredService<LibraryController>().AddToLibrary(
-                new LibraryController.AddToLibraryRequest
+            var request = new LibraryController.AddToLibraryRequest
+            {
+                Metadata = new AudibleBookMetadata
                 {
-                    Metadata = new AudibleBookMetadata
-                    {
-                        Title = "Immediate Search",
-                        Author = "Author"
-                    },
-                    Monitored = true,
-                    AutoSearch = true
-                });
+                    Title = "Immediate Search",
+                    Author = "Author"
+                },
+                Monitored = true,
+                AutoSearch = true
+            };
+            var controller = _provider.GetRequiredService<LibraryController>();
+            var result = await controller.AddToLibrary(request);
+            var duplicateResult = await controller.AddToLibrary(request);
 
             Assert.IsType<OkObjectResult>(result);
+            Assert.IsType<ConflictObjectResult>(duplicateResult);
             var audiobook = Assert.Single(await _audiobookRepository.GetAllAsync());
+            var history = Assert.Single(await _historyRepository.GetByAudiobookIdAsync(audiobook.Id));
+            Assert.Equal("Added", history.EventType);
+            Assert.Equal("AddNew", history.Source);
+            Assert.Contains("\"autoSearch\":true", history.Data);
+            var operation = Assert.Single(await _provider
+                .GetRequiredService<IQuickAddOperationRepository>()
+                .GetUnresolvedAsync());
+            Assert.Equal(audiobook.Id, operation.AudiobookId);
+            Assert.Equal(QuickAddOperationState.SearchPending, operation.State);
+            Assert.Equal(operation.Id, history.CorrelationId);
             automaticSearchProcessor.Verify(
                 processor => processor.SearchAudiobookAsync(audiobook.Id, It.IsAny<CancellationToken>()),
-                Times.Once);
+                Times.Never);
         }
 
         [Fact]
@@ -1368,12 +1381,19 @@ namespace Listenarr.Tests.Features.Api.Features.Library
             public async Task CommitAsync(
                 Audiobook audiobook,
                 History history,
-                CancellationToken cancellationToken = default)
+                CancellationToken cancellationToken = default,
+                QuickAddOperation? operation = null)
             {
                 db.Audiobooks.Add(audiobook);
                 Assert.True(audiobook.Id > 0);
                 history.AudiobookId = audiobook.Id;
                 db.History.Add(history);
+                if (operation != null)
+                {
+                    operation.AudiobookId = audiobook.Id;
+                    operation.AudiobookTitle = audiobook.Title;
+                    db.QuickAddOperations.Add(operation);
+                }
                 await db.SaveChangesAsync(cancellationToken);
             }
         }

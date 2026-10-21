@@ -225,6 +225,13 @@ export interface QueueItem {
   missingFromClient?: boolean
   recoveryState?: string | null
   recoveryReason?: string | null
+  activityKey?: string
+  activityOperationId?: string
+  activityDiagnosticId?: number
+  activitySelectedRelease?: string
+  activityStage?: string
+  activityError?: string
+  activityIndeterminate?: boolean
 }
 
 export type DownloadRemovalMode = 'listenarrOnly' | 'clientKeepFiles' | 'clientDeleteData'
@@ -1071,6 +1078,22 @@ export interface AutomaticSearchDiagnosticHistoryItem {
   nextRetryAt?: string | null
 }
 
+export interface QuickAddOperationActivityItem {
+  id: string
+  audiobookId: number
+  audiobookTitle: string
+  state: string
+  attempt: number
+  diagnosticId?: number | null
+  selectedRelease?: string | null
+  downloadClientId?: string | null
+  downloadId?: string | null
+  processingJobId?: string | null
+  failureReason?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AudiobookUpdateRequest {
   title?: string
   subtitle?: string
@@ -1113,6 +1136,8 @@ export interface History {
   timestamp: string
   notificationSent?: boolean
   data?: string
+  outcome?: string
+  downloadId?: string
 }
 
 export interface Indexer {
@@ -1333,6 +1358,10 @@ export interface QualityScore {
   scoreBreakdown: Record<string, number>
   rejectionReasons: string[]
   isRejected: boolean
+  matchesAudiobookEdition?: boolean
+  editionMatchConfidence?: number
+  editionMatchEvidence?: string[]
+  editionMatchConflicts?: string[]
   // Optional Prowlarr-style composite smart score and breakdown
   smartScore?: number
   smartScoreBreakdown?: Record<string, number>

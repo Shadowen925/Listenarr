@@ -87,7 +87,10 @@ describe('ManualSearchModal.vue', () => {
     PhDownloadSimple: true,
     PhArrowsDownUp: true,
     // Ensure ScorePopover renders its default slot in tests so the inner badge is present
-    ScorePopover: { template: '<div><slot /></div>' },
+    ScorePopover: {
+      props: ['content'],
+      template: '<div :title="content"><slot /></div>',
+    },
     Modal: { template: '<div><slot name="header" /><slot /></div>' },
     ModalHeader: { template: '<div><slot /></div>' },
     ModalBody: { template: '<div><slot /></div>' },
@@ -451,6 +454,10 @@ describe('ManualSearchModal.vue', () => {
             scoreBreakdown: { Quality: 88 },
             rejectionReasons: [],
             isRejected: false,
+            matchesAudiobookEdition: false,
+            editionMatchConfidence: 20,
+            editionMatchEvidence: ['Title overlap'],
+            editionMatchConflicts: ['ConflictingNarrator'],
           },
         ] as never,
     )
@@ -477,10 +484,18 @@ describe('ManualSearchModal.vue', () => {
 
     expect(apiService.getDefaultQualityProfile).toHaveBeenCalledTimes(1)
     expect(apiService.scoreSearchResults).toHaveBeenCalledTimes(1)
+    expect(apiService.scoreSearchResults).toHaveBeenCalledWith(77, expect.any(Array), 99)
 
     const badge = wrapper.find('.col-score .score-badge')
     expect(badge.exists()).toBe(true)
     expect(badge.text()).toContain('88')
+    expect(wrapper.find('.edition-mismatch').text()).toBe('Different edition')
+    expect(wrapper.find('.col-score [title]').attributes('title')).toContain(
+      'Selected edition: Does not match',
+    )
+    expect(wrapper.find('.col-score [title]').attributes('title')).toContain(
+      'Conflicts: ConflictingNarrator',
+    )
   })
 
   it('exports useful search diagnostics without release URLs or download references', async () => {

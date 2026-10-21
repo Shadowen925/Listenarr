@@ -16,7 +16,6 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Listenarr.Application.Downloads.Stalls;
 using Listenarr.Application.Search.Matching;
@@ -34,32 +33,32 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             IDownloadRepository downloadRepository,
             IAudiobookFileRepository fileRepository,
             IReleaseRejectionRepository releaseRejections,
+            IQuickAddOperationRepository quickAddOperations,
             IConfigurationService configurationService,
             IReadOnlyList<string> indexersQueried,
             AutomaticSearchTrigger searchTrigger,
             int retryIntervalHours,
             CancellationToken stoppingToken)
         {
+            var (quickAddOperation, allDownloads, shouldSkip) = await GetSearchContextAsync(
+                audiobook,
+                downloadRepository,
+                quickAddOperations,
+                searchTrigger,
+                stoppingToken);
+            if (shouldSkip) return 0;
+
             if (audiobook.QualityProfile == null)
             {
                 _logger.LogWarning("Audiobook '{Title}' has no quality profile assigned", audiobook.Title);
-                return 0;
-            }
-
-            // Check if there's already an active download for this audiobook
-            var allDownloads = await downloadRepository.GetByAudiobookIdAsync(audiobook.Id, stoppingToken);
-            var activeDownload = allDownloads.FirstOrDefault(d =>
-                d.Status == DownloadStatus.Queued ||
-                d.Status == DownloadStatus.Downloading ||
-                d.Status == DownloadStatus.Paused ||
-                d.Status == DownloadStatus.Processing ||
-                d.Status == DownloadStatus.Ready ||
-                d.Status == DownloadStatus.ImportPending);
-
-            if (activeDownload != null)
-            {
-                _logger.LogInformation("Audiobook '{Title}' already has an active download (ID: {DownloadId}, Status: {Status}), skipping automatic search",
-                    audiobook.Title, activeDownload.Id, activeDownload.Status);
+                if (quickAddOperation != null)
+                {
+                    await quickAddOperations.AdvanceAsync(
+                        audiobook.Id,
+                        QuickAddOperationState.FailedNeedsAttention,
+                        failureReason: "No quality profile is assigned to this audiobook.",
+                        cancellationToken: stoppingToken);
+                }
                 return 0;
             }
 
@@ -79,6 +78,13 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             var searchQueries = _resultClassifier.BuildSearchQueries(audiobook);
             var searchQuery = searchQueries.FirstOrDefault() ?? string.Empty;
             _logger.LogInformation("Searching for audiobook '{Title}' with query: {Query}", audiobook.Title, searchQuery);
+            if (quickAddOperation != null)
+            {
+                await quickAddOperations.AdvanceAsync(
+                    audiobook.Id,
+                    QuickAddOperationState.Searching,
+                    cancellationToken: stoppingToken);
+            }
 
             var submissionAttempts = new List<AutomaticSearchSubmissionAttempt>();
             var rejectionReasons = new List<string>();
@@ -134,9 +140,24 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     nextRetryAt: DateTime.UtcNow.AddHours(retryIntervalHours),
                     queriesAttempted: attemptedQueries,
                     indexerOutcomes: indexerOutcomes);
+                if (quickAddOperation != null)
+                {
+                    await quickAddOperations.AdvanceAsync(
+                        audiobook.Id,
+                        QuickAddOperationState.FailedNeedsAttention,
+                        failureReason: "Automatic search failed before indexer results were available.",
+                        cancellationToken: stoppingToken);
+                }
                 throw;
             }
             var searchedQuery = string.Join(" | ", attemptedQueries);
+            if (quickAddOperation != null)
+            {
+                await quickAddOperations.AdvanceAsync(
+                    audiobook.Id,
+                    QuickAddOperationState.EvaluatingReleases,
+                    cancellationToken: stoppingToken);
+            }
             searchResults = rawSearchResults
                 .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
                 .ToList();
@@ -156,30 +177,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 audiobook.Title,
                 searchedQuery);
 
-            // Broadcast detailed debug info about the raw search results to help diagnose automatic search failures
-            try
-            {
-                // Build a concise summary of up to 10 raw results
-                var rawSummaries = rawSearchResults.Take(10).Select(r => new
-                {
-                    title = r.Title,
-                    asin = r.Asin,
-                    source = r.Source,
-                    sizeMB = r.Size > 0 ? (r.Size / 1024 / 1024) : -1,
-                    seeders = r.Seeders,
-                    format = r.Format,
-                    downloadType = r.DownloadType
-                }).ToList();
-
-                using var scope = _serviceScopeFactory.CreateScope();
-                var hub = scope.ServiceProvider.GetRequiredService<IHubContext<DownloadHub>>();
-                // Send structured payload with type and audiobookId so the UI can ignore automatic messages by default
-                await hub.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Automatic search query: {searchedQuery}", details = new { rawCount = totalIndexerResultCount, distinctRawCount = rawSearchResults.Count, identityRejectedCount, rawSamples = rawSummaries }, type = "automatic", audiobookId = audiobook.Id } });
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-            {
-                _logger.LogDebug(ex, "Failed to broadcast raw search results summary for audiobook {Id}", audiobook.Id);
-            }
+            await BroadcastRawSearchProgressAsync(
+                audiobook,
+                searchedQuery,
+                totalIndexerResultCount,
+                rawSearchResults,
+                identityRejectedCount);
 
             if (!searchResults.Any())
             {
@@ -214,6 +217,14 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     distinctCandidateCount: rawSearchResults.Count,
                     identityMatchCount: identityMatchCount,
                     qualityRejectedCount: qualityRejectedCount);
+                if (quickAddOperation != null)
+                {
+                    await quickAddOperations.AdvanceAsync(
+                        audiobook.Id,
+                        QuickAddOperationState.NoMatchingReleases,
+                        failureReason: "No matching releases were found.",
+                        cancellationToken: stoppingToken);
+                }
                 return 0;
             }
 
@@ -245,46 +256,20 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             // Log all scored results for debugging
             _logger.LogInformation("Scored {Count} search results for audiobook '{Title}':", scoredResults.Count, audiobook.Title);
 
-            // Broadcast scored result summaries (score + rejection reasons) to aid debugging
-            try
-            {
-                var scoredSummaries = scoredResults.Select(s => new
-                {
-                    title = s.SearchResult.Title,
-                    asin = s.SearchResult.Asin,
-                    totalScore = s.TotalScore,
-                    isRejected = s.IsRejected,
-                    rejectionReasons = s.RejectionReasons,
-                    source = s.SearchResult.Source,
-                    sizeMB = s.SearchResult.Size > 0 ? (s.SearchResult.Size / 1024 / 1024) : -1,
-                    seeders = s.SearchResult.Seeders,
-                    format = s.SearchResult.Format
-                }).ToList();
-
-                using var scope2 = _serviceScopeFactory.CreateScope();
-                var hub2 = scope2.ServiceProvider.GetRequiredService<IHubContext<DownloadHub>>();
-                await hub2.Clients.All.SendCoreAsync("SearchProgress", new object[] { new { message = $"Scored results for '{audiobook.Title}'", details = new { query = searchedQuery, rawResultCount = totalIndexerResultCount, identityRejectedCount, resultCount = searchResults.Count, qualityRejectedCount = scoredResults.Count(s => s.IsRejected), duplicateExcludedCount = releaseRejectionCount, eligibleCount = scoredResults.Count(s => !s.IsRejected), scoredCount = scoredResults.Count, scoredSamples = scoredSummaries }, type = "automatic", audiobookId = audiobook.Id } });
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-            {
-                _logger.LogDebug(ex, "Failed to broadcast scored search results for audiobook {Id}", audiobook.Id);
-            }
-            foreach (var scoredResult in scoredResults.OrderByDescending(s => s.TotalScore))
-            {
-                var status = scoredResult.IsRejected ? "REJECTED" : (scoredResult.TotalScore > 0 ? "ACCEPTABLE" : "LOW SCORE");
-                _logger.LogInformation("  [{Status}] Score: {Score} | Title: {Title} | Source: {Source} | Size: {Size}MB | Seeders: {Seeders} | Quality: {Quality}",
-                    status, scoredResult.TotalScore, scoredResult.SearchResult.Title, scoredResult.SearchResult.Source,
-                    scoredResult.SearchResult.Size / 1024 / 1024, scoredResult.SearchResult.Seeders, scoredResult.SearchResult.Quality);
-
-                if (scoredResult.IsRejected && scoredResult.RejectionReasons.Any())
-                {
-                    _logger.LogInformation("    Rejection reasons: {Reasons}", string.Join(", ", scoredResult.RejectionReasons));
-                }
-            }
+            await BroadcastScoredSearchProgressAsync(
+                audiobook,
+                searchedQuery,
+                totalIndexerResultCount,
+                identityRejectedCount,
+                searchResults.Count,
+                releaseRejectionCount,
+                scoredResults);
 
             var eligibleResults = scoredResults
                 .Where(result => !result.IsRejected)
-                .OrderByDescending(result => result.TotalScore)
+                .OrderByDescending(result =>
+                    AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, result.SearchResult).Confidence)
+                .ThenByDescending(result => result.TotalScore)
                 .Where(result => string.IsNullOrWhiteSpace(bestExistingQuality)
                     || _qualityEvaluator.IsQualityBetter(
                         result.SearchResult.Quality,
@@ -314,6 +299,14 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     distinctCandidateCount: rawSearchResults.Count,
                     identityMatchCount: identityMatchCount,
                     qualityRejectedCount: qualityRejectedCount);
+                if (quickAddOperation != null)
+                {
+                    await quickAddOperations.AdvanceAsync(
+                        audiobook.Id,
+                        QuickAddOperationState.NoMatchingReleases,
+                        failureReason: "No acceptable release matched the audiobook.",
+                        cancellationToken: stoppingToken);
+                }
                 return 0;
             }
 
@@ -326,6 +319,14 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 string? clientType = null;
                 try
                 {
+                    if (quickAddOperation != null)
+                    {
+                        await quickAddOperations.AdvanceAsync(
+                            audiobook.Id,
+                            QuickAddOperationState.DownloadSubmissionPending,
+                            selectedRelease: result.Title,
+                            cancellationToken: stoppingToken);
+                    }
                     var clientId = await _downloadClientSelector.GetAppropriateDownloadClientAsync(result, isTorrent);
                     if (string.IsNullOrWhiteSpace(clientId))
                     {
@@ -369,6 +370,22 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                         return 0;
                     }
 
+                    if (quickAddOperation != null)
+                    {
+                        var submittedDownload = await downloadRepository.GetByIdAsync(downloadId);
+                        if (submittedDownload != null)
+                        {
+                            submittedDownload.QuickAddOperationId = quickAddOperation.Id;
+                            await downloadRepository.UpdateAsync(submittedDownload);
+                        }
+                        await quickAddOperations.AdvanceAsync(
+                            audiobook.Id,
+                            QuickAddOperationState.Queued,
+                            selectedRelease: result.Title,
+                            downloadClientId: clientId,
+                            downloadId: downloadId,
+                            cancellationToken: stoppingToken);
+                    }
                     submissionAttempts.Add(new AutomaticSearchSubmissionAttempt(
                         result.Title,
                         clientType,
@@ -462,6 +479,14 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 distinctCandidateCount: rawSearchResults.Count,
                 identityMatchCount: identityMatchCount,
                 qualityRejectedCount: qualityRejectedCount);
+            if (quickAddOperation != null)
+            {
+                await quickAddOperations.AdvanceAsync(
+                    audiobook.Id,
+                    QuickAddOperationState.FailedNeedsAttention,
+                    failureReason: "All matching release submissions failed.",
+                    cancellationToken: stoppingToken);
+            }
             return 0;
         }
     }

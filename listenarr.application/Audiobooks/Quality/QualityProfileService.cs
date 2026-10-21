@@ -355,36 +355,21 @@ namespace Listenarr.Application.Audiobooks.Quality
             if (preferredLanguages == null || preferredLanguages.Count == 0 || string.IsNullOrEmpty(titleLower))
                 return null;
 
-            foreach (var lang in preferredLanguages.Where(lang => !string.IsNullOrWhiteSpace(lang)))
+            if (SearchResultAttributeParser.HasConflictingExplicitLanguages(titleLower))
             {
-                var token = lang.ToLower().Trim();
-
-                // Basic match for language name or common short forms
-                if (titleLower.Contains(token) || titleLower.Contains("[" + token + "]") || titleLower.Contains("(" + token + ")") || titleLower.Contains(" " + token + " "))
-                {
-                    return lang; // return original (possibly capitalised) profile language value
-                }
+                return null;
             }
 
-            // Also check a small set of common language tokens to detect language even when not present in profile
-            var common = new Dictionary<string, string>
-            {
-                { "eng", "English" },
-                { "english", "English" },
-                { "es", "Spanish" },
-                { "spanish", "Spanish" },
-                { "de", "German" },
-                { "german", "German" },
-                { "fr", "French" },
-                { "french", "French" }
-            };
-
-            foreach (var (token, name) in common)
-            {
-                if (titleLower.Contains(token)) return name;
-            }
-
-            return null;
+            var detected = SearchResultAttributeParser.ParseExplicitLanguageFromText(titleLower);
+            return detected != null && preferredLanguages.Any(language =>
+                string.Equals(
+                    SearchResultAttributeParser.ParseLanguageFromCode(language)
+                        ?? SearchResultAttributeParser.ParseExplicitLanguageFromText(language)
+                        ?? language,
+                    detected,
+                    StringComparison.OrdinalIgnoreCase))
+                ? detected
+                : null;
         }
     }
 

@@ -22,7 +22,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Application.Downloads.Submission
 {
-    public class DownloadService(
+    public partial class DownloadService(
         IAudiobookRepository audiobookRepository,
         IConfigurationService configurationService,
         IDownloadRepository downloadRepository,
@@ -38,7 +38,8 @@ namespace Listenarr.Application.Downloads.Submission
         DownloadCachedTorrentStore cachedTorrentStore,
         IDownloadSubmissionPreparer submissionPreparer,
         DirectDownloadWorkflow directDownloadWorkflow,
-        DownloadRemovalWorkflow downloadRemovalWorkflow) : IDownloadService
+        DownloadRemovalWorkflow downloadRemovalWorkflow,
+        IQuickAddOperationRepository quickAddOperations) : IDownloadService
     {
         // Cache expiration constants
         private const int QueueCacheExpirationSeconds = 10;
@@ -149,9 +150,7 @@ namespace Listenarr.Application.Downloads.Submission
             // by the background/manual 'search-and-download' endpoint), so set isAutomaticSearch
             // to true to ensure only indexers are queried (no Amazon/Audible scraping).
             var searchResults = await searchService.SearchAsync(searchQuery, isAutomaticSearch: true);
-            searchResults = searchResults?
-                .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
-                .ToList() ?? [];
+            searchResults = searchResults?.Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result)).ToList() ?? [];
 
             if (searchResults == null || !searchResults.Any())
             {
@@ -182,7 +181,9 @@ namespace Listenarr.Application.Downloads.Submission
             // Only consider non-rejected, score > 0 results
             var topResult = scoredResults
                 .Where(s => !s.IsRejected && s.TotalScore > 0)
-                .OrderByDescending(s => s.TotalScore)
+                .OrderByDescending(s =>
+                    AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, s.SearchResult).Confidence)
+                .ThenByDescending(s => s.TotalScore)
                 .FirstOrDefault();
 
             if (topResult == null)
@@ -470,31 +471,5 @@ namespace Listenarr.Application.Downloads.Submission
             await Task.CompletedTask;
         }
 
-        public async Task UpdateAsync(Download download)
-        {
-            var previous = await downloadRepository.GetByIdAsync(download.Id);
-            if (previous is null)
-            {
-                logger.LogWarning("Skipping update for unknown download {DownloadId}", LogRedaction.SanitizeText(download.Id));
-                return;
-            }
-
-            await downloadRepository.UpdateAsync(download);
-
-            switch (previous.Status, download.Status)
-            {
-                case var (old, next) when old == next:
-                    return;
-                case (_, DownloadStatus.Moved):
-                    await notificationService.OnDownloadImportedAsync(download);
-                    return;
-                case (_, DownloadStatus.Failed):
-                case (_, DownloadStatus.ImportBlocked):
-                    await notificationService.OnDownloadFailedAsync(download);
-                    return;
-                default:
-                    return;
-            }
-        }
     }
 }

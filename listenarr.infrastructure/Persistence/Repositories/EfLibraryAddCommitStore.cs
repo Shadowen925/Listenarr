@@ -7,7 +7,8 @@ public sealed class EfLibraryAddCommitStore(ListenArrDbContext db) : ILibraryAdd
     public async Task CommitAsync(
         Audiobook audiobook,
         History history,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        QuickAddOperation? operation = null)
     {
         if (!db.Database.IsRelational())
         {
@@ -22,6 +23,12 @@ public sealed class EfLibraryAddCommitStore(ListenArrDbContext db) : ILibraryAdd
             await db.SaveChangesAsync(cancellationToken);
             history.AudiobookId = audiobook.Id;
             db.History.Add(history);
+            if (operation != null)
+            {
+                operation.AudiobookId = audiobook.Id;
+                operation.AudiobookTitle = audiobook.Title;
+                db.QuickAddOperations.Add(operation);
+            }
             await db.SaveChangesAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             // SaveChanges has succeeded, so finish the transaction authoritatively.

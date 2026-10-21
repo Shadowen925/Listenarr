@@ -12,6 +12,7 @@ public sealed class AutomaticSearchDiagnostic
 {
     public int Id { get; set; }
     public int AudiobookId { get; set; }
+    public string? QuickAddOperationId { get; set; }
     public DateTime SearchTimestamp { get; set; } = DateTime.UtcNow;
     public string SearchTrigger { get; set; } = "Periodic";
     public List<string> QueriesAttempted { get; set; } = [];

@@ -33,12 +33,18 @@ public sealed class EfLibraryAddCommitStoreTests : BaseTests
             Source = "Test",
             Timestamp = DateTime.UtcNow
         };
+        var operation = new QuickAddOperation
+        {
+            RequestKey = new string('A', 64),
+            AudiobookTitle = audiobook.Title ?? string.Empty
+        };
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            store.CommitAsync(audiobook, history, cancellation.Token));
+            store.CommitAsync(audiobook, history, cancellation.Token, operation));
 
         Assert.Empty(await db.Audiobooks.AsNoTracking().ToListAsync());
         Assert.Empty(await db.History.AsNoTracking().ToListAsync());
+        Assert.Empty(await db.QuickAddOperations.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -61,12 +67,20 @@ public sealed class EfLibraryAddCommitStoreTests : BaseTests
             Source = "Test",
             Timestamp = DateTime.UtcNow
         };
+        var operation = new QuickAddOperation
+        {
+            RequestKey = new string('B', 64),
+            AudiobookTitle = audiobook.Title ?? string.Empty
+        };
 
-        await store.CommitAsync(audiobook, history);
+        await store.CommitAsync(audiobook, history, operation: operation);
 
         Assert.True(audiobook.Id > 0);
         var storedHistory = Assert.Single(await db.History.AsNoTracking().ToListAsync());
         Assert.Equal(audiobook.Id, storedHistory.AudiobookId);
+        var storedOperation = Assert.Single(await db.QuickAddOperations.AsNoTracking().ToListAsync());
+        Assert.Equal(audiobook.Id, storedOperation.AudiobookId);
+        Assert.Equal(QuickAddOperationState.SearchPending, storedOperation.State);
     }
 
     private sealed class CancelAfterFirstSaveInterceptor(CancellationTokenSource cancellation)

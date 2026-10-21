@@ -45,6 +45,7 @@ namespace Listenarr.Domain.Downloads
 
         public string Id { get; set; } = Guid.NewGuid().ToString();
         public int? AudiobookId { get; set; } // Link to Audiobook record for metadata
+        public string? QuickAddOperationId { get; set; }
         public int? ActiveAudiobookDeduplicationKey { get; set; }
         public string Title { get; set; } = string.Empty;
         public string Artist { get; set; } = string.Empty;

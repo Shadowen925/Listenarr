@@ -26,6 +26,7 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
         public void Configure(EntityTypeBuilder<Download> builder)
         {
             builder.HasKey(d => d.Id);
+            builder.Property(d => d.QuickAddOperationId).HasMaxLength(32);
             builder.HasIndex(d => d.ActiveAudiobookDeduplicationKey)
                 .IsUnique()
                 .HasFilter("\"ActiveAudiobookDeduplicationKey\" IS NOT NULL");

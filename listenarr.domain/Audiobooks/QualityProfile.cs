@@ -172,6 +172,10 @@ namespace Listenarr.Domain.Audiobooks
         public int TotalScore { get; set; }
         public Dictionary<string, int> ScoreBreakdown { get; set; } = new();
         public List<string> RejectionReasons { get; set; } = new();
+        public bool? MatchesAudiobookEdition { get; set; }
+        public int? EditionMatchConfidence { get; set; }
+        public List<string> EditionMatchEvidence { get; set; } = [];
+        public List<string> EditionMatchConflicts { get; set; } = [];
 
         // Prowlarr-style composite smart scoring (optional)
         public double SmartScore { get; set; }
@@ -180,4 +184,3 @@ namespace Listenarr.Domain.Audiobooks
         public bool IsRejected => RejectionReasons.Count > 0;
     }
 }
-

@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Listenarr.Application.Search.Matching
@@ -10,10 +8,10 @@ namespace Listenarr.Application.Search.Matching
         IReadOnlyList<string> PositiveEvidence,
         IReadOnlyList<string> Conflicts);
 
-    public static class AudiobookSearchResultMatcher
+    public static partial class AudiobookSearchResultMatcher
     {
         private static readonly HashSet<string> IgnoredTitleTokens =
-            new(StringComparer.OrdinalIgnoreCase) { "a", "an", "the" };
+            new(StringComparer.OrdinalIgnoreCase) { "a", "an", "the", "s" };
 
         public static bool MatchesAsin(Audiobook audiobook, SearchResult result) =>
             string.IsNullOrWhiteSpace(audiobook.Asin)
@@ -39,6 +37,34 @@ namespace Listenarr.Application.Search.Matching
                 conflicts.Add("IncompatibleEdition");
             }
 
+            var languageEvidence = EvaluateLanguage(audiobook, result);
+            if (languageEvidence.Conflict != null)
+            {
+                conflicts.Add(languageEvidence.Conflict);
+            }
+            else if (languageEvidence.Matches)
+            {
+                positiveEvidence.Add("LanguageMatch");
+            }
+
+            var editionMatches = MatchesEditionLabel(audiobook, result);
+            if (editionMatches)
+            {
+                positiveEvidence.Add("EditionMatch");
+            }
+
+            var productionMatches = MatchesProductionType(audiobook, result);
+            if (productionMatches)
+            {
+                positiveEvidence.Add("ProductionTypeMatch");
+            }
+
+            var abridgementMatches = MatchesAbridgement(audiobook, result);
+            if (abridgementMatches)
+            {
+                positiveEvidence.Add("AbridgementMatch");
+            }
+
             var titleMatches = MatchesTitle(audiobook, result);
             if (titleMatches)
             {
@@ -61,6 +87,18 @@ namespace Listenarr.Application.Search.Matching
             if (asinMatches)
             {
                 positiveEvidence.Add("AsinMatch");
+            }
+
+            var narratorMatches = MatchesNarrator(audiobook, result);
+            if (narratorMatches)
+            {
+                positiveEvidence.Add("NarratorMatch");
+            }
+
+            var runtimeMatches = MatchesRuntime(audiobook, result);
+            if (runtimeMatches)
+            {
+                positiveEvidence.Add("RuntimeMatch");
             }
 
             var (authorMatches, authorConflict) = EvaluateAuthors(audiobook, result);
@@ -90,7 +128,164 @@ namespace Listenarr.Application.Search.Matching
                 : seriesPositionMatches ? 85
                 : titleMatches ? 75
                 : 0;
+            if (!asinMatches)
+            {
+                confidence = Math.Min(
+                    99,
+                    confidence
+                        + (editionMatches ? 6 : 0)
+                        + (productionMatches ? 6 : 0)
+                        + (abridgementMatches ? 4 : 0)
+                        + (narratorMatches ? 5 : 0)
+                        + (runtimeMatches ? 3 : 0)
+                        + (languageEvidence.Matches ? 2 : 0));
+            }
             return new AudiobookMatchEvidence(accepted, confidence, positiveEvidence, conflicts);
+        }
+
+        private static (bool Matches, string? Conflict) EvaluateLanguage(Audiobook audiobook, SearchResult result)
+        {
+            var title = string.Join(" ", result.Title, result.Subtitle, result.Edition, result.Description);
+            if (SearchResultAttributeParser.HasConflictingExplicitLanguages(title))
+            {
+                return (false, null);
+            }
+
+            var titleLanguage = SearchResultAttributeParser.ParseExplicitLanguageFromText(title);
+            var metadataLanguage = NormalizeLanguage(result.Language);
+            if (titleLanguage != null && metadataLanguage != null
+                && !string.Equals(titleLanguage, metadataLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, "ConflictingReleaseLanguageMetadata");
+            }
+
+            var expectedLanguage = NormalizeLanguage(audiobook.Language);
+            var candidateLanguage = titleLanguage ?? metadataLanguage;
+            if (expectedLanguage == null || candidateLanguage == null)
+            {
+                return (false, null);
+            }
+
+            return string.Equals(expectedLanguage, candidateLanguage, StringComparison.OrdinalIgnoreCase)
+                ? (true, null)
+                : (false, "ConflictingLanguage");
+        }
+
+        private static string? NormalizeLanguage(string? language)
+        {
+            if (string.IsNullOrWhiteSpace(language))
+            {
+                return null;
+            }
+
+            return SearchResultAttributeParser.ParseLanguageFromCode(language.Trim())
+                ?? SearchResultAttributeParser.ParseExplicitLanguageFromText(language)
+                ?? language.Trim();
+        }
+
+        private static bool MatchesNarrator(Audiobook audiobook, SearchResult result)
+        {
+            var expectedNarrators = audiobook.Narrators?
+                .Where(narrator => !string.IsNullOrWhiteSpace(narrator))
+                .Select(Tokenize)
+                .Where(tokens => tokens.Count > 0)
+                .ToList() ?? [];
+            if (expectedNarrators.Count == 0)
+            {
+                return false;
+            }
+
+            var candidate = Tokenize(string.Join(" ", result.Narrator, result.Title, result.Description));
+            return expectedNarrators.Any(expected => expected.All(candidate.Contains));
+        }
+
+        private static bool MatchesEditionLabel(Audiobook audiobook, SearchResult result)
+        {
+            var candidate = string.Join(
+                " ",
+                result.Edition,
+                result.Version,
+                result.Title,
+                result.Subtitle,
+                result.Description);
+            return MatchesEditionLabel(candidate, audiobook.Edition)
+                || MatchesEditionLabel(candidate, audiobook.Version);
+        }
+
+        private static bool MatchesEditionLabel(string candidate, string? expected)
+        {
+            return expected != null
+                && SignificantTokens(expected).Count > 0
+                && ContainsTitle(candidate, expected);
+        }
+
+        private static bool MatchesProductionType(Audiobook audiobook, SearchResult result)
+        {
+            var candidateType = result.ProductionType != AudiobookProductionType.Standard
+                ? result.ProductionType
+                : GetProductionType(Normalize(string.Join(
+                    " ",
+                    result.Edition,
+                    result.Version,
+                    result.Title,
+                    result.Subtitle,
+                    result.Description)));
+            return candidateType.HasValue && candidateType.Value == audiobook.ProductionType;
+        }
+
+        private static bool MatchesAbridgement(Audiobook audiobook, SearchResult result)
+        {
+            var candidateText = Normalize(string.Join(
+                " ",
+                result.Edition,
+                result.Version,
+                result.Title,
+                result.Description));
+            var candidateAbridged = result.Abridged || HasAny(candidateText, "abridged");
+            var candidateUnabridged = HasAny(candidateText, "unabridged");
+            return audiobook.Abridged
+                ? candidateAbridged && !candidateUnabridged
+                : candidateUnabridged && !candidateAbridged;
+        }
+
+        private static bool MatchesRuntime(Audiobook audiobook, SearchResult result)
+        {
+            if (audiobook.Runtime is not > 0)
+            {
+                return false;
+            }
+
+            var candidateRuntime = result.Runtime ?? ParseRuntimeMinutes(result.Title, result.Description);
+            return candidateRuntime is > 0
+                && Math.Abs(candidateRuntime.Value - audiobook.Runtime.Value) <= Math.Max(15, audiobook.Runtime.Value * 0.15);
+        }
+
+        private static int? ParseRuntimeMinutes(params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                var match = Regex.Match(
+                    value,
+                    @"\b(?:(\d{1,2})\s*(?:h|hr|hours?)\s*)?(\d{1,3})\s*(?:m|min|minutes?)\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (match.Success)
+                {
+                    var hours = match.Groups[1].Success && int.TryParse(match.Groups[1].Value, out var parsedHours)
+                        ? parsedHours
+                        : 0;
+                    if (int.TryParse(match.Groups[2].Value, out var minutes))
+                    {
+                        return (hours * 60) + minutes;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static bool MatchesTitle(Audiobook audiobook, SearchResult result)
@@ -264,155 +459,5 @@ namespace Listenarr.Application.Search.Matching
             return (false, false);
         }
 
-        private static IEnumerable<string> GetTitleVariants(string? title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                yield break;
-            }
-
-            var trimmed = title.Trim();
-            yield return trimmed;
-            var colon = trimmed.IndexOf(':');
-            if (colon > 0)
-            {
-                var core = trimmed[..colon].Trim();
-                if (!string.IsNullOrWhiteSpace(core))
-                {
-                    yield return core;
-                }
-            }
-        }
-
-        private static HashSet<string> SignificantTokens(string? value) =>
-            Tokenize(value)
-                .Where(token => !IgnoredTitleTokens.Contains(token))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        private static bool ContainsTokenSequence(string candidate, IReadOnlyCollection<string> expectedTokens)
-        {
-            var candidateTokens = Tokenize(candidate);
-            var expected = expectedTokens.ToArray();
-            for (var start = 0; expected.Length > 0 && start <= candidateTokens.Count - expected.Length; start++)
-            {
-                if (expected.Select((token, index) =>
-                        string.Equals(token, candidateTokens[start + index], StringComparison.OrdinalIgnoreCase))
-                    .All(matches => matches))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static decimal? ParsePosition(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return null;
-            }
-
-            var match = Regex.Match(value, @"\d+(?:\.\d+)?", RegexOptions.CultureInvariant);
-            return match.Success && decimal.TryParse(
-                match.Value,
-                NumberStyles.Number,
-                CultureInfo.InvariantCulture,
-                out var position)
-                ? position
-                : null;
-        }
-
-        private static decimal? ParsePositionAfterSeries(string title, string series)
-        {
-            var tokens = Tokenize(series);
-            if (tokens.Count == 0)
-            {
-                return null;
-            }
-
-            var seriesPattern = string.Join(@"[\s\p{P}]+", tokens.Select(Regex.Escape));
-            var match = Regex.Match(
-                title,
-                $@"\b{seriesPattern}\b[\s\p{{P}}]*(?:book\s*|#\s*)?(\d+(?:\.\d+)?)\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            return match.Success ? ParsePosition(match.Groups[1].Value) : null;
-        }
-
-        private static List<string> Tokenize(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return [];
-            }
-
-            var decomposed = value.Normalize(NormalizationForm.FormD);
-            var normalized = new StringBuilder(decomposed.Length);
-            foreach (var character in decomposed)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-                {
-                    normalized.Append(char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : ' ');
-                }
-            }
-
-            return normalized.ToString()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .ToList();
-        }
-
-        private static string Normalize(string? value) =>
-            string.Join(' ', Tokenize(value));
-
-        private static bool HasAny(string value, params string[] words) =>
-            words.Any(word => value.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Contains(word, StringComparer.OrdinalIgnoreCase));
-
-        private static AudiobookProductionType? GetProductionType(string normalizedText)
-        {
-            if (normalizedText.Contains("dramatized", StringComparison.Ordinal)
-                || normalizedText.Contains("dramatic adaptation", StringComparison.Ordinal))
-            {
-                return AudiobookProductionType.Dramatized;
-            }
-
-            if (normalizedText.Contains("full cast", StringComparison.Ordinal)
-                || normalizedText.Contains("fullcast", StringComparison.Ordinal))
-            {
-                return AudiobookProductionType.FullCast;
-            }
-
-            return null;
-        }
-
-        private static (int? PartNumber, int? TotalParts) ParsePartNumbers(params string?[] values)
-        {
-            foreach (var value in values)
-            {
-                if (string.IsNullOrWhiteSpace(value))
-                {
-                    continue;
-                }
-
-                var match = Regex.Match(
-                    value,
-                    @"\b(?:part|pt)\s*(\d+)\s*(?:of|/)\s*(\d+)\b",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (match.Success
-                    && int.TryParse(match.Groups[1].Value, out var partNumber)
-                    && int.TryParse(match.Groups[2].Value, out var totalParts))
-                {
-                    return (partNumber, totalParts);
-                }
-
-                match = Regex.Match(value, @"\b(?:part|pt)\s*(\d+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (match.Success && int.TryParse(match.Groups[1].Value, out partNumber))
-                {
-                    return (partNumber, null);
-                }
-            }
-
-            return (null, null);
-        }
     }
 }

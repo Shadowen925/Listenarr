@@ -196,5 +196,133 @@ namespace Listenarr.Tests.Features.Application.Search.Matching
 
             Assert.False(AudiobookSearchResultMatcher.MatchesIdentity(audiobook, new SearchResult()));
         }
+
+        [Fact]
+        public void EvaluateIdentity_RejectsSpanishReleaseDespiteConflictingEnglishMetadata()
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Bram Stoker's Dracula",
+                Authors = ["Bram Stoker"],
+                Language = "English",
+                ProductionType = AudiobookProductionType.FullCast
+            };
+            var release = new SearchResult
+            {
+                Title = "Dracula - Audible Original - Bram Stoker [Spanish] [M4B]",
+                Language = "English",
+                ProductionType = AudiobookProductionType.FullCast
+            };
+
+            var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, release);
+
+            Assert.False(evidence.IsAccepted);
+            Assert.Contains("ConflictingReleaseLanguageMetadata", evidence.Conflicts);
+        }
+
+        [Fact]
+        public void EvaluateIdentity_UsesExplicitSpanishLanguageInsteadOfGuessingFromTitleSubstrings()
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Bram Stoker's Dracula",
+                Authors = ["Bram Stoker"],
+                Language = "English"
+            };
+
+            var spanish = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = "Dracula en español - Bram Stoker"
+            });
+            var unknown = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = "Dracula - Bram Stoker"
+            });
+
+            Assert.False(spanish.IsAccepted);
+            Assert.Contains("ConflictingLanguage", spanish.Conflicts);
+            Assert.True(unknown.IsAccepted);
+            Assert.DoesNotContain("LanguageMatch", unknown.PositiveEvidence);
+        }
+
+        [Theory]
+        [InlineData("Dracula - Audible Original - Bram Stoker [M4B]")]
+        [InlineData("Bram Stoker Dracula - Audible Original")]
+        [InlineData("Dracula, Bram Stoker (Audible Original)")]
+        public void EvaluateIdentity_AcceptsTitleVariationsForAnAudibleOriginalEdition(string title)
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Bram Stoker's Dracula",
+                Authors = ["Bram Stoker"]
+            };
+
+            Assert.True(AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = title
+            }).IsAccepted);
+        }
+
+        [Fact]
+        public void EvaluateIdentity_RejectsAudioDramaAsAStandardUnabridgedEdition()
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Dracula",
+                ProductionType = AudiobookProductionType.Standard,
+                Abridged = false
+            };
+
+            var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = "Dracula - Bram Stoker - Audio Drama"
+            });
+
+            Assert.False(evidence.IsAccepted);
+            Assert.Contains("IncompatibleEdition", evidence.Conflicts);
+        }
+
+        [Fact]
+        public void EvaluateIdentity_UsesNarratorAndRuntimeAsPositiveEditionEvidence()
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Bram Stoker's Dracula",
+                Authors = ["Bram Stoker"],
+                Narrators = ["Jonathan Bailey", "Ella Purnell"],
+                Runtime = 357
+            };
+
+            var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = "Dracula - Audible Original - Bram Stoker - Jonathan Bailey - 5 hours 57 minutes"
+            });
+
+            Assert.True(evidence.IsAccepted);
+            Assert.Contains("NarratorMatch", evidence.PositiveEvidence);
+            Assert.Contains("RuntimeMatch", evidence.PositiveEvidence);
+            Assert.True(evidence.Confidence > 90);
+        }
+
+        [Fact]
+        public void EvaluateIdentity_PrefersAnExplicitEditionLabel()
+        {
+            var audiobook = new Audiobook
+            {
+                Title = "Bram Stoker's Dracula",
+                Authors = ["Bram Stoker"],
+                Edition = "Audible Original",
+                ProductionType = AudiobookProductionType.FullCast
+            };
+
+            var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, new SearchResult
+            {
+                Title = "Dracula - Audible Original - Bram Stoker - Full Cast"
+            });
+
+            Assert.True(evidence.IsAccepted);
+            Assert.Contains("EditionMatch", evidence.PositiveEvidence);
+            Assert.Contains("ProductionTypeMatch", evidence.PositiveEvidence);
+        }
     }
 }

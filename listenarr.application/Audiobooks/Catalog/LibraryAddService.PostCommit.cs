@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace Listenarr.Application.Audiobooks.Catalog;
 
@@ -96,7 +97,8 @@ public partial class LibraryAddService
 
     private static History CreateHistoryEntry(
         Audiobook audiobook,
-        LibraryAddOperationRequest request)
+        LibraryAddOperationRequest request,
+        QuickAddOperation? operation)
     {
         return new History
         {
@@ -106,7 +108,10 @@ public partial class LibraryAddService
             Message = request.HistoryMessage
                 ?? $"Audiobook '{audiobook.Title}' added to library from {request.HistorySource}",
             Source = request.HistorySource,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            CorrelationId = operation?.Id ?? Guid.NewGuid().ToString("N"),
+            IdempotencyKey = operation == null ? null : $"quick-add:{operation.Id}",
+            Data = JsonSerializer.Serialize(new { autoSearch = request.AutoSearch })
         };
     }
 }

@@ -23,6 +23,7 @@ namespace Listenarr.Application.Audiobooks.Catalog
     {
         private readonly IAudiobookRepository _repo;
         private readonly ILibraryAddCommitStore _commitStore;
+        private readonly IQuickAddOperationRepository _quickAddOperations;
         private readonly IImageCacheService _imageCacheService;
         private readonly ILogger<LibraryAddService> _logger;
         private readonly IQualityProfileService _qualityProfileService;
@@ -39,6 +40,7 @@ namespace Listenarr.Application.Audiobooks.Catalog
         public LibraryAddService(
             IAudiobookRepository repo,
             ILibraryAddCommitStore commitStore,
+            IQuickAddOperationRepository quickAddOperations,
             IImageCacheService imageCacheService,
             ILogger<LibraryAddService> logger,
             IQualityProfileService qualityProfileService,
@@ -54,6 +56,7 @@ namespace Listenarr.Application.Audiobooks.Catalog
         {
             _repo = repo;
             _commitStore = commitStore;
+            _quickAddOperations = quickAddOperations;
             _imageCacheService = imageCacheService;
             _logger = logger;
             _qualityProfileService = qualityProfileService;
@@ -184,6 +187,14 @@ namespace Listenarr.Application.Audiobooks.Catalog
                     audiobook,
                     metadata,
                     request,
+                    request.AutoSearch && request.Monitored
+                        ? new QuickAddOperation
+                        {
+                            RequestKey = QuickAddOperation.CreateRequestKey(audiobook),
+                            AudiobookTitle = audiobook.Title ?? "Unknown Title",
+                            State = QuickAddOperationState.SearchPending
+                        }
+                        : null,
                     firstIsbn,
                     preparedImage,
                     preparedAuthorImages,
@@ -218,6 +229,7 @@ namespace Listenarr.Application.Audiobooks.Catalog
             Audiobook audiobook,
             AudibleBookMetadata metadata,
             LibraryAddOperationRequest request,
+            QuickAddOperation? operation,
             string? firstIsbn,
             PreparedLibraryImage preparedImage,
             IReadOnlyList<string> preparedAuthorImages,
@@ -232,6 +244,22 @@ namespace Listenarr.Application.Audiobooks.Catalog
                 if (existingByAsin != null)
                 {
                     return AlreadyExists(existingByAsin);
+                }
+            }
+
+            if (operation != null)
+            {
+                var existingOperation = await _quickAddOperations.GetByRequestKeyAsync(
+                    operation.RequestKey,
+                    cancellationToken);
+                if (existingOperation != null
+                    && existingOperation.State != QuickAddOperationState.Imported)
+                {
+                    var existingAudiobook = await _repo.GetByIdAsync(existingOperation.AudiobookId);
+                    if (existingAudiobook != null)
+                    {
+                        return AlreadyExists(existingAudiobook);
+                    }
                 }
             }
 
@@ -259,8 +287,9 @@ namespace Listenarr.Application.Audiobooks.Catalog
             cancellationToken.ThrowIfCancellationRequested();
             await _commitStore.CommitAsync(
                 audiobook,
-                CreateHistoryEntry(audiobook, request),
-                cancellationToken);
+                CreateHistoryEntry(audiobook, request, operation),
+                cancellationToken,
+                operation);
             return new LibraryAddOperationResult
             {
                 Added = true,

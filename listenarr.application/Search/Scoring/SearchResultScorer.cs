@@ -180,8 +180,19 @@ namespace Listenarr.Application.Search.Scoring
             // Title lower for detection
             var titleLower = (searchResult.Title ?? string.Empty).ToLower();
 
-            // Language detection for NZB
-            if (isNzb && string.IsNullOrEmpty(normalizedLanguage) && HasPreferredLanguages(profile))
+            if (SearchResultAttributeParser.HasConflictingExplicitLanguages(titleLower))
+            {
+                normalizedLanguage = null;
+            }
+            else
+            {
+                normalizedLanguage = SearchResultAttributeParser.ParseExplicitLanguageFromText(titleLower)
+                    ?? normalizedLanguage;
+            }
+
+            // Infer language only from explicit title labels; short substring matches such as
+            // "es" can otherwise label unrelated release titles as Spanish.
+            if (string.IsNullOrEmpty(normalizedLanguage) && HasPreferredLanguages(profile))
             {
                 var detected = DetectLanguageFromTitle(titleLower, profile.PreferredLanguages);
                 if (!string.IsNullOrEmpty(detected))
@@ -394,21 +405,21 @@ namespace Listenarr.Application.Search.Scoring
         private static string? DetectLanguageFromTitle(string titleLower, List<string>? preferredLanguages)
         {
             if (preferredLanguages == null || preferredLanguages.Count == 0 || string.IsNullOrEmpty(titleLower)) return null;
-            foreach (var lang in preferredLanguages.Where(language => !string.IsNullOrWhiteSpace(language)))
+            if (SearchResultAttributeParser.HasConflictingExplicitLanguages(titleLower))
             {
-                var token = lang.ToLower().Trim();
-                if (titleLower.Contains(token) || titleLower.Contains("[" + token + "]") || titleLower.Contains("(" + token + ")") || titleLower.Contains(" " + token + " "))
-                {
-                    return lang;
-                }
+                return null;
             }
-            var common = new Dictionary<string, string>
-            {
-                { "eng", "English" }, { "english", "English" }, { "es", "Spanish" }, { "spanish", "Spanish" },
-                { "de", "German" }, { "german", "German" }, { "fr", "French" }, { "french", "French" }
-            };
-            foreach (var (token, name) in common) if (titleLower.Contains(token)) return name;
-            return null;
+
+            var detected = SearchResultAttributeParser.ParseExplicitLanguageFromText(titleLower);
+            return detected != null && preferredLanguages.Any(language =>
+                string.Equals(
+                    SearchResultAttributeParser.ParseLanguageFromCode(language)
+                        ?? SearchResultAttributeParser.ParseExplicitLanguageFromText(language)
+                        ?? language,
+                    detected,
+                    StringComparison.OrdinalIgnoreCase))
+                ? detected
+                : null;
         }
 
         private int GetQualityScore(string quality)

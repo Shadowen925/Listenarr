@@ -146,6 +146,18 @@ namespace Listenarr.Infrastructure.ActivityHistory.Persistence
                 : await query.ToListAsync(ct);
         }
 
+        public async Task<List<string>> GetSucceededImportedDownloadIdsAsync(CancellationToken ct = default) =>
+            await _db.History
+                .AsNoTracking()
+                .Where(history =>
+                    history.EventType == HistoryEvents.Imported
+                    && history.Outcome == HistoryOutcome.Succeeded
+                    && history.DownloadId != null
+                    && history.DownloadId != string.Empty)
+                .Select(history => history.DownloadId!)
+                .Distinct()
+                .ToListAsync(ct);
+
         public async Task<List<History>> GetBySourceAsync(string source, int? limit = null, CancellationToken ct = default)
         {
             var query = _db.History

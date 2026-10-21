@@ -47,6 +47,7 @@ namespace Listenarr.Infrastructure.Persistence
         public DbSet<DownloadHistory> DownloadHistories { get; set; } = null!;
         public DbSet<ReleaseRejection> ReleaseRejections { get; set; } = null!;
         public DbSet<AutomaticSearchDiagnostic> AutomaticSearchDiagnostics { get; set; } = null!;
+        public DbSet<QuickAddOperation> QuickAddOperations { get; set; } = null!;
         public DbSet<DownloadEvent> DownloadEvents { get; set; } = null!;
         public DbSet<QualityProfile> QualityProfiles { get; set; } = null!;
         public DbSet<RemotePathMapping> RemotePathMappings { get; set; } = null!;

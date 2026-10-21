@@ -29,6 +29,7 @@ namespace Listenarr.Application.ActivityHistory.Contracts.Repositories
         Task<int> CountAsync(CancellationToken ct = default);
         Task<List<History>> GetByAudiobookIdAsync(int audiobookId, CancellationToken ct = default);
         Task<List<History>> GetByEventTypeAsync(string eventType, int? limit = null, CancellationToken ct = default);
+        Task<List<string>> GetSucceededImportedDownloadIdsAsync(CancellationToken ct = default);
         Task<List<History>> GetBySourceAsync(string source, int? limit = null, CancellationToken ct = default);
         Task<List<History>> GetRecentAsync(int limit, CancellationToken ct = default);
         Task<History> AddAsync(History entry, CancellationToken ct = default);

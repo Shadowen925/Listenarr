@@ -180,7 +180,11 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
                     .Where(j =>
                         statuses.Contains(j.Status) &&
                         j.CompletedAt.HasValue &&
-                        j.CompletedAt < cutoffUtc)
+                        j.CompletedAt < cutoffUtc &&
+                        (j.QuickAddOperationId == null ||
+                            !ctx.QuickAddOperations.Any(operation =>
+                                operation.Id == j.QuickAddOperationId &&
+                                operation.State != QuickAddOperationState.Imported)))
                     .OrderBy(j => j.CompletedAt)
                     .ThenBy(j => j.Id)
                     .Take(CleanupBatchSize)

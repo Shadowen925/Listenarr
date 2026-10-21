@@ -17,6 +17,7 @@
  */
 
 using Microsoft.AspNetCore.Mvc;
+using Listenarr.Application.Search.Matching;
 
 namespace Listenarr.Api.Features.Library
 {
@@ -27,13 +28,16 @@ namespace Listenarr.Api.Features.Library
     {
         private readonly IQualityProfileService _qualityProfileService;
         private readonly ILogger<QualityProfileController> _logger;
+        private readonly IAudiobookRepository? _audiobookRepository;
 
         public QualityProfileController(
             IQualityProfileService qualityProfileService,
-            ILogger<QualityProfileController> logger)
+            ILogger<QualityProfileController> logger,
+            IAudiobookRepository? audiobookRepository = null)
         {
             _qualityProfileService = qualityProfileService;
             _logger = logger;
+            _audiobookRepository = audiobookRepository;
         }
 
         /// <summary>
@@ -191,10 +195,12 @@ namespace Listenarr.Api.Features.Library
         /// </summary>
         /// <param name="id">Quality profile ID.</param>
         /// <param name="searchResults">Search results to score.</param>
+        /// <param name="audiobookId">Optional audiobook whose edition should be matched against each result.</param>
         [HttpPost("{id}/score")]
         public async Task<ActionResult<List<QualityScore>>> ScoreResults(
             int id,
-            [FromBody] List<SearchResult> searchResults)
+            [FromBody] List<SearchResult> searchResults,
+            [FromQuery] int? audiobookId = null)
         {
             try
             {
@@ -205,6 +211,29 @@ namespace Listenarr.Api.Features.Library
                 }
 
                 var scores = await _qualityProfileService.ScoreSearchResults(searchResults, profile);
+                if (audiobookId.HasValue)
+                {
+                    if (_audiobookRepository == null)
+                    {
+                        return StatusCode(503, new { error = "Audiobook edition matching is unavailable" });
+                    }
+
+                    var audiobook = await _audiobookRepository.GetByIdAsync(audiobookId.Value);
+                    if (audiobook == null)
+                    {
+                        return NotFound(new { error = $"Audiobook with ID {audiobookId.Value} not found" });
+                    }
+
+                    foreach (var score in scores)
+                    {
+                        var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(audiobook, score.SearchResult);
+                        score.MatchesAudiobookEdition = evidence.IsAccepted;
+                        score.EditionMatchConfidence = evidence.Confidence;
+                        score.EditionMatchEvidence = [.. evidence.PositiveEvidence];
+                        score.EditionMatchConflicts = [.. evidence.Conflicts];
+                    }
+                }
+
                 return Ok(scores);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)

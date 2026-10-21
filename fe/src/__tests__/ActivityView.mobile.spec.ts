@@ -64,6 +64,14 @@ describe('ActivityView responsive list', () => {
     vi.doMock('@/services/api', () => ({
       apiService: {
         getQueue: vi.fn(async () => queueItems),
+        getRecentHistory: vi.fn(async () => []),
+        getActivityDismissals: vi.fn(async () => []),
+        getVerifiedImportDownloadIds: vi.fn(async () => []),
+        getQuickAddOperations: vi.fn(async () => []),
+        retryQuickAddOperation: vi.fn(async () => undefined),
+        getAutomaticSearchHistory: vi.fn(async () => []),
+        dismissActivityEntries: vi.fn(async () => ({ dismissed: 1 })),
+        searchAndDownload: vi.fn(async () => ({ success: true })),
       },
     }))
 
@@ -107,6 +115,7 @@ describe('ActivityView responsive list', () => {
       global: {
         stubs: {
           CustomSelect: true,
+          RouterLink: { template: '<a><slot /></a>' },
           EmptyState: true,
           LoadingState: true,
           ProgressBar: true,

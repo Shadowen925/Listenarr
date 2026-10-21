@@ -34,6 +34,7 @@ public partial class AutomaticSearchProcessor
         var qualityProfileService = scope.ServiceProvider.GetRequiredService<IQualityProfileService>();
         var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
         var releaseRejections = scope.ServiceProvider.GetRequiredService<IReleaseRejectionRepository>();
+        var quickAddOperations = scope.ServiceProvider.GetRequiredService<IQuickAddOperationRepository>();
         var configurationService = scope.ServiceProvider.GetRequiredService<IConfigurationService>();
         var indexerRepository = scope.ServiceProvider.GetRequiredService<IIndexerRepository>();
         var settings = await configurationService.GetApplicationSettingsAsync();
@@ -59,6 +60,7 @@ public partial class AutomaticSearchProcessor
             downloadRepository,
             fileRepository,
             releaseRejections,
+            quickAddOperations,
             configurationService,
             indexersQueried,
             trigger,
@@ -86,6 +88,7 @@ public partial class AutomaticSearchProcessor
         var qualityProfileService = scope.ServiceProvider.GetRequiredService<IQualityProfileService>();
         var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
         var releaseRejections = scope.ServiceProvider.GetRequiredService<IReleaseRejectionRepository>();
+        var quickAddOperations = scope.ServiceProvider.GetRequiredService<IQuickAddOperationRepository>();
         var configurationService = scope.ServiceProvider.GetRequiredService<IConfigurationService>();
         var indexerRepository = scope.ServiceProvider.GetRequiredService<IIndexerRepository>();
         var settings = await configurationService.GetApplicationSettingsAsync();
@@ -120,7 +123,7 @@ public partial class AutomaticSearchProcessor
             {
                 var downloadsQueuedForBook = await ProcessAudiobookAsync(
                     audiobook, searchService, qualityProfileService, downloadService, audiobookRepository,
-                    downloadRepository, fileRepository, releaseRejections, configurationService, indexersQueried,
+                    downloadRepository, fileRepository, releaseRejections, quickAddOperations, configurationService, indexersQueried,
                     AutomaticSearchTrigger.Periodic, settings.AutomaticSearchIntervalHours, stoppingToken);
 
                 downloadsQueued += downloadsQueuedForBook;

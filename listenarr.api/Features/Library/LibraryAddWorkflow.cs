@@ -106,23 +106,9 @@ namespace Listenarr.Api.Features.Library
                 request.AutoSearch &&
                 _automaticSearchProcessor != null)
             {
-                try
-                {
-                    await _automaticSearchProcessor.SearchAudiobookAsync(
-                        result.Audiobook.Id,
-                        cancellationToken);
-                }
-                catch (Exception ex) when (Listenarr.Application.Common.WorkerExceptionClassifier.IsNonFatal(ex))
-                {
-                    _logger.LogError(
-                        ex,
-                        "Immediate automatic search failed for newly added audiobook {AudiobookId}; the periodic search will retry it",
-                        result.Audiobook.Id);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
+                _logger.LogInformation(
+                    "New audiobook {AudiobookId} is durably queued for the existing automatic-search cycle",
+                    result.Audiobook.Id);
             }
 
             return new OkObjectResult(new { message = result.Message, audiobook = result.Audiobook });

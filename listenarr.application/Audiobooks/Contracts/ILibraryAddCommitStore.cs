@@ -8,5 +8,6 @@ public interface ILibraryAddCommitStore
     Task CommitAsync(
         Audiobook audiobook,
         History history,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        QuickAddOperation? operation = null);
 }

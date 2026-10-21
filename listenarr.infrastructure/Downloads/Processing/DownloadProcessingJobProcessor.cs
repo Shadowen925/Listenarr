@@ -414,6 +414,18 @@ namespace Listenarr.Infrastructure.Downloads.Processing
             }
 
             var finalizationService = scope.ServiceProvider.GetRequiredService<IImportFinalizationService>();
+            if (!string.IsNullOrWhiteSpace(job.QuickAddOperationId))
+            {
+                var quickAddOperations = scope.ServiceProvider
+                    .GetRequiredService<IQuickAddOperationRepository>();
+                await quickAddOperations.AdvanceAsync(
+                    audiobook.Id,
+                    QuickAddOperationState.Verifying,
+                    downloadId: download.Id,
+                    downloadClientId: download.DownloadClientId,
+                    processingJobId: job.Id,
+                    cancellationToken: cancellationToken);
+            }
             bool? sourceRetained = job.TryGetJobDataString(
                     Download.SourceRetainedMetadataKey,
                     out var sourceRetainedValue)

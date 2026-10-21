@@ -22,19 +22,35 @@ public sealed class EfAutomaticSearchDiagnosticRepository(ListenArrDbContext db)
 
         var cutoff = DateTime.UtcNow - MaximumAge;
         await db.AutomaticSearchDiagnostics
-            .Where(record => record.SearchTimestamp < cutoff)
+            .Where(record =>
+                record.SearchTimestamp < cutoff
+                && (record.QuickAddOperationId == null
+                    || !db.QuickAddOperations.Any(operation =>
+                        operation.Id == record.QuickAddOperationId
+                        && operation.State != QuickAddOperationState.Imported)))
             .ExecuteDeleteAsync(cancellationToken);
 
-        var count = await db.AutomaticSearchDiagnostics.CountAsync(cancellationToken);
+        var retentionEligible = db.AutomaticSearchDiagnostics
+            .Where(record =>
+                record.QuickAddOperationId == null
+                || !db.QuickAddOperations.Any(operation =>
+                    operation.Id == record.QuickAddOperationId
+                    && operation.State != QuickAddOperationState.Imported));
+        var count = await retentionEligible.CountAsync(cancellationToken);
         if (count > MaximumRecords)
         {
-            var firstIdToKeep = await db.AutomaticSearchDiagnostics
+            var firstIdToKeep = await retentionEligible
                 .OrderByDescending(record => record.Id)
                 .Skip(MaximumRecords - 1)
                 .Select(record => record.Id)
                 .FirstAsync(cancellationToken);
             await db.AutomaticSearchDiagnostics
-                .Where(record => record.Id < firstIdToKeep)
+                .Where(record =>
+                    record.Id < firstIdToKeep
+                    && (record.QuickAddOperationId == null
+                        || !db.QuickAddOperations.Any(operation =>
+                            operation.Id == record.QuickAddOperationId
+                            && operation.State != QuickAddOperationState.Imported)))
                 .ExecuteDeleteAsync(cancellationToken);
         }
     }

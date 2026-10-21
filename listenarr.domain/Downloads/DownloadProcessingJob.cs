@@ -52,6 +52,7 @@ namespace Listenarr.Domain.Downloads
         /// </summary>
         [Required]
         public string DownloadId { get; set; } = string.Empty;
+        public string? QuickAddOperationId { get; set; }
 
         public string? ActiveDeduplicationKey { get; set; }
 

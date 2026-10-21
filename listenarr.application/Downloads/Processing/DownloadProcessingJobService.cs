@@ -26,6 +26,7 @@ namespace Listenarr.Application.Downloads.Processing
     /// </summary>
     public class DownloadProcessingJobService(
         IDownloadProcessingJobRepository jobRepository,
+        IQuickAddOperationRepository quickAddOperations,
         ILogger<DownloadProcessingJobService> logger,
         TimeProvider timeProvider) : IDownloadProcessingJobService
     {
@@ -59,6 +60,7 @@ namespace Listenarr.Application.Downloads.Processing
             var job = new DownloadProcessingJob
             {
                 DownloadId = download.Id,
+                QuickAddOperationId = download.QuickAddOperationId,
                 JobType = ProcessingJobType.MoveOrCopyFile,
                 SourcePath = download.DownloadPath,
                 DownloadClientId = download.DownloadClientId,
@@ -89,6 +91,15 @@ namespace Listenarr.Application.Downloads.Processing
                 throw;
             }
             logger.LogInformation("Queued download {DownloadId} for post-processing: {JobId}", download.Id, job.Id);
+            if (download.AudiobookId.HasValue)
+            {
+                await quickAddOperations.AdvanceAsync(
+                    download.AudiobookId.Value,
+                    QuickAddOperationState.ImportPending,
+                    downloadId: download.Id,
+                    downloadClientId: download.DownloadClientId,
+                    processingJobId: job.Id);
+            }
             return job.Id;
         }
 
@@ -106,7 +117,34 @@ namespace Listenarr.Application.Downloads.Processing
             => await jobRepository.GetDueRetryJobsAsync();
 
         public async Task UpdateJobAsync(DownloadProcessingJob job)
-            => await jobRepository.UpdateAsync(job);
+        {
+            await jobRepository.UpdateAsync(job);
+            if (string.IsNullOrWhiteSpace(job.QuickAddOperationId))
+            {
+                return;
+            }
+
+            var operation = await quickAddOperations.GetByIdAsync(job.QuickAddOperationId);
+            if (operation == null)
+            {
+                return;
+            }
+
+            var state = job.Status switch
+            {
+                ProcessingJobStatus.Processing => QuickAddOperationState.Importing,
+                ProcessingJobStatus.Failed => QuickAddOperationState.FailedNeedsAttention,
+                _ => (QuickAddOperationState?)null
+            };
+            if (state.HasValue)
+            {
+                await quickAddOperations.AdvanceAsync(
+                    operation.AudiobookId,
+                    state.Value,
+                    processingJobId: job.Id,
+                    failureReason: job.ErrorMessage);
+            }
+        }
 
         public async Task<DownloadProcessingJob?> GetJobAsync(string jobId)
             => await jobRepository.GetByIdAsync(jobId);

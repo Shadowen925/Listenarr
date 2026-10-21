@@ -26,7 +26,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
         IAutomaticSearchProcessor processor,
         IWorkerCycleRunner cycleRunner) : BackgroundService
     {
-        private static readonly TimeSpan SearchCheckInterval = TimeSpan.FromMinutes(15);
+        private static readonly TimeSpan SearchCheckInterval = TimeSpan.FromMinutes(1);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -36,7 +36,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
 
             await cycleRunner.RunPeriodicAsync(
                 nameof(AutomaticSearchService),
-                initialDelay: TimeSpan.FromMinutes(5),
+                initialDelay: SearchCheckInterval,
                 intervalProvider: () => SearchCheckInterval,
                 runCycle: processor.RunCycleAsync,
                 stoppingToken);

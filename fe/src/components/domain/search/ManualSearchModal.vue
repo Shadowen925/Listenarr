@@ -296,7 +296,7 @@
                   </td>
                   <td class="col-score">
                     <div v-if="getResultScore(result.id)" class="score-cell">
-                      <ScorePopover :content="getScoreBreakdownTooltip(getResultScore(result.id))">
+                      <ScorePopover :content="getManualScoreTooltip(result.id)">
                         <template #default>
                           <span
                             v-if="getResultScore(result.id)?.isRejected"
@@ -308,6 +308,18 @@
                           </span>
                           <span v-else :class="['score-badge', getVisibleScoreClass(result.id)]">
                             {{ getVisibleScoreValue(result.id) ?? '-' }}
+                          </span>
+                          <span
+                            v-if="getResultScore(result.id)?.matchesAudiobookEdition === false"
+                            class="edition-match-badge edition-mismatch"
+                          >
+                            Different edition
+                          </span>
+                          <span
+                            v-else-if="getResultScore(result.id)?.matchesAudiobookEdition === true"
+                            class="edition-match-badge edition-match"
+                          >
+                            Edition match
                           </span>
                         </template>
                       </ScorePopover>
@@ -872,7 +884,11 @@ async function loadQualityProfileAndScore() {
 
     // Score the search results
     if (qualityProfile.value?.id && results.value.length > 0) {
-      const scores = await apiService.scoreSearchResults(qualityProfile.value.id, results.value)
+      const scores = await apiService.scoreSearchResults(
+        qualityProfile.value.id,
+        results.value,
+        props.audiobook?.id,
+      )
 
       // Map scores by search result ID
       qualityScores.value.clear()
@@ -1075,10 +1091,28 @@ function getResultScore(resultId: string): QualityScore | undefined {
   if ('value' in qsRef && qsRef.value && typeof qsRef.value.get === 'function') {
     return qsRef.value.get(resultId)
   }
+
   if (typeof (qsRef as Map<string, QualityScore>).get === 'function') {
     return (qsRef as Map<string, QualityScore>).get(resultId)
   }
   return undefined
+}
+
+function getManualScoreTooltip(resultId: string): string {
+  const score = getResultScore(resultId)
+  const qualityDetails = getScoreBreakdownTooltip(score)
+  if (score?.matchesAudiobookEdition === undefined) return qualityDetails
+
+  const editionSummary = score.matchesAudiobookEdition
+    ? `Selected edition: Match (${score.editionMatchConfidence ?? 0}/100)`
+    : 'Selected edition: Does not match'
+  const evidence = score.editionMatchEvidence?.length
+    ? `Evidence: ${score.editionMatchEvidence.join(', ')}`
+    : ''
+  const conflicts = score.editionMatchConflicts?.length
+    ? `Conflicts: ${score.editionMatchConflicts.join(', ')}`
+    : ''
+  return [qualityDetails, editionSummary, evidence, conflicts].filter(Boolean).join('\n')
 }
 
 // Visible score value for the UI: prefer smartScore when available
@@ -1619,6 +1653,8 @@ function getScoreClass(score: number): string {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 
 .score-badge {
@@ -1667,6 +1703,26 @@ function getScoreClass(score: number): string {
   background-color: rgba(149, 165, 166, 0.2);
   color: #adb5bd;
   border: 1px solid rgba(149, 165, 166, 0.4);
+}
+
+.edition-match-badge {
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  white-space: nowrap;
+}
+
+.edition-match {
+  color: #51cf66;
+  border-color: rgba(39, 174, 96, 0.4);
+}
+
+.edition-mismatch {
+  color: #ffd43b;
+  border-color: rgba(241, 196, 15, 0.4);
 }
 
 .btn-icon {

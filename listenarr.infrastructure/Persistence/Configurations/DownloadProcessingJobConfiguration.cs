@@ -27,6 +27,7 @@ namespace Listenarr.Infrastructure.Persistence.Configurations
         {
             builder.HasKey(j => j.Id);
             builder.Property(j => j.ActiveDeduplicationKey).HasMaxLength(256);
+            builder.Property(j => j.QuickAddOperationId).HasMaxLength(32);
             builder.HasIndex(j => j.ActiveDeduplicationKey)
                 .IsUnique()
                 .HasFilter("\"ActiveDeduplicationKey\" IS NOT NULL");

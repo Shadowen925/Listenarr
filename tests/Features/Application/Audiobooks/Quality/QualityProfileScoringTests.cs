@@ -346,6 +346,65 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.Quality
         }
 
         [Fact]
+        public async Task NZB_TitleWithEsAsAnOrdinarySubstring_IsNotDetectedAsSpanish()
+        {
+            Assert.Null(SearchResultAttributeParser.ParseExplicitLanguageFromText("The Honest Release"));
+        }
+
+        [Fact]
+        public async Task TorrentTitleWithExplicitSpanishLanguage_IsPenalizedAgainstEnglishPreference()
+        {
+            var service = CreateService();
+            var profile = new QualityProfile
+            {
+                PreferredFormats = [],
+                PreferredWords = [],
+                MustNotContain = [],
+                MustContain = [],
+                PreferredLanguages = ["English"],
+                MinimumSeeders = 0,
+                MaximumAge = 365
+            };
+            var result = new SearchResult
+            {
+                Title = "Dracula - Bram Stoker [Spanish]",
+                DownloadType = "torrent",
+                PublishedDate = DateTime.UtcNow.ToString("O")
+            };
+
+            var score = await service.ScoreSearchResult(result, profile);
+
+            Assert.Contains("LanguageMismatch", score.ScoreBreakdown.Keys);
+        }
+
+        [Fact]
+        public async Task ExplicitSpanishTitleOverridesConflictingEnglishIndexerMetadata()
+        {
+            var service = CreateService();
+            var profile = new QualityProfile
+            {
+                PreferredFormats = [],
+                PreferredWords = [],
+                MustNotContain = [],
+                MustContain = [],
+                PreferredLanguages = ["English"],
+                MinimumSeeders = 0,
+                MaximumAge = 365
+            };
+            var result = new SearchResult
+            {
+                Title = "Dracula - Bram Stoker [Spanish]",
+                Language = "English",
+                DownloadType = "torrent",
+                PublishedDate = DateTime.UtcNow.ToString("O")
+            };
+
+            var score = await service.ScoreSearchResult(result, profile);
+
+            Assert.Contains("LanguageMismatch", score.ScoreBreakdown.Keys);
+        }
+
+        [Fact]
         public async Task LanguageMismatch_ShouldBePenalized()
         {
             var service = CreateService();
@@ -590,4 +649,3 @@ namespace Listenarr.Tests.Features.Application.Audiobooks.Quality
         }
     }
 }
-

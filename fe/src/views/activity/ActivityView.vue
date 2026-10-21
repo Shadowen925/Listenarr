@@ -23,6 +23,8 @@
         Activity
       </h1>
       <div class="activity-actions">
+        <button class="btn btn-secondary" @click="clearCompleted">Clear Completed</button>
+        <button class="btn btn-secondary" @click="clearFailed">Clear Failed / Dismissed</button>
         <div class="filter-input-wrapper">
           <PhMagnifyingGlass class="filter-icon" />
           <input
@@ -80,6 +82,7 @@
             </span>
             <div class="activity-meta">
               <span>{{ item.downloadClient || 'Download client' }}</span>
+              <span v-if="item.activityStage">{{ item.activityStage }}</span>
               <span v-if="item.size > 0">
                 {{ formatBytes(item.downloaded ?? 0) }} / {{ formatBytes(item.size) }}
               </span>
@@ -110,10 +113,15 @@
               Cached
             </span>
             <button
-              v-if="canRetryRecoveredImport(item)"
+              v-if="
+                canRetryRecoveredImport(item) ||
+                (item.activityOperationId && item.activityStage === 'Import Failed')
+              "
               class="btn btn-secondary activity-import-button"
               :data-testid="`retry-import-${item.id}`"
-              @click="retryRecoveredImport(item)"
+              @click="
+                item.activityOperationId ? retryActivitySearch(item) : retryRecoveredImport(item)
+              "
             >
               Retry Import
             </button>
@@ -124,6 +132,32 @@
               @click="openManualImport(item)"
             >
               {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
+            </button>
+            <button
+              v-if="
+                item.activityKey &&
+                item.status === 'failed' &&
+                item.activityStage !== 'Import Failed'
+              "
+              class="btn btn-secondary activity-action-button"
+              :disabled="retryingActivityKeys.has(item.activityKey)"
+              @click="retryActivitySearch(item)"
+            >
+              {{ retryingActivityKeys.has(item.activityKey) ? 'Retrying...' : 'Retry Search' }}
+            </button>
+            <RouterLink
+              v-if="item.activityKey"
+              class="btn btn-secondary activity-action-button"
+              :to="{ name: 'audiobook-detail', params: { id: item.audiobookId } }"
+            >
+              Manual Search
+            </RouterLink>
+            <button
+              class="btn btn-secondary activity-action-button"
+              :aria-label="`Dismiss ${getDisplayTitle(item)} from Activity`"
+              @click="dismissActivityItem(item)"
+            >
+              Dismiss
             </button>
             <details class="activity-details">
               <summary>Details</summary>
@@ -172,6 +206,26 @@
                   <dt>Error</dt>
                   <dd>{{ item.errorMessage }}</dd>
                 </div>
+                <div v-if="item.activityStage">
+                  <dt>Operation</dt>
+                  <dd>{{ item.activityStage }}</dd>
+                </div>
+                <div v-if="item.activityOperationId">
+                  <dt>Operation ID</dt>
+                  <dd>{{ item.activityOperationId }}</dd>
+                </div>
+                <div v-if="item.activityDiagnosticId">
+                  <dt>Diagnostic ID</dt>
+                  <dd>{{ item.activityDiagnosticId }}</dd>
+                </div>
+                <div v-if="item.activitySelectedRelease">
+                  <dt>Selected release</dt>
+                  <dd>{{ item.activitySelectedRelease }}</dd>
+                </div>
+                <div v-if="item.activityError">
+                  <dt>Search details</dt>
+                  <dd>{{ item.activityError }}</dd>
+                </div>
                 <div v-if="detailsLine(item)">
                   <dt>Diagnostics</dt>
                   <dd>{{ detailsLine(item) }}</dd>
@@ -211,6 +265,14 @@
             height="small"
             :animating="item.status === 'downloading' || item.status === 'moving'"
           />
+          <div
+            v-else-if="item.activityIndeterminate"
+            class="activity-indeterminate"
+            role="progressbar"
+            aria-label="Automatic search in progress"
+          >
+            <span />
+          </div>
           <span v-else class="activity-progress-state">{{ displayStatus(item) }}</span>
           <span v-if="activityProgress(item) !== null" class="progress-label">
             {{ Math.round(activityProgress(item) ?? 0) }}%
@@ -337,6 +399,9 @@ import type {
   Download,
   DownloadRemovalMode,
   DownloadEvent,
+  History,
+  AutomaticSearchDiagnosticHistoryItem,
+  QuickAddOperationActivityItem,
 } from '@/types'
 import DownloadActionDialog from '@/components/domain/download/DownloadActionDialog.vue'
 import ManualImportModal from '@/components/feedback/ManualImportModal.vue'
@@ -349,6 +414,12 @@ const configStore = useConfigurationStore()
 
 const filterText = ref('')
 const queue = ref<QueueItem[]>([])
+const recentHistory = ref<History[]>([])
+const verifiedImportDownloadIds = ref(new Set<string>())
+const activitySearchDiagnostics = ref(new Map<number, AutomaticSearchDiagnosticHistoryItem>())
+const quickAddOperations = ref<QuickAddOperationActivityItem[]>([])
+const dismissedActivityKeys = ref(new Set<string>())
+const retryingActivityKeys = ref(new Set<string>())
 const queueClientStatuses = ref<QueueClientStatus[]>([])
 const loading = ref(false)
 const showRemoveModal = ref(false)
@@ -556,8 +627,26 @@ const isDirectDownload = (downloadClientId?: string): boolean =>
   (downloadClientId || '').toString().toUpperCase() === 'DDL'
 
 const allActivityItems = computed(() => {
+  const importedEntries = recentHistory.value.filter(
+    (entry) =>
+      entry.eventType === 'Imported' &&
+      ['succeeded', '1'].includes(String(entry.outcome ?? '').toLowerCase()),
+  )
+  const importedDownloadIds = new Set([
+    ...verifiedImportDownloadIds.value,
+    ...importedEntries.map((entry) => entry.downloadId).filter((id): id is string => Boolean(id)),
+  ])
+  const isVerifiedImport = (item: QueueItem) =>
+    importedDownloadIds.has(item.id) ||
+    (item.audiobookId != null &&
+      importedEntries.some(
+        (entry) =>
+          entry.audiobookId === item.audiobookId &&
+          ['completed', 'imported', 'moved'].includes(item.status.toLowerCase()) &&
+          (item.progress ?? 0) >= 100,
+      ))
   const queueItems = queue.value.filter(
-    (item) => !['moved', 'imported'].includes(item.status.toLowerCase()),
+    (item) => !['moved', 'imported'].includes(item.status.toLowerCase()) && !isVerifiedImport(item),
   )
   const trackedQueueIds = new Set(queueItems.map((item) => item.id))
 
@@ -566,16 +655,19 @@ const allActivityItems = computed(() => {
 
   const ddlDownloadItems = activeDownloadsList
     .filter((d) => isDirectDownload(d.downloadClientId))
+    .filter((d) => !importedDownloadIds.has(d.id))
     .filter((d) => !trackedQueueIds.has(d.id))
     .map(convertDownloadToQueueItem)
 
   const failedDDLItems = failedDownloadsList
     .filter((d) => isDirectDownload(d.downloadClientId))
+    .filter((d) => !importedDownloadIds.has(d.id))
     .filter((d) => !trackedQueueIds.has(d.id))
     .map(convertDownloadToQueueItem)
 
   const externalActiveDownloads = activeDownloadsList
     .filter((d) => d.downloadClientId && !isDirectDownload(d.downloadClientId))
+    .filter((d) => !importedDownloadIds.has(d.id))
     .filter((d) => !trackedQueueIds.has(d.id))
     .map(convertDownloadToQueueItem)
 
@@ -587,6 +679,7 @@ const allActivityItems = computed(() => {
         (d) => d.downloadClientId && (d.downloadClientId || '').toString().toUpperCase() !== 'DDL',
       )
       .filter((d) => d.status !== 'Moved')
+      .filter((d) => !importedDownloadIds.has(d.id))
       .map(convertDownloadToQueueItem)
 
     const map = new Map<string, QueueItem>()
@@ -622,10 +715,137 @@ const allActivityItems = computed(() => {
     }
   }
   for (const it of combined) finalMap.set(it.id, it)
-  for (const it of failedFromDownloads) if (!finalMap.has(it.id)) finalMap.set(it.id, it)
+  for (const it of failedFromDownloads) {
+    if (!finalMap.has(it.id) && !isVerifiedImport(it)) finalMap.set(it.id, it)
+  }
 
-  return Array.from(finalMap.values())
+  const dismissedOperationDownloadIds = new Set<string>()
+  const dismissedOperationAudiobookIds = new Set<number>()
+  for (const operation of quickAddOperations.value) {
+    if (operation.state === 'Imported') continue
+
+    const activityKey = `quick-add:${operation.id}`
+    if (dismissedActivityKeys.value.has(activityKey)) {
+      if (operation.downloadId) dismissedOperationDownloadIds.add(operation.downloadId)
+      dismissedOperationAudiobookIds.add(operation.audiobookId)
+      continue
+    }
+
+    const diagnostic = activitySearchDiagnostics.value.get(operation.audiobookId)
+    const stageByState: Record<string, string> = {
+      SearchPending: 'Search Pending',
+      Searching: 'Searching Indexers',
+      EvaluatingReleases: 'Evaluating Releases',
+      DownloadSubmissionPending: 'Submitting to Download Client',
+      Queued: 'Queued',
+      Downloading: 'Downloading',
+      DownloadCompleted: 'Download Completed',
+      ImportPending: 'Import Pending',
+      Importing: 'Importing',
+      Verifying: 'Verifying Library Files',
+      NoMatchingReleases: 'No Matching Releases',
+      FailedNeedsAttention: operation.processingJobId ? 'Import Failed' : 'Search Failed',
+    }
+    const state = operation.state
+    const stage = stageByState[state] ?? 'Needs Attention'
+    const searchInProgress = [
+      'SearchPending',
+      'Searching',
+      'EvaluatingReleases',
+      'DownloadSubmissionPending',
+    ].includes(state)
+    const importInProgress = ['ImportPending', 'Importing', 'Verifying'].includes(state)
+    const statusByState: Record<string, string> = {
+      SearchPending: 'searching',
+      Searching: 'searching',
+      EvaluatingReleases: 'searching',
+      DownloadSubmissionPending: 'searching',
+      Queued: 'queued',
+      Downloading: 'downloading',
+      DownloadCompleted: 'completed',
+      ImportPending: 'importpending',
+      Importing: 'processing',
+      Verifying: 'processing',
+      NoMatchingReleases: 'failed',
+      FailedNeedsAttention: 'failed',
+    }
+    const operationHasDownload = [
+      'Queued',
+      'Downloading',
+      'DownloadCompleted',
+      'ImportPending',
+      'Importing',
+      'Verifying',
+    ].includes(state)
+    const existing =
+      (operation.downloadId ? finalMap.get(operation.downloadId) : undefined) ??
+      (operationHasDownload
+        ? Array.from(finalMap.values()).find(
+            (item) =>
+              item.audiobookId === operation.audiobookId &&
+              ['queued', 'downloading', 'paused', 'processing', 'importpending'].includes(
+                item.status.toLowerCase(),
+              ),
+          )
+        : undefined)
+    if (existing) {
+      existing.activityKey = activityKey
+      existing.activityOperationId = operation.id
+      existing.activityDiagnosticId = operation.diagnosticId ?? diagnostic?.id
+      existing.activitySelectedRelease =
+        operation.selectedRelease ?? diagnostic?.selectedRelease ?? undefined
+      existing.activityStage = stage
+      existing.activityError =
+        operation.failureReason || diagnostic?.rejectionReasons?.join('; ') || undefined
+      existing.activityIndeterminate = searchInProgress || importInProgress
+      existing.title = operation.audiobookTitle || existing.title
+      continue
+    }
+
+    finalMap.set(activityKey, {
+      id: activityKey,
+      activityKey,
+      activityOperationId: operation.id,
+      activityDiagnosticId: operation.diagnosticId ?? diagnostic?.id,
+      activitySelectedRelease:
+        operation.selectedRelease ?? diagnostic?.selectedRelease ?? undefined,
+      activityStage: stage,
+      activityError:
+        operation.failureReason || diagnostic?.rejectionReasons?.join('; ') || undefined,
+      activityIndeterminate: searchInProgress || importInProgress,
+      title: operation.audiobookTitle || 'New audiobook',
+      audiobookId: operation.audiobookId,
+      status: statusByState[state] ?? 'failed',
+      progress: state === 'DownloadCompleted' ? 100 : 0,
+      size: 0,
+      downloaded: 0,
+      downloadSpeed: 0,
+      quality: '',
+      downloadClient: operation.downloadClientId ?? 'Quick Add',
+      downloadClientId: operation.downloadClientId ?? 'LISTENARR_SEARCH',
+      downloadClientType: 'operation',
+      addedAt: operation.createdAt,
+      errorMessage: operation.failureReason ?? undefined,
+      canPause: false,
+      canRemove: false,
+    })
+  }
+
+  return Array.from(finalMap.values()).filter(
+    (item) =>
+      !dismissedActivityKeys.value.has(activityKeyFor(item)) &&
+      !dismissedOperationDownloadIds.has(item.id) &&
+      !(item.audiobookId && dismissedOperationAudiobookIds.has(item.audiobookId)),
+  )
 })
+
+const activityKeyFor = (item: QueueItem): string =>
+  item.activityKey ??
+  (item.downloadClientType === 'move'
+    ? item.id.startsWith('move:')
+      ? item.id
+      : `move:${item.id}`
+    : `download:${item.downloadClientType}:${item.downloadClientId}:${item.id}`)
 
 // Build a lookup map from audiobook ID -> title for resolving friendly names
 const audiobookTitleMap = computed(() => {
@@ -664,9 +884,15 @@ const filteredQueue = computed(() => {
 const activeActivityCount = computed(
   () =>
     allActivityItems.value.filter((item) =>
-      ['queued', 'downloading', 'paused', 'processing', 'moving', 'importpending'].includes(
-        item.status.toLowerCase(),
-      ),
+      [
+        'queued',
+        'downloading',
+        'paused',
+        'processing',
+        'moving',
+        'importpending',
+        'searching',
+      ].includes(item.status.toLowerCase()),
     ).length,
 )
 
@@ -694,11 +920,41 @@ const activityProgress = (item: QueueItem): number | null => {
 const refreshQueue = async () => {
   loading.value = true
   try {
-    const [queueSnapshot] = await Promise.all([
-      apiService.getQueue(),
-      downloadsStore.loadDownloads(),
-    ])
+    const [queueSnapshot, , historySnapshot, dismissals, importedDownloadIds, operations] =
+      await Promise.all([
+        apiService.getQueue(),
+        downloadsStore.loadDownloads(),
+        apiService.getRecentHistory(200),
+        apiService.getActivityDismissals(),
+        apiService.getVerifiedImportDownloadIds(),
+        apiService.getQuickAddOperations(),
+      ])
     applyQueueSnapshot(queueSnapshot)
+    recentHistory.value = historySnapshot
+    verifiedImportDownloadIds.value = new Set(importedDownloadIds)
+    dismissedActivityKeys.value = new Set(dismissals)
+    quickAddOperations.value = operations
+    const quickAddIds = Array.from(new Set(operations.map((operation) => operation.audiobookId)))
+    const diagnosticEntries = await Promise.all(
+      quickAddIds.map(async (id) => {
+        try {
+          const diagnostics = await apiService.getAutomaticSearchHistory(id, 1)
+          return [id, diagnostics[0]] as const
+        } catch (error) {
+          errorTracking.captureException(error as Error, {
+            component: 'ActivityView',
+            operation: 'loadQuickAddSearchHistory',
+          })
+          return [id, undefined] as const
+        }
+      }),
+    )
+    activitySearchDiagnostics.value = new Map(
+      diagnosticEntries.filter(
+        (entry): entry is readonly [number, AutomaticSearchDiagnosticHistoryItem] =>
+          entry[1] !== undefined,
+      ),
+    )
   } catch (err) {
     errorTracking.captureException(err as Error, {
       component: 'ActivityView',
@@ -707,6 +963,96 @@ const refreshQueue = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const retryActivitySearch = async (item: QueueItem) => {
+  if (
+    !item.activityOperationId ||
+    !item.activityKey ||
+    retryingActivityKeys.value.has(item.activityKey)
+  ) {
+    return
+  }
+
+  retryingActivityKeys.value = new Set(retryingActivityKeys.value).add(item.activityKey)
+  try {
+    await apiService.retryQuickAddOperation(item.activityOperationId)
+    useToast().success('Retry queued', `Retrying ${getDisplayTitle(item)}.`)
+    await refreshQueue()
+  } catch (error) {
+    useToast().error('Search failed', (error as Error).message || 'Could not retry the search.')
+  } finally {
+    const remaining = new Set(retryingActivityKeys.value)
+    remaining.delete(item.activityKey)
+    retryingActivityKeys.value = remaining
+  }
+}
+
+const dismissActivityItem = async (item: QueueItem) => {
+  const key = activityKeyFor(item)
+  try {
+    await apiService.dismissActivityEntries([
+      {
+        key,
+        audiobookId: item.audiobookId,
+        title: getDisplayTitle(item),
+        downloadId: item.activityKey ? undefined : item.id,
+      },
+    ])
+    dismissedActivityKeys.value = new Set(dismissedActivityKeys.value).add(key)
+  } catch (error) {
+    useToast().error('Dismiss failed', (error as Error).message || 'Could not dismiss this entry.')
+  }
+}
+
+const dismissActivityItems = async (items: QueueItem[]) => {
+  if (items.length === 0) {
+    useToast().info('Nothing to clear', 'There are no matching Activity entries.')
+    return
+  }
+  const entries = items.map((item) => ({
+    key: activityKeyFor(item),
+    audiobookId: item.audiobookId,
+    title: getDisplayTitle(item),
+    downloadId: item.activityKey ? undefined : item.id,
+  }))
+  try {
+    await apiService.dismissActivityEntries(entries)
+    dismissedActivityKeys.value = new Set([
+      ...dismissedActivityKeys.value,
+      ...entries.map((entry) => entry.key),
+    ])
+  } catch (error) {
+    useToast().error(
+      'Clear failed',
+      (error as Error).message || 'Could not clear Activity entries.',
+    )
+  }
+}
+
+const clearCompleted = async () => {
+  const completed = allActivityItems.value.filter((item) =>
+    ['completed', 'imported'].includes(item.status.toLowerCase()),
+  )
+  if (
+    completed.length > 0 &&
+    !window.confirm(`Dismiss ${completed.length} completed Activity item(s)?`)
+  ) {
+    return
+  }
+  await dismissActivityItems(completed)
+}
+
+const clearFailed = async () => {
+  const failed = allActivityItems.value.filter(
+    (item) =>
+      ['failed', 'importblocked'].includes(item.status.toLowerCase()) ||
+      ['ImportFailed', 'NeedsAttention'].includes(item.recoveryState ?? ''),
+  )
+  if (failed.length > 0 && !window.confirm(`Dismiss ${failed.length} failed Activity item(s)?`)) {
+    return
+  }
+  await dismissActivityItems(failed)
 }
 
 const isDdlItem = (item: QueueItem): boolean =>
@@ -893,6 +1239,7 @@ const formatDuration = (from?: string | null): string => {
 }
 
 const displayStatus = (item: QueueItem): string => {
+  if (item.activityStage === 'Import Failed') return 'Import Failed'
   if (item.recoveryState === 'ImportFailed') return 'Import Failed'
   if (item.recoveryState === 'RecoveryPending') return 'Recovery Pending'
   if (item.recoveryState === 'ImportPending') return 'Import Pending'
@@ -1230,6 +1577,33 @@ a.activity-title:hover {
   flex: 1;
   color: #94a3b8;
   font-size: 0.78rem;
+}
+
+.activity-indeterminate {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.activity-indeterminate span {
+  position: absolute;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: #4dabf7;
+  animation: activity-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes activity-indeterminate {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(300%);
+  }
 }
 
 .activity-details {

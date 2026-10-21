@@ -31,9 +31,16 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             try
             {
                 var repository = scope.ServiceProvider.GetRequiredService<IAutomaticSearchDiagnosticRepository>();
-                await repository.AddAsync(new AutomaticSearchDiagnostic
+                var operationRepository = scope.ServiceProvider.GetRequiredService<IQuickAddOperationRepository>();
+                var operation = await operationRepository.GetByAudiobookIdAsync(audiobook.Id);
+                if (operation?.State == QuickAddOperationState.Imported)
+                {
+                    operation = null;
+                }
+                var diagnostic = new AutomaticSearchDiagnostic
                 {
                     AudiobookId = audiobook.Id,
+                    QuickAddOperationId = operation?.Id,
                     SearchTimestamp = DateTime.UtcNow,
                     SearchTrigger = searchTrigger.ToString(),
                     QueriesAttempted = (queriesAttempted ?? Array.Empty<string>())
@@ -83,7 +90,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     DownloadClient = SanitizeNullableDiagnosticText(downloadClient),
                     FinalOutcome = SanitizeDiagnosticText(outcome),
                     NextRetryAt = nextRetryAt
-                });
+                };
+                await repository.AddAsync(diagnostic);
+                if (operation != null)
+                {
+                    await operationRepository.LinkDiagnosticAsync(operation.Id, diagnostic.Id);
+                }
             }
             catch (Exception ex) when (Listenarr.Application.Common.WorkerExceptionClassifier.IsNonFatal(ex))
             {

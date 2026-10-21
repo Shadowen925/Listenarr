@@ -55,15 +55,34 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Import
                 .WithDownloadClientConfiguration(client)
                 .WithStatus(DownloadStatus.ImportPending)
                 .Build());
+            var operation = new QuickAddOperation
+            {
+                RequestKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes($"finalization-operation-{audiobook.Id}"))),
+                AudiobookId = audiobook.Id,
+                AudiobookTitle = audiobook.Title ?? "Imported Book",
+                State = QuickAddOperationState.Verifying,
+                DownloadId = download.Id
+            };
+            download.QuickAddOperationId = operation.Id;
+            await _downloadRepository.UpdateAsync(download);
             var job = new DownloadProcessingJobBuilder()
                 .WithDownload(download)
                 .WithStatus(ProcessingJobStatus.Processing)
                 .Build();
+            job.QuickAddOperationId = operation.Id;
             job.SetCheckpoint("FilesImported");
             job.SetCheckpoint("ClientMarkedImported");
             job.SetCheckpoint("ScanEnqueued", Guid.NewGuid().ToString());
             job.JobData[ImportFinalizationService.ImportedAudioOutputsJobDataKey] =
                 JsonSerializer.Serialize(new[] { importedOutput });
+            await using (var db = await _provider
+                .GetRequiredService<IDbContextFactory<ListenArrDbContext>>()
+                .CreateDbContextAsync())
+            {
+                db.QuickAddOperations.Add(operation);
+                await db.SaveChangesAsync();
+            }
             await _downloadProcessingJobRepository.AddAsync(job);
 
             var service = _provider.GetRequiredService<IImportFinalizationService>();
@@ -81,6 +100,11 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Import
                 bool.TrueString,
                 finalizedDownload.GetMetadataString(Download.SourceRetainedMetadataKey));
             Assert.Equal(ProcessingJobStatus.Completed, (await _downloadProcessingJobRepository.GetByIdAsync(job.Id))!.Status);
+            var persistedOperation = await _provider
+                .GetRequiredService<IQuickAddOperationRepository>()
+                .GetByIdAsync(operation.Id);
+            Assert.NotNull(persistedOperation);
+            Assert.Equal(QuickAddOperationState.Imported, persistedOperation!.State);
             var page = await _historyRepository.QueryAsync(new HistoryQuery
             {
                 CorrelationId = "finalization-success"

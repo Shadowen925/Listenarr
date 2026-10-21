@@ -25,6 +25,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         public List<AutomaticSearchDiagnostic> Diagnostics { get; } = [];
         public Mock<IReleaseRejectionRepository> Rejections { get; } = new();
         public Mock<IDownloadService> Downloads { get; } = new();
+        public Mock<IQuickAddOperationRepository> QuickAddOperations { get; } = new();
         public Mock<ISearchService> Search { get; } = new();
         public Mock<IAutomaticIndexerSearchService>? AutomaticIndexerSearch { get; private set; }
         public Mock<IQualityProfileService> QualityProfileService { get; } = new();
@@ -136,6 +137,11 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                     Diagnostics.Add(diagnostic))
                 .Returns(Task.CompletedTask);
 
+            QuickAddOperations.Setup(repository => repository.GetByAudiobookIdAsync(
+                    Audiobook.Id,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((QuickAddOperation?)null);
+
             var clientProxy = new Mock<IClientProxy>();
             clientProxy.Setup(proxy => proxy.SendCoreAsync(
                     It.IsAny<string>(),
@@ -159,6 +165,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
             services.AddSingleton(configurationService.Object);
             services.AddSingleton(indexerRepository.Object);
             services.AddSingleton(diagnosticRepository.Object);
+            services.AddSingleton(QuickAddOperations.Object);
             services.AddSingleton(hubContext.Object);
             _provider = services.BuildServiceProvider();
             Processor = new AutomaticSearchProcessor(
@@ -239,6 +246,44 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         Assert.Equal(["best"], fixture.SubmissionOrder);
         Assert.Equal("DuplicatePrevented", Assert.Single(fixture.Diagnostics).FinalOutcome);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_ReplacementRetriesFailedQuickAddOperation()
+    {
+        using var fixture = new Fixture(("replacement", 90));
+        var operation = new QuickAddOperation
+        {
+            Id = "operation-1",
+            AudiobookId = fixture.Audiobook.Id,
+            AudiobookTitle = fixture.Audiobook.Title ?? "Unknown Title",
+            State = QuickAddOperationState.FailedNeedsAttention,
+            DownloadId = "failed-download"
+        };
+        fixture.QuickAddOperations
+            .Setup(repository => repository.GetByAudiobookIdAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(operation);
+        fixture.QuickAddOperations
+            .Setup(repository => repository.RetryAsync(operation.Id, It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                operation.State = QuickAddOperationState.SearchPending;
+                operation.DownloadId = null;
+            })
+            .ReturnsAsync(true);
+
+        await fixture.Processor.SearchAudiobookAsync(
+            fixture.Audiobook.Id,
+            CancellationToken.None,
+            AutomaticSearchTrigger.Replacement);
+
+        Assert.Equal(QuickAddOperationState.SearchPending, operation.State);
+        Assert.Equal(["replacement"], fixture.SubmissionOrder);
+        fixture.QuickAddOperations.Verify(
+            repository => repository.RetryAsync(operation.Id, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

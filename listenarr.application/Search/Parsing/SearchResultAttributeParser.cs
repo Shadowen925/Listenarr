@@ -32,6 +32,16 @@ public static class SearchResultAttributeParser
             { "SPA", "Spanish" }, { "ES", "Spanish" }
         };
 
+    private static readonly IReadOnlyDictionary<string, string> ExplicitLanguageNames =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "english", "English" }, { "spanish", "Spanish" },
+            { "espanol", "Spanish" }, { "español", "Spanish" }, { "castellano", "Spanish" },
+            { "german", "German" }, { "deutsch", "German" },
+            { "french", "French" }, { "français", "French" }, { "francais", "French" },
+            { "dutch", "Dutch" }, { "nederlands", "Dutch" }
+        };
+
     public static string DetectQualityFromTags(string tags)
     {
         var lowerTags = tags.ToLowerInvariant();
@@ -131,6 +141,48 @@ public static class SearchResultAttributeParser
         }
 
         return null;
+    }
+
+    public static string? ParseExplicitLanguageFromText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var languages = GetExplicitLanguages(text);
+        return languages.Count == 1 ? languages.Single() : null;
+    }
+
+    public static bool HasConflictingExplicitLanguages(string? text) =>
+        !string.IsNullOrWhiteSpace(text) && GetExplicitLanguages(text).Count > 1;
+
+    private static HashSet<string> GetExplicitLanguages(string text)
+    {
+        var languages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, language) in ExplicitLanguageNames)
+        {
+            if (Regex.IsMatch(
+                    text,
+                    $@"(?<!\p{{L}}){Regex.Escape(name)}(?!\p{{L}})",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                languages.Add(language);
+            }
+        }
+
+        foreach (var (code, language) in LanguageCodes)
+        {
+            if (Regex.IsMatch(
+                    text,
+                    $@"[\[\(]\s*{Regex.Escape(code)}\s*[\]\)]|\b(?:lang|language)\s*[:=]\s*{Regex.Escape(code)}\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                languages.Add(language);
+            }
+        }
+
+        return languages;
     }
 
     public static string? ParseLanguageFromCode(string? code)
