@@ -232,6 +232,17 @@ export interface QueueItem {
   activityStage?: string
   activityError?: string
   activityIndeterminate?: boolean
+  activityOperationIdentity?: string
+  activityAssociatedDownloadIds?: string[]
+  activityAssociatedProcessingJobIds?: string[]
+  activityRetryCount?: number
+  activityLastAttemptAt?: string
+  activityLatestError?: string
+}
+
+export interface ActivityDismissalVersion {
+  key: string
+  version: string
 }
 
 export type DownloadRemovalMode = 'listenarrOnly' | 'clientKeepFiles' | 'clientDeleteData'

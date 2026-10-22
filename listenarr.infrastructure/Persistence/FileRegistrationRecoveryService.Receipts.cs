@@ -14,7 +14,7 @@ public sealed partial class FileRegistrationRecoveryService
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var completedJournals = await db.FileMutationJournals
             .AsNoTracking()
-            .Where(RegistrationMoveOwnerPredicate)
+            .Where(RegistrationPublicationOwnerPredicate)
             .Where(journal => journal.AudiobookId == audiobookId
                 && journal.State == FileMutationJournalState.Completed)
             .OrderBy(journal => journal.CreatedAt)

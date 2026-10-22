@@ -18,6 +18,9 @@
 
 using Listenarr.Api.Attributes;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Listenarr.Api.Features.ActivityHistory
 {
@@ -166,9 +169,11 @@ namespace Listenarr.Api.Features.ActivityHistory
         {
             var dismissals = await _history.GetByEventTypeAsync("ActivityDismissed");
             return Ok(dismissals
-                .Select(entry => entry.SourceTitle)
-                .Where(key => !string.IsNullOrWhiteSpace(key))
-                .Distinct(StringComparer.Ordinal)
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.SourceTitle))
+                .Select(entry => new ActivityDismissalVersion(
+                    entry.SourceTitle!,
+                    ReadDismissalVersion(entry.Data)))
+                .DistinctBy(entry => (entry.Key, entry.Version))
                 .ToArray());
         }
 
@@ -234,34 +239,43 @@ namespace Listenarr.Api.Features.ActivityHistory
             var entries = request.Entries
                 .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
                 .Select(entry => entry with { Key = entry.Key.Trim() })
-                .DistinctBy(entry => entry.Key, StringComparer.Ordinal)
+                .DistinctBy(entry => (entry.Key, entry.Version), EqualityComparer<(string, string)>.Default)
                 .ToArray();
-            if (entries.Length == 0 || entries.Any(entry => entry.Key.Length > 200))
+            if (entries.Length == 0
+                || entries.Any(entry =>
+                    entry.Key.Length > 200
+                    || string.IsNullOrWhiteSpace(entry.Version)
+                    || entry.Version.Length > 1000))
             {
-                return BadRequest(new { message = "Activity entry keys must contain between 1 and 200 characters." });
+                return BadRequest(new { message = "Activity entry keys and versions must be valid and within the supported length." });
             }
 
             var existing = await _history.GetByEventTypeAsync("ActivityDismissed");
             var existingKeys = existing
-                .Select(entry => entry.SourceTitle)
-                .Where(key => !string.IsNullOrWhiteSpace(key))
-                .ToHashSet(StringComparer.Ordinal);
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.SourceTitle))
+                .Select(entry => (entry.SourceTitle!, ReadDismissalVersion(entry.Data)))
+                .ToHashSet();
 
-            foreach (var entry in entries.Where(entry => !existingKeys.Contains(entry.Key)))
+            foreach (var entry in entries.Where(entry =>
+                !existingKeys.Contains((entry.Key, entry.Version))))
             {
+                var identity = Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes($"{entry.Key}\n{entry.Version}")));
                 await _history.AddAsync(new History
                 {
                     AudiobookId = entry.AudiobookId,
                     AudiobookTitle = entry.Title,
                     SourceTitle = entry.Key,
                     EventType = "ActivityDismissed",
-                    Message = "Activity entry dismissed; the underlying download or job was not changed.",
+                    Message = "Activity state dismissed; the underlying download or job was not changed.",
                     Source = "Activity",
                     Timestamp = DateTime.UtcNow,
                     Outcome = HistoryOutcome.Succeeded,
                     DownloadId = entry.DownloadId,
-                    IdempotencyKey = $"activity-dismiss:{entry.Key}"
+                    IdempotencyKey = $"activity-dismiss:{identity}",
+                    Data = JsonSerializer.Serialize(new { version = entry.Version })
                 });
+                existingKeys.Add((entry.Key, entry.Version));
             }
 
             return Ok(new { dismissed = entries.Length });
@@ -335,9 +349,26 @@ namespace Listenarr.Api.Features.ActivityHistory
             string Key,
             int? AudiobookId,
             string? Title,
-            string? DownloadId);
+            string? DownloadId,
+            string Version);
+
+        public sealed record ActivityDismissalVersion(string Key, string Version);
 
         public sealed record ActivityDismissalRequest(List<ActivityDismissalEntry> Entries);
+
+        private static string ReadDismissalVersion(string? data)
+        {
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                return string.Empty;
+            }
+
+            using var document = JsonDocument.Parse(data);
+            return document.RootElement.TryGetProperty("version", out var version)
+                && version.ValueKind == JsonValueKind.String
+                    ? version.GetString() ?? string.Empty
+                    : string.Empty;
+        }
 
         public sealed record QuickAddOperationActivityItem(
             string Id,

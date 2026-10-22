@@ -402,6 +402,79 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Processing
                 nameof(IDownloadClientGateway.MarkItemAsImportedAsync)));
         }
 
+        [Fact]
+        public async Task ProcessQueue_UnrecoverableJournalNeedsAttentionAndRepeatedCompletionDoesNotRequeue()
+        {
+            var sourceDir = FileService.GetTempDirectory("unrecoverable-journal-source");
+            var sourcePath = await FileService.GetFileAsync(sourceDir, "book.m4b");
+            var audiobook = await _audiobookRepository.AddAsync(new AudiobookBuilder()
+                .WithTitle("Unrecoverable Journal")
+                .WithBasePath(sourceDir)
+                .Build());
+            var client = await CreateDownloadClientConfiguration();
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithAudiobook(audiobook)
+                .WithDownloadClientConfiguration(client)
+                .WithCompletedStatus(DateTime.UtcNow)
+                .WithPath(sourceDir)
+                .Build());
+            var job = new DownloadProcessingJob
+            {
+                DownloadId = download.Id,
+                QuickAddOperationId = download.QuickAddOperationId,
+                JobType = ProcessingJobType.MoveOrCopyFile,
+                Status = ProcessingJobStatus.Pending,
+                SourcePath = sourceDir,
+                DownloadClientId = client.Id,
+                JobData = new Dictionary<string, object>
+                {
+                    ["CorrelationId"] = download.Id.ToUpperInvariant()
+                }
+            };
+            job.SetCheckpoint("FilesImported");
+            job.SetCheckpoint("ClientMarkedImported");
+            job.SetCheckpoint("ScanEnqueued");
+            job.SetCheckpoint("AudiobookshelfScanRequested");
+            await _downloadProcessingJobRepository.AddAsync(job);
+
+            await using (var db = await _provider
+                .GetRequiredService<IDbContextFactory<ListenArrDbContext>>()
+                .CreateDbContextAsync())
+            {
+                db.FileMutationJournals.Add(new FileMutationJournal
+                {
+                    OperationId = Guid.NewGuid(),
+                    Action = FileAction.Copy,
+                    SourcePath = sourcePath,
+                    DestinationPath = Path.Combine(sourceDir, "library-copy.m4b"),
+                    SourceParentDirectoryObjectIdentity = "source-parent",
+                    DestinationParentDirectoryObjectIdentity = "destination-parent",
+                    SourcePhysicalObjectIdentity = "source-generation",
+                    SourceLength = new FileInfo(sourcePath).Length,
+                    State = FileMutationJournalState.NeedsAttention,
+                    Error = "Source content proof is unavailable.",
+                    AudiobookId = audiobook.Id
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await downloadProcessingJobProcessor.ProcessQueueAsync(CancellationToken.None);
+
+            var failedJob = await _downloadProcessingJobRepository.GetByIdAsync(job.Id);
+            Assert.NotNull(failedJob);
+            Assert.Equal(ProcessingJobStatus.Failed, failedJob!.Status);
+            Assert.True(failedJob.HasCheckpoint("NeedsAttention"));
+            var blockedDownload = await _downloadRepository.GetByIdAsync(download.Id);
+            Assert.NotNull(blockedDownload);
+            Assert.Equal(DownloadStatus.ImportBlocked, blockedDownload!.Status);
+            Assert.Equal("NeedsAttention", blockedDownload.GetMetadataString("Recovery.State"));
+
+            var repeatedCompletionJobId =
+                await downloadProcessingJobService.EnqueueAsync(blockedDownload);
+            Assert.Equal(job.Id, repeatedCompletionJobId);
+            Assert.Single(await downloadProcessingJobService.GetJobsForDownloadAsync(download.Id));
+        }
+
         private async Task InitData()
         {
             downloadProcessingJobProcessor = _provider.GetRequiredService<DownloadProcessingJobProcessor>();

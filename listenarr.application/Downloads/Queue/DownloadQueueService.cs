@@ -146,6 +146,10 @@ namespace Listenarr.Application.Downloads.Queue
                                 }
                                 // Retain proven ownership before optional metadata persistence.
                                 queueItem.Id = matchedDownload.Id;
+                                queueItem.ActivityOperationIdentity =
+                                    CreateActivityOperationIdentity(
+                                        client.Id,
+                                        matchedDownload.GetExternalId() ?? originalClientId);
 
                                 await PersistDiscoveredClientIdentifiersAsync(matchedDownload, client, originalClientId, allKnownClientItemIds);
 

@@ -32,7 +32,8 @@ public sealed class HistoryControllerActivityTests : BaseTests
                 "download:deluge:client-1:download-1",
                 42,
                 "Book",
-                "download-1")
+                "download-1",
+                "failed:v1")
         ]));
 
         Assert.IsType<OkObjectResult>(result);
@@ -42,7 +43,8 @@ public sealed class HistoryControllerActivityTests : BaseTests
                 && entry.SourceTitle == "download:deluge:client-1:download-1"
                 && entry.DownloadId == "download-1"
                 && entry.AudiobookId == 42
-                && entry.IdempotencyKey == "activity-dismiss:download:deluge:client-1:download-1"),
+                && entry.IdempotencyKey!.StartsWith("activity-dismiss:", StringComparison.Ordinal)
+                && entry.Data!.Contains("\"version\":\"failed:v1\"", StringComparison.Ordinal)),
             It.IsAny<CancellationToken>()), Times.Once);
         history.Verify(repository => repository.DeleteAsync(
             It.IsAny<int>(),
@@ -63,14 +65,15 @@ public sealed class HistoryControllerActivityTests : BaseTests
                 new History
                 {
                     EventType = "ActivityDismissed",
-                    SourceTitle = "quick-add:42"
+                    SourceTitle = "quick-add:42",
+                    Data = "{\"version\":\"failed:v1\"}"
                 }
             ]);
         var controller = CreateController(history.Object);
 
         var result = await controller.DismissActivityEntries(new HistoryController.ActivityDismissalRequest(
         [
-            new HistoryController.ActivityDismissalEntry("quick-add:42", 42, "Book", null)
+            new HistoryController.ActivityDismissalEntry("quick-add:42", 42, "Book", null, "failed:v1")
         ]));
 
         Assert.IsType<OkObjectResult>(result);
@@ -80,7 +83,7 @@ public sealed class HistoryControllerActivityTests : BaseTests
     }
 
     [Fact]
-    public async Task GetActivityDismissals_ReturnsPersistedKeysOnly()
+    public async Task GetActivityDismissals_ReturnsPersistedKeyVersions()
     {
         var history = new Mock<IHistoryRepository>();
         history
@@ -98,7 +101,50 @@ public sealed class HistoryControllerActivityTests : BaseTests
 
         var result = Assert.IsType<OkObjectResult>(await controller.GetActivityDismissals());
 
-        Assert.Equal(["quick-add:42"], Assert.IsType<string[]>(result.Value));
+        Assert.Equal(
+            [new HistoryController.ActivityDismissalVersion("quick-add:42", "")],
+            Assert.IsType<HistoryController.ActivityDismissalVersion[]>(result.Value));
+    }
+
+    [Fact]
+    public async Task DismissActivityEntries_AllowsNewStateVersionForSameIdentity()
+    {
+        var history = new Mock<IHistoryRepository>();
+        history
+            .Setup(repository => repository.GetByEventTypeAsync(
+                "ActivityDismissed",
+                null,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new History
+                {
+                    EventType = "ActivityDismissed",
+                    SourceTitle = "download-operation:sabnzbd:job-1",
+                    Data = "{\"version\":\"importfailed:old error\"}"
+                }
+            ]);
+        history.Setup(repository => repository.AddAsync(
+                It.IsAny<History>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((History entry, CancellationToken _) => entry);
+        var controller = CreateController(history.Object);
+
+        var result = await controller.DismissActivityEntries(new HistoryController.ActivityDismissalRequest(
+        [
+            new HistoryController.ActivityDismissalEntry(
+                "download-operation:sabnzbd:job-1",
+                42,
+                "Book",
+                "download-1",
+                "importfailed:new error")
+        ]));
+
+        Assert.IsType<OkObjectResult>(result);
+        history.Verify(repository => repository.AddAsync(
+            It.Is<History>(entry =>
+                entry.SourceTitle == "download-operation:sabnzbd:job-1"
+                && entry.Data!.Contains("\"version\":\"importfailed:new error\"", StringComparison.Ordinal)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

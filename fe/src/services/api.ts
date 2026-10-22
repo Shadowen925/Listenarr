@@ -31,6 +31,7 @@ import type {
   Audiobook,
   AutomaticSearchDiagnosticHistoryItem,
   QuickAddOperationActivityItem,
+  ActivityDismissalVersion,
   AudiobookUpdateRequest,
   History,
   Indexer,
@@ -2025,8 +2026,8 @@ class ApiService {
     return this.request<History[]>(`/history/recent?limit=${limit}`)
   }
 
-  async getActivityDismissals(): Promise<string[]> {
-    return this.request<string[]>('/history/activity/dismissals')
+  async getActivityDismissals(): Promise<ActivityDismissalVersion[]> {
+    return this.request<ActivityDismissalVersion[]>('/history/activity/dismissals')
   }
 
   async getVerifiedImportDownloadIds(): Promise<string[]> {
@@ -2049,6 +2050,7 @@ class ApiService {
   async dismissActivityEntries(
     entries: Array<{
       key: string
+      version: string
       audiobookId?: number
       title?: string
       downloadId?: string

@@ -66,15 +66,6 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
                 .FirstOrDefaultAsync();
         }
 
-        public async Task<DownloadProcessingJob?> GetRecentCompletedByDownloadIdAsync(string downloadId, DateTime cutoff)
-        {
-            await using var ctx = await _dbFactory.CreateDbContextAsync();
-            return await ctx.DownloadProcessingJobs
-                .Where(j => j.DownloadId == downloadId && j.Status == ProcessingJobStatus.Completed && j.CompletedAt.HasValue && j.CompletedAt >= cutoff)
-                .OrderByDescending(j => j.CompletedAt)
-                .FirstOrDefaultAsync();
-        }
-
         public async Task<DownloadProcessingJob> AddAsync(DownloadProcessingJob job)
         {
             job.ActiveDeduplicationKey = IsActive(job.Status)
@@ -247,6 +238,10 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
                         statuses.Contains(j.Status) &&
                         j.CompletedAt.HasValue &&
                         j.CompletedAt < cutoffUtc &&
+                        !(j.Status == ProcessingJobStatus.Failed &&
+                            ctx.Downloads.Any(download =>
+                                download.Id == j.DownloadId &&
+                                download.Status == DownloadStatus.ImportBlocked)) &&
                         (j.QuickAddOperationId == null ||
                             !ctx.QuickAddOperations.Any(operation =>
                                 operation.Id == j.QuickAddOperationId &&

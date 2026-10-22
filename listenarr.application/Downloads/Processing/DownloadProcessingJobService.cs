@@ -33,10 +33,14 @@ namespace Listenarr.Application.Downloads.Processing
         private static readonly ProcessingJobStatus[] TerminalCleanupStatuses =
             [ProcessingJobStatus.Completed, ProcessingJobStatus.Failed];
 
-        public async Task<string> EnqueueAsync(Download download)
+        public Task<string> EnqueueAsync(Download download) =>
+            EnqueueCoreAsync(download, allowImportPending: false);
+
+        private async Task<string> EnqueueCoreAsync(
+            Download download,
+            bool allowImportPending)
         {
-            var now = DateTime.UtcNow;
-            var recentCompletedCutoff = now.AddSeconds(-300);
+            ArgumentNullException.ThrowIfNull(download);
 
             var existingActive = await jobRepository.GetActiveByDownloadIdAsync(download.Id);
             if (existingActive != null)
@@ -45,14 +49,22 @@ namespace Listenarr.Application.Downloads.Processing
                 return existingActive.Id;
             }
 
-            var recentCompleted = await jobRepository.GetRecentCompletedByDownloadIdAsync(download.Id, recentCompletedCutoff);
-            if (recentCompleted != null)
+            var previousJobs = await jobRepository.GetByDownloadIdAsync(download.Id);
+            var previousJob = previousJobs
+                .OrderByDescending(job => job.CreatedAt)
+                .FirstOrDefault();
+            if (previousJob != null)
             {
-                logger.LogInformation("Download {DownloadId} has a recent completed job {JobId} (within cooldown), not queuing new job", download.Id, recentCompleted.Id);
-                return recentCompleted.Id;
+                logger.LogInformation(
+                    "Duplicate completion ignored for download {DownloadId}; persisted processing job {JobId} is {Status}",
+                    download.Id,
+                    previousJob.Id,
+                    previousJob.Status);
+                return previousJob.Id;
             }
 
-            if (download.Status != DownloadStatus.Completed)
+            if (download.Status != DownloadStatus.Completed
+                && !(allowImportPending && download.Status == DownloadStatus.ImportPending))
             {
                 throw new InvalidOperationException($"Trying to enqueue an import job for download {download.Id} with status {download.Status}: Status should be Completed");
             }
@@ -101,6 +113,56 @@ namespace Listenarr.Application.Downloads.Processing
                     processingJobId: job.Id);
             }
             return job.Id;
+        }
+
+        public async Task<string> RetryAsync(Download download)
+        {
+            ArgumentNullException.ThrowIfNull(download);
+
+            var activeJob = await jobRepository.GetActiveByDownloadIdAsync(download.Id);
+            if (activeJob != null)
+            {
+                return activeJob.Id;
+            }
+
+            var jobs = await jobRepository.GetByDownloadIdAsync(download.Id);
+            var latestJob = jobs
+                .OrderByDescending(job => job.CreatedAt)
+                .FirstOrDefault();
+            if (latestJob == null)
+            {
+                return await EnqueueCoreAsync(download, allowImportPending: true);
+            }
+            if (latestJob.Status != ProcessingJobStatus.Failed)
+            {
+                return latestJob.Id;
+            }
+
+            latestJob.Status = ProcessingJobStatus.Pending;
+            latestJob.StartedAt = null;
+            latestJob.CompletedAt = null;
+            latestJob.NextRetryAt = null;
+            latestJob.ErrorMessage = null;
+            latestJob.JobData.Remove("NeedsAttention");
+            latestJob.AddLogEntry("Explicitly requeued after user-requested import retry");
+            await jobRepository.UpdateAsync(latestJob);
+
+            if (!string.IsNullOrWhiteSpace(latestJob.QuickAddOperationId))
+            {
+                var operation = await quickAddOperations.GetByIdAsync(
+                    latestJob.QuickAddOperationId);
+                if (operation != null)
+                {
+                    await quickAddOperations.AdvanceAsync(
+                        operation.AudiobookId,
+                        QuickAddOperationState.ImportPending,
+                        downloadId: download.Id,
+                        downloadClientId: download.DownloadClientId,
+                        processingJobId: latestJob.Id);
+                }
+            }
+
+            return latestJob.Id;
         }
 
         public async Task<DownloadProcessingJob?> GetNextJobAsync()

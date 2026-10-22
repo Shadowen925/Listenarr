@@ -78,13 +78,19 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                 download.Blocked(
                     "Unable to import the download",
                     $"See the log of job {job.Id} for more information");
-                if (!string.IsNullOrWhiteSpace(
-                    download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
+                if (job.HasCheckpoint("NeedsAttention")
+                    || !string.IsNullOrWhiteSpace(
+                        download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)))
                 {
-                    download.SetMetadata("Recovery.State", "ImportFailed");
+                    download.SetMetadata(
+                        "Recovery.State",
+                        job.HasCheckpoint("NeedsAttention")
+                            ? "NeedsAttention"
+                            : "ImportFailed");
                     download.SetMetadata(
                         "Recovery.Reason",
-                        "Import failed after the configured processing retries were exhausted.");
+                        job.ErrorMessage
+                            ?? "Import failed after the configured processing retries were exhausted.");
                 }
 
                 await downloadService.UpdateAsync(download);
@@ -430,47 +436,29 @@ namespace Listenarr.Infrastructure.Downloads.Processing
                 await downloadProcessingJobService.UpdateJobAsync(job);
             }
 
-            var finalizationService = scope.ServiceProvider.GetRequiredService<IImportFinalizationService>();
-            if (!string.IsNullOrWhiteSpace(job.QuickAddOperationId))
-            {
-                var quickAddOperations = scope.ServiceProvider
-                    .GetRequiredService<IQuickAddOperationRepository>();
-                await quickAddOperations.AdvanceAsync(
-                    audiobook.Id,
-                    QuickAddOperationState.Verifying,
-                    downloadId: download.Id,
-                    downloadClientId: download.DownloadClientId,
-                    processingJobId: job.Id,
-                    cancellationToken: cancellationToken);
-            }
-            bool? sourceRetained = job.TryGetJobDataString(
-                    Download.SourceRetainedMetadataKey,
-                    out var sourceRetainedValue)
-                && bool.TryParse(sourceRetainedValue, out var parsedSourceRetained)
-                    ? parsedSourceRetained
-                    : null;
-            try
-            {
-                await finalizationService.FinalizeAsync(
-                    job.Id,
-                    download.Id,
-                    audiobook.Id,
-                    audiobook.Title ?? download.Title,
-                    client?.Id ?? download.DownloadClientId,
+            if (!await ReconcileRegistrationPublicationsBeforeFinalizationAsync(
+                    scope.ServiceProvider,
+                    job,
+                    downloadProcessingJobService,
+                    historyRepository,
+                    download,
+                    audiobook,
                     correlationId,
-                    sourceRetained,
-                    new Dictionary<string, object>
-                    {
-                        ["JobId"] = job.Id,
-                        ["ScanJobId"] = job.TryGetJobDataString("ScanEnqueuedDetail", out var scanId) ? scanId : string.Empty
-                    },
-                    cancellationToken);
-            }
-            catch (InvalidOperationException exception)
+                    cancellationToken))
             {
-                await ScheduleRetryAsync(job, downloadProcessingJobService, historyRepository, download, audiobook,
-                    correlationId, $"Unable to commit import finalization: {exception.Message}", cancellationToken);
+                return;
             }
+
+            await FinalizeImportAsync(
+                scope.ServiceProvider,
+                job,
+                downloadProcessingJobService,
+                historyRepository,
+                download,
+                audiobook,
+                client?.Id ?? download.DownloadClientId,
+                correlationId,
+                cancellationToken);
         }
 
     }

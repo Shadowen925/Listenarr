@@ -214,6 +214,26 @@
                   <dt>Operation ID</dt>
                   <dd>{{ item.activityOperationId }}</dd>
                 </div>
+                <div v-if="item.activityAssociatedDownloadIds?.length">
+                  <dt>Associated download IDs</dt>
+                  <dd>{{ item.activityAssociatedDownloadIds.join(', ') }}</dd>
+                </div>
+                <div v-if="item.activityAssociatedProcessingJobIds?.length">
+                  <dt>Processing job IDs</dt>
+                  <dd>{{ item.activityAssociatedProcessingJobIds.join(', ') }}</dd>
+                </div>
+                <div v-if="item.activityRetryCount != null">
+                  <dt>Retry count</dt>
+                  <dd>{{ item.activityRetryCount }}</dd>
+                </div>
+                <div v-if="item.activityLastAttemptAt">
+                  <dt>Last attempt</dt>
+                  <dd>{{ new Date(item.activityLastAttemptAt).toLocaleString() }}</dd>
+                </div>
+                <div v-if="item.activityLatestError">
+                  <dt>Latest error</dt>
+                  <dd>{{ item.activityLatestError }}</dd>
+                </div>
                 <div v-if="item.activityDiagnosticId">
                   <dt>Diagnostic ID</dt>
                   <dd>{{ item.activityDiagnosticId }}</dd>
@@ -418,7 +438,7 @@ const recentHistory = ref<History[]>([])
 const verifiedImportDownloadIds = ref(new Set<string>())
 const activitySearchDiagnostics = ref(new Map<number, AutomaticSearchDiagnosticHistoryItem>())
 const quickAddOperations = ref<QuickAddOperationActivityItem[]>([])
-const dismissedActivityKeys = ref(new Set<string>())
+const dismissedActivityVersions = ref(new Map<string, string>())
 const retryingActivityKeys = ref(new Set<string>())
 const queueClientStatuses = ref<QueueClientStatus[]>([])
 const loading = ref(false)
@@ -572,6 +592,8 @@ const convertDownloadToQueueItem = (download: Download): QueueItem => {
     | undefined
   const recoveryState = download.metadata?.['Recovery.State']
   const recoveryReason = download.metadata?.['Recovery.Reason']
+  const externalId =
+    download.metadata?.['ClientDownloadId'] ?? download.metadata?.['TorrentHash'] ?? download.id
   return {
     id: download.id,
     title: download.title,
@@ -592,6 +614,8 @@ const convertDownloadToQueueItem = (download: Download): QueueItem => {
     missingFromClient: typeof recoveryState === 'string',
     recoveryState: typeof recoveryState === 'string' ? recoveryState : undefined,
     recoveryReason: typeof recoveryReason === 'string' ? recoveryReason : undefined,
+    activityOperationIdentity: `${download.downloadClientId}:${externalId}`,
+    activityAssociatedDownloadIds: [download.id],
     canPause: false,
     canRemove: true,
   }
@@ -719,17 +743,10 @@ const allActivityItems = computed(() => {
     if (!finalMap.has(it.id) && !isVerifiedImport(it)) finalMap.set(it.id, it)
   }
 
-  const dismissedOperationDownloadIds = new Set<string>()
-  const dismissedOperationAudiobookIds = new Set<number>()
   for (const operation of quickAddOperations.value) {
     if (operation.state === 'Imported') continue
 
     const activityKey = `quick-add:${operation.id}`
-    if (dismissedActivityKeys.value.has(activityKey)) {
-      if (operation.downloadId) dismissedOperationDownloadIds.add(operation.downloadId)
-      dismissedOperationAudiobookIds.add(operation.audiobookId)
-      continue
-    }
 
     const diagnostic = activitySearchDiagnostics.value.get(operation.audiobookId)
     const stageByState: Record<string, string> = {
@@ -769,25 +786,7 @@ const allActivityItems = computed(() => {
       NoMatchingReleases: 'failed',
       FailedNeedsAttention: 'failed',
     }
-    const operationHasDownload = [
-      'Queued',
-      'Downloading',
-      'DownloadCompleted',
-      'ImportPending',
-      'Importing',
-      'Verifying',
-    ].includes(state)
-    const existing =
-      (operation.downloadId ? finalMap.get(operation.downloadId) : undefined) ??
-      (operationHasDownload
-        ? Array.from(finalMap.values()).find(
-            (item) =>
-              item.audiobookId === operation.audiobookId &&
-              ['queued', 'downloading', 'paused', 'processing', 'importpending'].includes(
-                item.status.toLowerCase(),
-              ),
-          )
-        : undefined)
+    const existing = operation.downloadId ? finalMap.get(operation.downloadId) : undefined
     if (existing) {
       existing.activityKey = activityKey
       existing.activityOperationId = operation.id
@@ -799,6 +798,20 @@ const allActivityItems = computed(() => {
         operation.failureReason || diagnostic?.rejectionReasons?.join('; ') || undefined
       existing.activityIndeterminate = searchInProgress || importInProgress
       existing.title = operation.audiobookTitle || existing.title
+      existing.activityOperationIdentity ??= operation.downloadId
+        ? `${operation.downloadClientId ?? ''}:${operation.downloadId}`
+        : undefined
+      if (operation.processingJobId) {
+        existing.activityAssociatedProcessingJobIds = Array.from(
+          new Set([
+            ...(existing.activityAssociatedProcessingJobIds ?? []),
+            operation.processingJobId,
+          ]),
+        )
+      }
+      existing.activityRetryCount = Math.max(existing.activityRetryCount ?? 0, operation.attempt)
+      existing.activityLastAttemptAt = operation.updatedAt
+      existing.activityLatestError = operation.failureReason ?? existing.activityLatestError
       continue
     }
 
@@ -824,6 +837,16 @@ const allActivityItems = computed(() => {
       downloadClient: operation.downloadClientId ?? 'Quick Add',
       downloadClientId: operation.downloadClientId ?? 'LISTENARR_SEARCH',
       downloadClientType: 'operation',
+      activityOperationIdentity: operation.downloadId
+        ? `${operation.downloadClientId ?? ''}:${operation.downloadId}`
+        : undefined,
+      activityAssociatedDownloadIds: operation.downloadId ? [operation.downloadId] : [],
+      activityAssociatedProcessingJobIds: operation.processingJobId
+        ? [operation.processingJobId]
+        : [],
+      activityRetryCount: operation.attempt,
+      activityLastAttemptAt: operation.updatedAt,
+      activityLatestError: operation.failureReason ?? undefined,
       addedAt: operation.createdAt,
       errorMessage: operation.failureReason ?? undefined,
       canPause: false,
@@ -831,21 +854,85 @@ const allActivityItems = computed(() => {
     })
   }
 
-  return Array.from(finalMap.values()).filter(
-    (item) =>
-      !dismissedActivityKeys.value.has(activityKeyFor(item)) &&
-      !dismissedOperationDownloadIds.has(item.id) &&
-      !(item.audiobookId && dismissedOperationAudiobookIds.has(item.audiobookId)),
-  )
+  const grouped = new Map<string, QueueItem>()
+  for (const item of finalMap.values()) {
+    const key = activityKeyFor(item)
+    const current = grouped.get(key)
+    if (!current) {
+      grouped.set(key, { ...item })
+      continue
+    }
+
+    const mergedDownloadIds = new Set([
+      ...(current.activityAssociatedDownloadIds ?? [current.id]),
+      ...(item.activityAssociatedDownloadIds ?? [item.id]),
+    ])
+    const latest = Date.parse(item.addedAt) >= Date.parse(current.addedAt) ? item : current
+    grouped.set(key, {
+      ...current,
+      ...latest,
+      activityAssociatedDownloadIds: Array.from(mergedDownloadIds),
+    })
+  }
+
+  for (const item of grouped.values()) {
+    const downloadIds = new Set(item.activityAssociatedDownloadIds ?? [item.id])
+    const operationHistory = recentHistory.value
+      .filter(
+        (entry) =>
+          entry.downloadId != null &&
+          downloadIds.has(entry.downloadId) &&
+          ['ImportStarted', 'ImportRetry', 'ImportFailed'].includes(entry.eventType),
+      )
+      .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+    const processingJobIds = new Set(item.activityAssociatedProcessingJobIds ?? [])
+    for (const entry of operationHistory) {
+      if (!entry.data) continue
+      try {
+        const details = JSON.parse(entry.data) as {
+          JobId?: string
+          RetryCount?: number
+        }
+        if (details.JobId) processingJobIds.add(details.JobId)
+        if (typeof details.RetryCount === 'number') {
+          item.activityRetryCount = Math.max(item.activityRetryCount ?? 0, details.RetryCount)
+        }
+      } catch {
+        continue
+      }
+    }
+    const latestAttempt = operationHistory.at(-1)
+    item.activityAssociatedProcessingJobIds = Array.from(processingJobIds)
+    item.activityLastAttemptAt = latestAttempt?.timestamp ?? item.activityLastAttemptAt
+    item.activityLatestError =
+      [...operationHistory].reverse().find((entry) => entry.eventType === 'ImportFailed')
+        ?.message ??
+      item.activityLatestError ??
+      item.errorMessage
+  }
+
+  return Array.from(grouped.entries())
+    .filter(([key, item]) => dismissedActivityVersions.value.get(key) !== activityVersionFor(item))
+    .map(([, item]) => item)
 })
 
 const activityKeyFor = (item: QueueItem): string =>
-  item.activityKey ??
-  (item.downloadClientType === 'move'
-    ? item.id.startsWith('move:')
-      ? item.id
-      : `move:${item.id}`
-    : `download:${item.downloadClientType}:${item.downloadClientId}:${item.id}`)
+  item.activityOperationIdentity
+    ? `download-operation:${item.activityOperationIdentity}`
+    : (item.activityKey ??
+      (item.downloadClientType === 'move'
+        ? item.id.startsWith('move:')
+          ? item.id
+          : `move:${item.id}`
+        : `download:${item.downloadClientType}:${item.downloadClientId}:${item.id}`))
+
+const activityVersionFor = (item: QueueItem): string =>
+  JSON.stringify([
+    item.status.toLowerCase(),
+    item.recoveryState ?? '',
+    item.activityStage ?? '',
+    (item.activityLatestError ?? item.errorMessage ?? item.activityError ?? '').slice(0, 500),
+  ])
 
 // Build a lookup map from audiobook ID -> title for resolving friendly names
 const audiobookTitleMap = computed(() => {
@@ -932,7 +1019,9 @@ const refreshQueue = async () => {
     applyQueueSnapshot(queueSnapshot)
     recentHistory.value = historySnapshot
     verifiedImportDownloadIds.value = new Set(importedDownloadIds)
-    dismissedActivityKeys.value = new Set(dismissals)
+    dismissedActivityVersions.value = new Map(
+      dismissals.map((dismissal) => [dismissal.key, dismissal.version]),
+    )
     quickAddOperations.value = operations
     const quickAddIds = Array.from(new Set(operations.map((operation) => operation.audiobookId)))
     const diagnosticEntries = await Promise.all(
@@ -990,16 +1079,18 @@ const retryActivitySearch = async (item: QueueItem) => {
 
 const dismissActivityItem = async (item: QueueItem) => {
   const key = activityKeyFor(item)
+  const version = activityVersionFor(item)
   try {
     await apiService.dismissActivityEntries([
       {
         key,
+        version,
         audiobookId: item.audiobookId,
         title: getDisplayTitle(item),
         downloadId: item.activityKey ? undefined : item.id,
       },
     ])
-    dismissedActivityKeys.value = new Set(dismissedActivityKeys.value).add(key)
+    dismissedActivityVersions.value = new Map(dismissedActivityVersions.value).set(key, version)
   } catch (error) {
     useToast().error('Dismiss failed', (error as Error).message || 'Could not dismiss this entry.')
   }
@@ -1012,16 +1103,16 @@ const dismissActivityItems = async (items: QueueItem[]) => {
   }
   const entries = items.map((item) => ({
     key: activityKeyFor(item),
+    version: activityVersionFor(item),
     audiobookId: item.audiobookId,
     title: getDisplayTitle(item),
     downloadId: item.activityKey ? undefined : item.id,
   }))
   try {
     await apiService.dismissActivityEntries(entries)
-    dismissedActivityKeys.value = new Set([
-      ...dismissedActivityKeys.value,
-      ...entries.map((entry) => entry.key),
-    ])
+    const versions = new Map(dismissedActivityVersions.value)
+    for (const entry of entries) versions.set(entry.key, entry.version)
+    dismissedActivityVersions.value = versions
   } catch (error) {
     useToast().error(
       'Clear failed',

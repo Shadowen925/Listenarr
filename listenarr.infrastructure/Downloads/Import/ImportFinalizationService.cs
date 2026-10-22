@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 using System.Text.Json;
+using Listenarr.Application.Common.Exceptions;
 using Listenarr.Domain.Common;
 using Listenarr.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -340,7 +341,8 @@ namespace Listenarr.Infrastructure.Downloads.Import
                     cancellationToken);
             if (hasUnresolvedFileMutation)
             {
-                throw new InvalidOperationException(
+                throw new ApplicationConflictException(
+                    "import_mutation_journal_unresolved",
                     $"Audiobook {audiobookId} has an unresolved file mutation journal.");
             }
 

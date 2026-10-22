@@ -369,6 +369,7 @@ namespace Listenarr.Domain.Downloads
         public bool MissingFromClient { get; set; }
         public string? RecoveryState { get; set; }
         public string? RecoveryReason { get; set; }
+        public string? ActivityOperationIdentity { get; set; }
 
         /// <summary>
         /// Link to the audiobook record this download is associated with (if any).

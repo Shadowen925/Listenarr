@@ -27,6 +27,8 @@ type ActivityItem = {
   downloadClientType?: string
   progress?: number
   canRemove?: boolean
+  activityAssociatedDownloadIds?: string[]
+  activityOperationIdentity?: string
 }
 
 type ActivityViewVm = {
@@ -40,6 +42,7 @@ type ActivityViewVm = {
   removeFromQueue: (item: ActivityItem) => Promise<void> | void
   removeError: string
   confirmRemove: (mode?: string) => Promise<void>
+  refreshQueue: () => Promise<void>
 }
 
 const mockSignalR = () => {
@@ -366,6 +369,7 @@ describe('ActivityView', () => {
     expect(dismiss).toHaveBeenCalledWith([
       expect.objectContaining({
         key: 'download:external:sab-client-1:completed-to-dismiss',
+        version: '["completed","","",""]',
         downloadId: 'completed-to-dismiss',
       }),
     ])
@@ -1103,7 +1107,9 @@ describe('ActivityView', () => {
           updatedAt: new Date().toISOString(),
         },
       ]),
-      getActivityDismissals: vi.fn(async () => ['quick-add:operation-45']),
+      getActivityDismissals: vi.fn(async () => [
+        { key: 'quick-add:operation-45', version: '["searching","","Search Pending",""]' },
+      ]),
     })
     mockConfigurationStore(false)
     mockLibraryStore([{ id: 45, title: 'Dismissed Book' }])
@@ -1112,5 +1118,100 @@ describe('ActivityView', () => {
     const wrapper = await mountActivityView()
 
     expect(wrapper.findAll('.activity-row')).toHaveLength(0)
+  })
+
+  it('shows dismissed Activity again after a meaningful Quick Add state transition', async () => {
+    let state = 'NoMatchingReleases'
+    const dismissals: Array<{ key: string; version: string }> = []
+    mockSignalR()
+    const api = mockApi({
+      getActivityDismissals: vi.fn(async () => dismissals),
+      dismissActivityEntries: vi.fn(async (entries: Array<{ key: string; version: string }>) => {
+        dismissals.push(...entries)
+        return { dismissed: entries.length }
+      }),
+      getQuickAddOperations: vi.fn(async () => [
+        {
+          id: 'operation-transition',
+          audiobookId: 46,
+          audiobookTitle: 'Transition Book',
+          state,
+          attempt: 1,
+          failureReason: state === 'NoMatchingReleases' ? 'No releases found' : undefined,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore([{ id: 46, title: 'Transition Book' }])
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+    await wrapper.get('[aria-label="Dismiss Transition Book from Activity"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.activity-row')).toHaveLength(0)
+
+    state = 'Searching'
+    await (wrapper.vm as unknown as ActivityViewVm).refreshQueue()
+    await flushPromises()
+
+    expect(wrapper.findAll('.activity-row')).toHaveLength(1)
+    expect(api.dismissActivityEntries).toHaveBeenCalledWith([
+      expect.objectContaining({
+        key: 'quick-add:operation-transition',
+        version: '["failed","","No Matching Releases","No releases found"]',
+      }),
+    ])
+  })
+
+  it('consolidates identical client operations without hiding separate submissions', async () => {
+    mockSignalR()
+    mockApi()
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore({
+      failedDownloads: [
+        {
+          id: 'internal-download-1',
+          status: 'ImportBlocked',
+          progress: 100,
+          downloadClientId: 'sab-client',
+          title: 'Repeated import',
+          startedAt: '2026-01-01T00:00:00Z',
+          metadata: { ClientDownloadId: 'sab-job-1', 'Recovery.State': 'ImportFailed' },
+        },
+        {
+          id: 'internal-download-2',
+          status: 'ImportBlocked',
+          progress: 100,
+          downloadClientId: 'sab-client',
+          title: 'Repeated import',
+          startedAt: '2026-01-02T00:00:00Z',
+          metadata: { ClientDownloadId: 'sab-job-1', 'Recovery.State': 'ImportFailed' },
+        },
+        {
+          id: 'internal-download-3',
+          status: 'ImportBlocked',
+          progress: 100,
+          downloadClientId: 'sab-client',
+          title: 'Repeated import',
+          startedAt: '2026-01-03T00:00:00Z',
+          metadata: { ClientDownloadId: 'sab-job-2', 'Recovery.State': 'ImportFailed' },
+        },
+      ],
+    })
+
+    const wrapper = await mountActivityView()
+    const vm = wrapper.vm as unknown as ActivityViewVm
+
+    expect(vm.allActivityItems).toHaveLength(2)
+    const firstOperation = vm.allActivityItems.find(
+      (item) => item.activityOperationIdentity === 'sab-client:sab-job-1',
+    )
+    expect(firstOperation?.activityAssociatedDownloadIds).toEqual([
+      'internal-download-1',
+      'internal-download-2',
+    ])
   })
 })

@@ -31,6 +31,11 @@ namespace Listenarr.Application.Downloads.Contracts
         Task<string> EnqueueAsync(Download download);
 
         /// <summary>
+        /// Explicitly retry the persisted processing job for a blocked download.
+        /// </summary>
+        Task<string> RetryAsync(Download download);
+
+        /// <summary>
         /// Get the next pending job to process
         /// </summary>
         Task<DownloadProcessingJob?> GetNextJobAsync();

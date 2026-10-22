@@ -207,7 +207,7 @@ public class DownloadsController : ControllerBase
                 download.CompletedAt ??= DateTime.UtcNow;
                 download.Completed();
                 await _downloadService.UpdateAsync(download);
-                var jobId = await _downloadProcessingJobService.EnqueueAsync(download);
+                var jobId = await _downloadProcessingJobService.RetryAsync(download);
                 _logger.LogInformation(
                     "Queued recovered import {DownloadId} as processing job {JobId}",
                     LogRedaction.SanitizeText(id),
@@ -234,13 +234,23 @@ public class DownloadsController : ControllerBase
             download.Unblock();
 
             await _downloadService.UpdateAsync(download);
+            if (_downloadProcessingJobService == null)
+            {
+                throw new InvalidOperationException("Download processing is not available.");
+            }
 
-            _logger.LogInformation("Reset blocked import {DownloadId} back to ImportPending", LogRedaction.SanitizeText(id));
+            var retryJobId = await _downloadProcessingJobService.RetryAsync(download);
+
+            _logger.LogInformation(
+                "Reset blocked import {DownloadId} back to ImportPending as processing job {JobId}",
+                LogRedaction.SanitizeText(id),
+                LogRedaction.SanitizeText(retryJobId));
             return Ok(new
             {
                 message = "Import retry queued",
                 id,
-                status = download.Status.ToString()
+                status = download.Status.ToString(),
+                jobId = retryJobId
             });
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)

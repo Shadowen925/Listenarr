@@ -183,10 +183,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
             repository.SetupSequence(repo => repo.GetActiveByDownloadIdAsync(download.Id))
                 .ReturnsAsync((DownloadProcessingJob?)null)
                 .ReturnsAsync(winner);
-            repository.Setup(repo => repo.GetRecentCompletedByDownloadIdAsync(
-                    download.Id,
-                    It.IsAny<DateTime>()))
-                .ReturnsAsync((DownloadProcessingJob?)null);
+            repository.Setup(repo => repo.GetByDownloadIdAsync(download.Id))
+                .ReturnsAsync([]);
             repository.Setup(repo => repo.AddAsync(It.IsAny<DownloadProcessingJob>()))
                 .ThrowsAsync(new UniqueConstraintViolationException(
                     "duplicate active import job",
@@ -203,8 +201,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
         }
 
         [Fact]
-        [Trait("Scenario", "RecentlyCompletedCooldownPreventsDuplicate")]
-        public async Task QueueRespectsRecentlyCompletedCooldown_ReturnsCompletedJob()
+        [Trait("Scenario", "PersistedCompletedJobPreventsDuplicate")]
+        public async Task QueueDoesNotRecreatePersistedCompletedJob()
         {
             var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithAudiobook(await CreateAudiobook())
@@ -224,17 +222,52 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
             job.CompletedAt = DateTime.UtcNow;
             await downloadProcessingJobService.UpdateJobAsync(job);
 
-            // attempt to queue again should return the recently completed job id
+            // Repeated completion notifications should reuse the durable job indefinitely.
             var newJobId = await downloadProcessingJobService.EnqueueAsync(download);
             Assert.Equal(jobId, newJobId);
 
-            // now pretend the completed job is old -> set CompletedAt far in past
+            // Age does not make a completion notification a new import operation.
             job.CompletedAt = DateTime.UtcNow.AddHours(-10);
             await downloadProcessingJobService.UpdateJobAsync(job);
 
-            // now new queue should create a fresh job id
-            var newId = await downloadProcessingJobService.EnqueueAsync(download);
-            Assert.NotEqual(jobId, newId);
+            var oldCompletedJobId = await downloadProcessingJobService.EnqueueAsync(download);
+            Assert.Equal(jobId, oldCompletedJobId);
+
+            var jobs = await downloadProcessingJobService.GetJobsForDownloadAsync(download.Id);
+            Assert.Single(jobs);
+        }
+
+        [Fact]
+        [Trait("Scenario", "ExplicitRetryReusesFailedJob")]
+        public async Task ExplicitRetry_ReusesFailedJobAndMakesItPending()
+        {
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithAudiobook(await CreateAudiobook())
+                .WithDownloadClientConfiguration(await CreateDownloadClientConfiguration())
+                .WithCompletedStatus(at: DateTime.UtcNow)
+                .Build());
+            var service = _provider.GetRequiredService<IDownloadProcessingJobService>();
+            var jobId = await service.EnqueueAsync(download);
+            var job = await service.GetJobAsync(jobId);
+            Assert.NotNull(job);
+            await service.UpdateJobAsync(job!.MarkAsFailed("previous failure"));
+
+            var repeatedCompletionJobId = await service.EnqueueAsync(download);
+            Assert.Equal(jobId, repeatedCompletionJobId);
+            Assert.Equal(
+                ProcessingJobStatus.Failed,
+                (await service.GetJobAsync(jobId))!.Status);
+
+            var retryJobId = await service.RetryAsync(download);
+
+            Assert.Equal(jobId, retryJobId);
+            var retriedJob = await service.GetJobAsync(jobId);
+            Assert.NotNull(retriedJob);
+            Assert.Equal(ProcessingJobStatus.Pending, retriedJob!.Status);
+            Assert.Null(retriedJob.ErrorMessage);
+            Assert.Null(retriedJob.CompletedAt);
+            var newId = await service.EnqueueAsync(download);
+            Assert.Equal(jobId, newId);
         }
 
         [Fact]

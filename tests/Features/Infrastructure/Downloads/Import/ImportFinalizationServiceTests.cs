@@ -305,7 +305,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Import
                 await db.SaveChangesAsync();
             }
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            await Assert.ThrowsAsync<Listenarr.Application.Common.Exceptions.ApplicationConflictException>(() =>
                 _provider.GetRequiredService<IImportFinalizationService>().FinalizeAsync(
                     job.Id,
                     download.Id,

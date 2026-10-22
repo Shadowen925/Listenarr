@@ -38,9 +38,17 @@ namespace Listenarr.Application.Downloads.Queue
                 ContentPath = string.IsNullOrWhiteSpace(download.FinalPath)
                     ? download.DownloadPath
                     : download.FinalPath,
-                ErrorMessage = download.ErrorMessage
+                ErrorMessage = download.ErrorMessage,
+                ActivityOperationIdentity = CreateActivityOperationIdentity(
+                    download.DownloadClientId,
+                    download.GetExternalId() ?? download.Id)
             };
         }
+
+        private static string CreateActivityOperationIdentity(
+            string? downloadClientId,
+            string externalId) =>
+            $"{downloadClientId}:{externalId}";
 
         private static string ToQueueStatus(DownloadStatus status) => status switch
         {
