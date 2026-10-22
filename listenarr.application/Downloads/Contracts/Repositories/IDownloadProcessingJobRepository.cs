@@ -25,6 +25,9 @@ namespace Listenarr.Application.Downloads.Contracts.Repositories
         Task<DownloadProcessingJob?> GetActiveByDownloadIdAsync(string downloadId);
         Task<DownloadProcessingJob?> GetRecentCompletedByDownloadIdAsync(string downloadId, DateTime cutoff);
         Task<DownloadProcessingJob> AddAsync(DownloadProcessingJob job);
+        Task<DownloadProcessingJob?> TryClaimNextPendingAsync(
+            DateTime nowUtc,
+            CancellationToken cancellationToken = default);
 
         /// <summary>
         /// List of all pending jobs with the given status

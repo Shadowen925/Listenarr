@@ -326,6 +326,104 @@ namespace Listenarr.Tests.Features.Infrastructure.DownloadClients.Deluge
             Assert.Equal("abcdef1234567890", result.ExternalId);
         }
 
+        [Fact]
+        public async Task RemoveAsync_WhenDelugeConfirmsRemoval_UsesNormalizedExternalIdAndPreservesDeletePolicy()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.RemoveTorrentResponseOverride = """
+            {
+              "id": 1,
+              "result": true,
+              "error": null
+            }
+            """;
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var removed = await adapter.RemoveAsync(_client, " ABCDEF1234567890 ", deleteFiles: false);
+
+            Assert.True(removed);
+            Assert.Equal(1, mock.RemoveTorrentCallCount);
+            Assert.Equal("abcdef1234567890", mock.LastRemovedTorrentId);
+            Assert.False(mock.LastRemoveDeleteFiles);
+        }
+
+        [Fact]
+        public async Task RemoveAsync_WhenRemovalReturnsFalse_OnlySucceedsAfterSuccessfulAbsenceCheck()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.RemoveTorrentResponseOverride = """
+            {
+              "id": 1,
+              "result": false,
+              "error": null
+            }
+            """;
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var removed = await adapter.RemoveAsync(_client, "ABCDEF1234567890");
+
+            Assert.True(removed);
+            Assert.Equal(1, mock.RemoveTorrentCallCount);
+            Assert.Equal("abcdef1234567890", mock.LastRemovedTorrentId);
+        }
+
+        [Fact]
+        public async Task RemoveAsync_WhenRemovalReturnsFalseAndTorrentStillExists_ReturnsFalse()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.RemoveTorrentResponseOverride = """
+            {
+              "id": 1,
+              "result": false,
+              "error": null
+            }
+            """;
+            mock.UpdateUiResponseOverride = BuildUpdateUiResponse("Seeding", 100.0, "listenarr");
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var removed = await adapter.RemoveAsync(_client, "ABCDEF1234567890");
+
+            Assert.False(removed);
+        }
+
+        [Fact]
+        public async Task RemoveAsync_WhenRemovalReturnsNullAndTorrentStillExists_ReturnsFalse()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.RemoveTorrentResponseOverride = """
+            {
+              "id": 1,
+              "result": null,
+              "error": null
+            }
+            """;
+            mock.UpdateUiResponseOverride = BuildUpdateUiResponse("Seeding", 100.0, "listenarr");
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+            var removed = await adapter.RemoveAsync(_client, "ABCDEF1234567890");
+
+            Assert.False(removed);
+        }
+
+        [Fact]
+        public async Task RemoveAsync_WhenAbsenceCheckFails_ThrowsSoDeferredCleanupCanRetry()
+        {
+            var mock = _provider.GetRequiredService<DelugeApiMock>();
+            mock.RemoveTorrentResponseOverride = """
+            {
+              "id": 1,
+              "result": false,
+              "error": null
+            }
+            """;
+            mock.FailUpdateUi = true;
+
+            var adapter = MockUtils.CreateDelugeAdapter(_provider);
+
+            await Assert.ThrowsAsync<HttpRequestException>(
+                () => adapter.RemoveAsync(_client, "ABCDEF1234567890"));
+        }
+
         private async Task<DownloadClientConfiguration> SaveLabelledClientAsync()
             => await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfigurationBuilder()
                 .WithId("deluge-label-test")

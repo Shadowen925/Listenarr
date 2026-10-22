@@ -17,15 +17,52 @@ namespace Listenarr.Infrastructure.DownloadClients.Deluge
         DelugeRpcClient rpcClient,
         ILogger logger)
     {
+        private static readonly string[] TorrentLookupFields = ["name", "state"];
+
         public async Task<bool> RemoveAsync(
             DownloadClientConfiguration client,
             string id,
             bool deleteFiles = false,
             CancellationToken ct = default)
         {
-            logger.LogInformation("Removing Deluge torrent {TorrentId} (deleteFiles={DeleteFiles})", DelugeTorrentId.Normalize(id), deleteFiles);
-            var res = await rpcClient.InvokeAsync(client, "core.remove_torrent", [DelugeTorrentId.Normalize(id), deleteFiles], ct);
-            return res.ValueKind == JsonValueKind.True || res.ValueKind == JsonValueKind.Null || res.ValueKind == JsonValueKind.Undefined;
+            var torrentId = DelugeTorrentId.Normalize(id);
+            logger.LogInformation("Removing Deluge torrent {TorrentId} (deleteFiles={DeleteFiles})", torrentId, deleteFiles);
+            var result = await rpcClient.InvokeAsync(client, "core.remove_torrent", [torrentId, deleteFiles], ct);
+            if (result.ValueKind == JsonValueKind.True)
+            {
+                return true;
+            }
+
+            // Deluge returns false when a torrent is not present. Only treat that as
+            // completed cleanup after a successful, complete live-item query confirms absence.
+            var snapshot = await rpcClient.InvokeAsync(
+                client,
+                "web.update_ui",
+                [TorrentLookupFields, new Dictionary<string, object>()],
+                ct);
+            if (!snapshot.TryGetProperty("torrents", out var torrents) ||
+                torrents.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException("Deluge returned no valid torrent snapshot after removal was not confirmed.");
+            }
+
+            var stillPresent = torrents.EnumerateObject().Any(torrent =>
+                string.Equals(
+                    DelugeTorrentId.Normalize(torrent.Name),
+                    torrentId,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!stillPresent)
+            {
+                logger.LogInformation(
+                    "Deluge confirms torrent {TorrentId} is already absent; treating cleanup as complete",
+                    torrentId);
+                return true;
+            }
+
+            logger.LogWarning(
+                "Deluge did not remove torrent {TorrentId}; it remains present in the client",
+                torrentId);
+            return false;
         }
     }
 }

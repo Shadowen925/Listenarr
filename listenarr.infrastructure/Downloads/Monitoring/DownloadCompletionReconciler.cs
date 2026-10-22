@@ -1,12 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Listenarr.Domain.Common;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.Downloads.Monitoring
 {
-    internal sealed class DownloadCompletionReconciler(
+    internal sealed partial class DownloadCompletionReconciler(
         IRemotePathMappingService remotePathMappingService,
         IFileSystem fileSystem,
         IMetadataService metadataService,
@@ -18,6 +17,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         private const string StateKey = "Recovery.State";
         private const string ReasonKey = "Recovery.Reason";
         private const string ClientPresenceKey = "Recovery.ClientPresence";
+        private const string ClientContentPathKey = "ClientContentPath";
 
         private readonly DownloadCompletionDirectoryScanner _directoryScanner =
             new(remotePathMappingService, fileSystem, logger);
@@ -28,6 +28,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             ApplicationSettings settings,
             CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var recovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!settings.EnableCompletedDownloadReconciliation || missingDownloads.Count == 0)
             {
@@ -50,6 +51,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             }
 
             var mappings = await remotePathMappingService.GetPathMappingByClientAsync(client);
+            cancellationToken.ThrowIfCancellationRequested();
             if (mappings.Count == 0)
             {
                 foreach (var download in recoverableDownloads)
@@ -66,7 +68,10 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 return recovered;
             }
 
-            var (authorizedRoots, failureReason) = await _directoryScanner.ResolveAuthorizedRootsAsync(client, mappings);
+            var (authorizedRoots, failureReason) = await _directoryScanner.ResolveAuthorizedRootsAsync(
+                client,
+                mappings,
+                cancellationToken);
             if (authorizedRoots.Count == 0)
             {
                 foreach (var download in recoverableDownloads)
@@ -81,8 +86,8 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 return recovered;
             }
 
-            var candidateFiles = _directoryScanner.EnumerateAudioFiles(authorizedRoots);
             var metadataByPath = new Dictionary<string, AudioMetadata?>(StringComparer.Ordinal);
+            DownloadCompletionDirectoryScanResult? broadScan = null;
             foreach (var download in recoverableDownloads)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -90,18 +95,92 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 var audiobook = download.AudiobookId.HasValue
                     ? await audiobookRepository.GetByIdAsync(download.AudiobookId.Value)
                     : null;
+                cancellationToken.ThrowIfCancellationRequested();
                 if (audiobook == null || HasConflictingAsin(download, audiobook))
                 {
                     SetRecovery(download, "RecoveryPending", "The tracked audiobook identity could not be verified.");
                     continue;
                 }
 
-                var matchedFiles = await FindMatchingFilesAsync(
-                    candidateFiles,
-                    metadataByPath,
-                    audiobook,
+                List<StableCandidateFile>? matchedFiles = null;
+                // DownloadPath is copied from the client's shared configuration at submission,
+                // so only item-specific paths may narrow discovery.
+                var (specificDirectory, mappingUnavailable) = await _directoryScanner.ResolveDownloadSpecificDirectoryAsync(
+                    client,
+                    authorizedRoots,
+                    [
+                        download.GetMetadataString(ClientContentPathKey),
+                        download.FinalPath
+                    ],
                     cancellationToken);
-                if (matchedFiles.Count == 0)
+                if (mappingUnavailable)
+                {
+                    SetRecovery(
+                        download,
+                        "RecoveryPending",
+                        "A persisted download path is owned by an unavailable client mapping; broader discovery was not attempted.");
+                    continue;
+                }
+
+                if (specificDirectory != null)
+                {
+                    var specificScan = _directoryScanner.EnumerateAudioFiles([specificDirectory], cancellationToken);
+                    var specificMatches = await FindMatchingFilesAsync(
+                        specificScan.Files,
+                        metadataByPath,
+                        audiobook,
+                        cancellationToken);
+                    if (!specificScan.IsComplete || !specificMatches.IsComplete)
+                    {
+                        SetRecovery(
+                            download,
+                            "RecoveryPending",
+                            "The verified download-specific directory could not be scanned completely within the configured limits.");
+                        continue;
+                    }
+
+                    if (specificMatches.MatchingGroups > 1)
+                    {
+                        SetRecovery(
+                            download,
+                            "RecoveryPending",
+                            "Multiple matching directories were found beneath the verified download-specific directory.");
+                        continue;
+                    }
+
+                    matchedFiles = specificMatches.Files;
+                }
+
+                if (matchedFiles == null)
+                {
+                    broadScan ??= _directoryScanner.EnumerateAudioFiles(authorizedRoots, cancellationToken);
+                    var broadMatches = await FindMatchingFilesAsync(
+                        broadScan.Files,
+                        metadataByPath,
+                        audiobook,
+                        cancellationToken);
+                    if (!broadScan.IsComplete || !broadMatches.IsComplete)
+                    {
+                        SetRecovery(
+                            download,
+                            "RecoveryPending",
+                            "Authorized completed-download discovery was incomplete because a directory was inaccessible or a scan limit was reached.");
+                        continue;
+                    }
+
+                    if (broadMatches.MatchingGroups > 1)
+                    {
+                        SetRecovery(
+                            download,
+                            "RecoveryPending",
+                            "Multiple authorized directories contain matching files; recovery was left ambiguous.");
+                        continue;
+                    }
+
+                    matchedFiles = broadMatches.Files;
+                }
+
+                if (matchedFiles == null || matchedFiles.Count == 0)
                 {
                     SetRecovery(
                         download,
@@ -158,133 +237,6 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             }
 
             return recovered;
-        }
-
-        private async Task<List<StableCandidateFile>> FindMatchingFilesAsync(
-            IReadOnlyCollection<string> candidateFiles,
-            IDictionary<string, AudioMetadata?> metadataByPath,
-            Audiobook audiobook,
-            CancellationToken cancellationToken)
-        {
-            var pathComparer = OperatingSystem.IsWindows()
-                ? StringComparer.OrdinalIgnoreCase
-                : StringComparer.Ordinal;
-            var matchingGroups = new List<List<StableCandidateFile>>();
-            var groups = candidateFiles.GroupBy(Path.GetDirectoryName, pathComparer);
-            foreach (var group in groups)
-            {
-                var files = new List<(string Path, AudioMetadata? Metadata)>();
-                foreach (var path in group)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!CanRead(path))
-                    {
-                        files.Clear();
-                        break;
-                    }
-
-                    if (!metadataByPath.TryGetValue(path, out var metadata))
-                    {
-                        metadata = await metadataService.ExtractFileMetadataAsync(path);
-                        metadataByPath[path] = metadata;
-                    }
-
-                    files.Add((path, metadata));
-                }
-
-                if (files.Count == 0)
-                {
-                    continue;
-                }
-
-                var matchingFiles = files
-                    .Where(file => MatchesAudiobook(file, audiobook))
-                    .ToList();
-                if (matchingFiles.Count == 0)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    matchingGroups.Add(matchingFiles
-                        .Select(file => new StableCandidateFile(
-                            file.Path,
-                            fileSystem.GetFileLength(file.Path),
-                            fileSystem.GetLastWriteTimeUtc(file.Path),
-                            file.Metadata))
-                        .ToList());
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    continue;
-                }
-                catch (IOException)
-                {
-                    continue;
-                }
-            }
-
-            return matchingGroups.Count == 1 ? matchingGroups[0] : [];
-        }
-
-        private bool CanRead(string path)
-        {
-            try
-            {
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                return stream.ReadByte() >= 0;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-        }
-
-        private static bool MatchesAudiobook(
-            (string Path, AudioMetadata? Metadata) file,
-            Audiobook audiobook)
-        {
-            var title = Normalize(audiobook.Title);
-            var authorNames = audiobook.Authors?
-                .Where(author => !string.IsNullOrWhiteSpace(author))
-                .Select(Normalize)
-                .ToList() ?? [];
-            if (string.IsNullOrWhiteSpace(title) || authorNames.Count == 0)
-            {
-                return false;
-            }
-
-            var metadata = file.Metadata;
-            if (!string.IsNullOrWhiteSpace(metadata?.Asin)
-                && !string.IsNullOrWhiteSpace(audiobook.Asin)
-                && !string.Equals(metadata.Asin, audiobook.Asin, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            var fileAsin = FirstNonEmpty(metadata?.Asin, Path.GetFileNameWithoutExtension(file.Path));
-            if (!string.IsNullOrWhiteSpace(audiobook.Asin)
-                && ContainsIdentifier(fileAsin, audiobook.Asin))
-            {
-                return true;
-            }
-
-            var titleMatches = string.Equals(Normalize(metadata?.Album), title, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(Normalize(metadata?.Title), title, StringComparison.OrdinalIgnoreCase);
-            if (!titleMatches)
-            {
-                return false;
-            }
-
-            var artist = Normalize(FirstNonEmpty(metadata?.AlbumArtist, metadata?.Artist));
-            return authorNames.Any(author =>
-                string.Equals(artist, author, StringComparison.OrdinalIgnoreCase)
-                || artist.Contains(author, StringComparison.OrdinalIgnoreCase));
         }
 
         private bool AreFilesStable(
@@ -390,17 +342,12 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             download.SetMetadata(ReasonKey, reason);
         }
 
-        private static bool ContainsIdentifier(string value, string identifier) =>
-            !string.IsNullOrWhiteSpace(value)
-            && value.Contains(identifier, StringComparison.OrdinalIgnoreCase);
-
-        private static string FirstNonEmpty(params string?[] values) =>
-            values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
-
-        private static string Normalize(string? value) =>
-            TitleUtils.NormalizeTitle(value ?? string.Empty).Trim();
-
         private sealed record StabilitySnapshot(string Signature, DateTime FirstObservedUtc);
+
+        private sealed record MatchingFileSearchResult(
+            List<StableCandidateFile>? Files,
+            int MatchingGroups,
+            bool IsComplete);
 
         private sealed record StableCandidateFile(
             string Path,

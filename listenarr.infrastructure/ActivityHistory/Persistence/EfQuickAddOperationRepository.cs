@@ -84,15 +84,21 @@ public sealed class EfQuickAddOperationRepository(ListenArrDbContext db)
                 && candidate != QuickAddOperationState.FailedNeedsAttention
                 && QuickAddOperation.StateOrder(candidate) <= targetOrder)
             .ToArray();
+        if (state == QuickAddOperationState.FailedNeedsAttention
+            && processingJobId == null)
+        {
+            activeStates = activeStates
+                .Where(candidate =>
+                    QuickAddOperation.StateOrder(candidate)
+                        < QuickAddOperation.StateOrder(QuickAddOperationState.ImportPending))
+                .ToArray();
+        }
+
         var updatedAt = DateTime.UtcNow;
         var affected = await db.QuickAddOperations
             .Where(operation =>
                 operation.AudiobookId == audiobookId
-                && activeStates.Contains(operation.State)
-                && (state != QuickAddOperationState.FailedNeedsAttention
-                    || processingJobId != null
-                    || QuickAddOperation.StateOrder(operation.State)
-                        < QuickAddOperation.StateOrder(QuickAddOperationState.ImportPending)))
+                && activeStates.Contains(operation.State))
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(operation => operation.State, state)
                 .SetProperty(operation => operation.UpdatedAt, updatedAt)

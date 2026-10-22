@@ -105,22 +105,28 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
                 .ToListAsync();
         }
 
-        public async Task<List<string>> GetKnownClientItemIdsAsync()
+        public async Task<List<ClientDownloadItemIdentity>> GetKnownClientItemIdsAsync()
         {
             await using var ctx = await _dbFactory.CreateDbContextAsync();
-            var metadataEntries = await ctx.Downloads
+            var downloads = await ctx.Downloads
                 .AsNoTracking()
-                .Select(d => d.Metadata)
+                .Select(d => new { d.DownloadClientId, d.Metadata })
                 .ToListAsync();
 
-            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var metadata in metadataEntries)
+            var ids = new HashSet<ClientDownloadItemIdentity>();
+            foreach (var download in downloads)
             {
-                if (metadata == null) continue;
-                if (TryGetMetadataString(metadata, "ClientDownloadId", out var clientDownloadId))
-                    ids.Add(clientDownloadId);
-                if (TryGetMetadataString(metadata, "TorrentHash", out var torrentHash))
-                    ids.Add(torrentHash);
+                if (string.IsNullOrWhiteSpace(download.DownloadClientId)
+                    || string.Equals(download.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase)
+                    || download.Metadata == null)
+                {
+                    continue;
+                }
+
+                if (TryGetMetadataString(download.Metadata, "ClientDownloadId", out var clientDownloadId))
+                    ids.Add(new ClientDownloadItemIdentity(download.DownloadClientId, clientDownloadId));
+                if (TryGetMetadataString(download.Metadata, "TorrentHash", out var torrentHash))
+                    ids.Add(new ClientDownloadItemIdentity(download.DownloadClientId, torrentHash));
             }
 
             return ids.ToList();

@@ -97,8 +97,11 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
             downloadRepoMock
                 .Setup(r => r.GetKnownClientItemIdsAsync())
                 .ReturnsAsync(downloads
-                    .SelectMany(d => GetKnownClientItemIds(d.Metadata))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(d => !string.IsNullOrWhiteSpace(d.DownloadClientId)
+                        && !string.Equals(d.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(d => GetKnownClientItemIds(d.Metadata)
+                        .Select(id => new ClientDownloadItemIdentity(d.DownloadClientId, id)))
+                    .Distinct()
                     .ToList());
         }
 
@@ -215,7 +218,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
             downloadRepoMock.Setup(r => r.GetAllAsync()).ThrowsAsync(new InvalidOperationException("GetAllAsync should not be used by queue reconciliation"));
             downloadRepoMock.Setup(r => r.GetQueueDisplayCandidatesAsync()).ReturnsAsync(new List<Download>());
             downloadRepoMock.Setup(r => r.GetQueueMatchingCandidatesAsync()).ReturnsAsync(new List<Download>());
-            downloadRepoMock.Setup(r => r.GetKnownClientItemIdsAsync()).ReturnsAsync(new List<string>());
+            downloadRepoMock.Setup(r => r.GetKnownClientItemIdsAsync()).ReturnsAsync(new List<ClientDownloadItemIdentity>());
 
             var processingJobRepoMock = new Mock<IDownloadProcessingJobRepository>();
             processingJobRepoMock.Setup(r => r.GetPendingDownloadIdsAsync(It.IsAny<IEnumerable<string>>())).ReturnsAsync(new List<string>());
@@ -707,8 +710,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
         }
 
         [Fact]
-        [Trait("Scenario", "JsonElementMetadataSuppressesTrackedCompletedExternalItem")]
-        public async Task GetQueueAsync_KnownClientIdStoredAsJsonElement_DoesNotSurfaceUnmatchedCompletedItem()
+        [Trait("Scenario", "JsonElementMetadataIsScopedToOwningClient")]
+        public async Task GetQueueAsync_KnownClientIdStoredAsJsonElement_DoesNotSuppressOtherClientItem()
         {
             var client = new DownloadClientConfiguration
             {
@@ -717,10 +720,17 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 Type = "transmission",
                 IsEnabled = true
             };
+            var otherClient = new DownloadClientConfiguration
+            {
+                Id = "tr-2",
+                Name = "Other Transmission",
+                Type = "transmission",
+                IsEnabled = true
+            };
 
             var configMock = new Mock<IConfigurationService>();
             configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
-                .ReturnsAsync(new List<DownloadClientConfiguration> { client });
+                .ReturnsAsync(new List<DownloadClientConfiguration> { client, otherClient });
             configMock.Setup(c => c.GetApplicationSettingsAsync())
                 .ReturnsAsync(new ApplicationSettings { ShowCompletedExternalDownloads = true });
 
@@ -728,7 +738,7 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
             var trackedDownload = new Download
             {
                 Id = "tracked-1",
-                DownloadClientId = "old-client",
+                DownloadClientId = otherClient.Id,
                 Title = "Tracked elsewhere",
                 Status = DownloadStatus.Failed,
                 Metadata = new Dictionary<string, object>
@@ -745,6 +755,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
             processingJobRepoMock.Setup(r => r.GetAllJobDownloadIdsAsync(It.IsAny<IEnumerable<string>>())).ReturnsAsync(new List<string>());
 
             var gatewayMock = new Mock<IDownloadClientGateway>();
+            gatewayMock.Setup(g => g.GetQueueAsync(otherClient, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<QueueItem>());
             gatewayMock.Setup(g => g.GetQueueAsync(client, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<QueueItem>
                 {
@@ -768,7 +780,9 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
 
             var result = await service.GetQueueAsync();
 
-            Assert.Empty(result);
+            var item = Assert.Single(result);
+            Assert.Equal("tr-1", item.DownloadClientId);
+            Assert.Equal("HASH1", item.Id);
         }
 
         [Fact]
@@ -1321,6 +1335,60 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 Assert.Equal("tr-1", result[0].DownloadClientId);
                 Assert.NotNull(result[0].CompletionTime);
             }
+        }
+
+        [Fact]
+        [Trait("Scenario", "CompletedExternalIdentityIncludesClient")]
+        public async Task GetQueueAsync_CompletedItemsWithSameIdFromDifferentClients_AreBothShown()
+        {
+            var clientA = new DownloadClientConfiguration
+            {
+                Id = "tr-a",
+                Name = "Transmission A",
+                Type = "transmission",
+                IsEnabled = true
+            };
+            var clientB = new DownloadClientConfiguration
+            {
+                Id = "tr-b",
+                Name = "Transmission B",
+                Type = "transmission",
+                IsEnabled = true
+            };
+            var configMock = new Mock<IConfigurationService>();
+            configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
+                .ReturnsAsync(new List<DownloadClientConfiguration> { clientA, clientB });
+            configMock.Setup(c => c.GetApplicationSettingsAsync())
+                .ReturnsAsync(new ApplicationSettings { ShowCompletedExternalDownloads = true });
+
+            var downloadRepoMock = new Mock<IDownloadRepository>();
+            SetupQueueRepository(downloadRepoMock, new List<Download>());
+            var processingJobRepoMock = new Mock<IDownloadProcessingJobRepository>();
+            processingJobRepoMock.Setup(r => r.GetPendingDownloadIdsAsync(It.IsAny<IEnumerable<string>>()))
+                .ReturnsAsync(new List<string>());
+            processingJobRepoMock.Setup(r => r.GetAllJobDownloadIdsAsync(It.IsAny<IEnumerable<string>>()))
+                .ReturnsAsync(new List<string>());
+
+            var gatewayMock = new Mock<IDownloadClientGateway>();
+            gatewayMock.Setup(g => g.GetQueueAsync(clientA, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new QueueItem { Id = "same-external-id", Status = "completed" }]);
+            gatewayMock.Setup(g => g.GetQueueAsync(clientB, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new QueueItem { Id = "same-external-id", Status = "completed" }]);
+
+            var service = CreateService(
+                configMock.Object,
+                downloadRepoMock.Object,
+                processingJobRepoMock.Object,
+                gatewayMock.Object,
+                new Mock<IAppMetricsService>().Object);
+
+            var result = await service.GetQueueAsync();
+
+            Assert.Equal(2, result.Count);
+            Assert.Equal(
+                new[] { clientA.Id, clientB.Id }.OrderBy(id => id),
+                result.Select(item => item.DownloadClientId).OrderBy(id => id));
+            Assert.All(result, item => Assert.Equal("same-external-id", item.Id));
         }
 
         [Fact]

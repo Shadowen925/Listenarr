@@ -86,6 +86,72 @@ namespace Listenarr.Infrastructure.Persistence.Repositories
             return job;
         }
 
+        public async Task<DownloadProcessingJob?> TryClaimNextPendingAsync(
+            DateTime nowUtc,
+            CancellationToken cancellationToken = default)
+        {
+            await using var ctx = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var candidates = await ctx.DownloadProcessingJobs
+                .AsNoTracking()
+                .Where(job =>
+                    job.Status == ProcessingJobStatus.Pending
+                    && (!job.NextRetryAt.HasValue || job.NextRetryAt <= nowUtc))
+                .OrderByDescending(job => job.Priority)
+                .ThenBy(job => job.CreatedAt)
+                .Select(job => job.Id)
+                .ToListAsync(cancellationToken);
+
+            foreach (var candidateId in candidates)
+            {
+                int claimed;
+                if (ctx.Database.IsRelational())
+                {
+                    claimed = await ctx.DownloadProcessingJobs
+                        .Where(job =>
+                            job.Id == candidateId
+                            && job.Status == ProcessingJobStatus.Pending
+                            && (!job.NextRetryAt.HasValue || job.NextRetryAt <= nowUtc))
+                        .ExecuteUpdateAsync(
+                            setters => setters
+                                .SetProperty(
+                                    job => job.Status,
+                                    ProcessingJobStatus.Processing)
+                                .SetProperty(job => job.StartedAt, nowUtc),
+                            cancellationToken);
+                }
+                else
+                {
+                    var candidate = await ctx.DownloadProcessingJobs
+                        .SingleOrDefaultAsync(
+                            job => job.Id == candidateId,
+                            cancellationToken);
+                    if (candidate == null
+                        || candidate.Status != ProcessingJobStatus.Pending
+                        || (candidate.NextRetryAt.HasValue
+                            && candidate.NextRetryAt > nowUtc))
+                    {
+                        continue;
+                    }
+
+                    candidate.MarkAsProcessing();
+                    claimed = await ctx.SaveChangesAsync(cancellationToken);
+                }
+
+                if (claimed == 0)
+                {
+                    continue;
+                }
+
+                return await ctx.DownloadProcessingJobs
+                    .AsNoTracking()
+                    .SingleAsync(
+                        job => job.Id == candidateId,
+                        cancellationToken);
+            }
+
+            return null;
+        }
+
         public async Task<List<DownloadProcessingJob>> GetJobsByStatusAsync(ProcessingJobStatus status, CancellationToken cancellationToken = default)
         {
             await using var ctx = await _dbFactory.CreateDbContextAsync();

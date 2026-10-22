@@ -105,12 +105,8 @@ namespace Listenarr.Application.Downloads.Processing
 
         public async Task<DownloadProcessingJob?> GetNextJobAsync()
         {
-            var jobs = await jobRepository.GetJobsByStatusAsync(ProcessingJobStatus.Pending);
-            return jobs
-                .Where(j => j.NextRetryAt == null || j.NextRetryAt <= DateTime.UtcNow)
-                .OrderByDescending(j => j.Priority)
-                .ThenBy(j => j.CreatedAt)
-                .FirstOrDefault();
+            return await jobRepository.TryClaimNextPendingAsync(
+                timeProvider.GetUtcNow().UtcDateTime);
         }
 
         public async Task<List<DownloadProcessingJob>> GetRetryJobsAsync()

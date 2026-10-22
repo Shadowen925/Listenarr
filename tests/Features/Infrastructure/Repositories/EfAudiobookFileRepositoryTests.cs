@@ -232,6 +232,28 @@ public sealed class EfAudiobookFileRepositoryTests : BaseTests
             DateTimeKind.Utc);
         var file = AudiobookFile.CreateUnresolved("/library/utc-observation.m4b");
 
+        Assert.Equal(
+            fixedTimestamp,
+            PhysicalIdentityObservationTime.RestoreUtc(fixedTimestamp));
+        Assert.Equal(
+            fixedTimestamp,
+            PhysicalIdentityObservationTime.RestoreUtc(
+                DateTime.SpecifyKind(
+                    fixedTimestamp,
+                    DateTimeKind.Unspecified)));
+        Assert.Equal(
+            fixedTimestamp,
+            PhysicalIdentityObservationTime.RestoreUtc(
+                fixedTimestamp.ToLocalTime()));
+        Assert.Throws<InvalidOperationException>(() =>
+            PhysicalIdentityObservationTime.RequireUtcForStorage(
+                fixedTimestamp.ToLocalTime()));
+        Assert.Throws<InvalidOperationException>(() =>
+            PhysicalIdentityObservationTime.RequireUtcForStorage(
+                DateTime.SpecifyKind(
+                    fixedTimestamp,
+                    DateTimeKind.Unspecified)));
+
         file.ApplyPhysicalObjectIdentity("utc-generation", fixedTimestamp);
         Assert.Equal(DateTimeKind.Utc, file.PhysicalIdentityObservedAtUtc!.Value.Kind);
         Assert.Throws<ArgumentException>(() =>

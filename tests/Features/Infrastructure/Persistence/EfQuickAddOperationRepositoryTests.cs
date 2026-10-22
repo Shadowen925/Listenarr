@@ -45,6 +45,42 @@ public sealed class EfQuickAddOperationRepositoryTests : BaseTests
     }
 
     [Fact]
+    public async Task AdvanceAsync_FailedStateUsesRelationallyTranslatablePredicate()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new ListenArrDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var searchOperation = NewOperation(1, "failure-state");
+        var importOperation = NewOperation(2, "import-failure-state");
+        importOperation.State = QuickAddOperationState.ImportPending;
+        db.QuickAddOperations.AddRange(searchOperation, importOperation);
+        await db.SaveChangesAsync();
+
+        var repository = new EfQuickAddOperationRepository(db);
+
+        Assert.True(await repository.AdvanceAsync(
+            1,
+            QuickAddOperationState.FailedNeedsAttention,
+            failureReason: "Search failed"));
+        Assert.False(await repository.AdvanceAsync(
+            1,
+            QuickAddOperationState.Searching));
+        Assert.False(await repository.AdvanceAsync(
+            2,
+            QuickAddOperationState.FailedNeedsAttention,
+            failureReason: "Import failed"));
+        Assert.True(await repository.AdvanceAsync(
+            2,
+            QuickAddOperationState.FailedNeedsAttention,
+            processingJobId: "job-2",
+            failureReason: "Import failed"));
+    }
+
+    [Fact]
     public async Task GetUnresolvedAsync_ReturnsOldOperationsBeyondActivityHistoryLimits()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

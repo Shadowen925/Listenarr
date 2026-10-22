@@ -46,7 +46,7 @@ namespace Listenarr.Application.Downloads.Queue
                 .ToList();
 
             var visibleDownloads = ddlToShow.Concat(externalDownloads).ToList();
-            var allKnownClientItemIds = new HashSet<string>(knownClientItemIds, StringComparer.OrdinalIgnoreCase);
+            var allKnownClientItemIds = new HashSet<ClientDownloadItemIdentity>(knownClientItemIds);
 
             logger.LogDebug(
                 "Final filtering result: {FinalCount} downloads to include in queue filtering ({DdlCount} DDL, {ExternalCount} external), {MatchingCount} in matching pool",
@@ -99,5 +99,5 @@ namespace Listenarr.Application.Downloads.Queue
     public sealed record DownloadQueueCandidateSet(
         List<Download> VisibleDownloads,
         List<Download> MatchingDownloads,
-        HashSet<string> KnownClientItemIds);
+        HashSet<ClientDownloadItemIdentity> KnownClientItemIds);
 }

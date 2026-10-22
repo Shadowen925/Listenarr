@@ -139,6 +139,111 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Cleanup
         }
 
         [Fact]
+        public async Task RunCycleAsync_UsesExternalClientIdInsteadOfTorrentMetadataOrLocalRecordId()
+        {
+            var client = await CreateRemovableClientAsync("remove");
+            _gateway.RemoveResult = true;
+            var download = await AddMovedDownloadAsync(client, canBeRemoved: true, clientDownloadId: "client-item-id");
+            download.SetMetadata("TorrentHash", "different-torrent-hash");
+            await _downloadRepository.UpdateAsync(download);
+            await AddCompletedImportJobAsync(download);
+
+            await _provider.GetRequiredService<IMovedDownloadCleanupProcessor>()
+                .RunCycleAsync(CancellationToken.None);
+
+            Assert.Equal("client-item-id", _gateway.LastRemoveId);
+            Assert.Null(await _downloadRepository.GetByIdAsync(download.Id));
+        }
+
+        [Fact]
+        public async Task RunCycleAsync_PersistsBackoffAndDoesNotRepeatHistoryOnEveryPollingCycle()
+        {
+            var client = await CreateRemovableClientAsync("remove");
+            _gateway.RemoveResult = false;
+            var download = await AddMovedDownloadAsync(client, canBeRemoved: true);
+            await AddCompletedImportJobAsync(download, completedAt: DateTime.UtcNow.AddMinutes(-5));
+            var processor = new MovedDownloadCleanupProcessor(
+                _provider.GetRequiredService<IServiceScopeFactory>(),
+                _provider.GetRequiredService<ILogger<MovedDownloadCleanupProcessor>>());
+
+            await processor.RunCycleAsync(CancellationToken.None);
+
+            var persisted = (await _downloadRepository.GetByIdAsync(download.Id))!;
+            Assert.Equal("1", persisted.GetMetadataString("MovedCleanupAttemptCount"));
+            Assert.True(DateTimeOffset.TryParse(
+                persisted.GetMetadataString("MovedCleanupNextAttemptAt"),
+                out var nextAttempt));
+            Assert.True(nextAttempt > DateTimeOffset.UtcNow);
+            var firstHistory = await GetCleanupHistoryAsync(download.Id);
+            Assert.Single(firstHistory.Records, entry => entry.EventType == HistoryEvents.CleanupRequested);
+            Assert.Single(firstHistory.Records, entry => entry.EventType == HistoryEvents.CleanupFailed);
+
+            // A fresh processor instance represents a worker restart; the persisted schedule
+            // must still prevent an immediate duplicate request.
+            var restartedProcessor = new MovedDownloadCleanupProcessor(
+                _provider.GetRequiredService<IServiceScopeFactory>(),
+                _provider.GetRequiredService<ILogger<MovedDownloadCleanupProcessor>>());
+            await restartedProcessor.RunCycleAsync(CancellationToken.None);
+
+            Assert.Equal(1, _gateway.GetCallCount(nameof(_gateway.RemoveAsync)));
+            var afterRestart = await GetCleanupHistoryAsync(download.Id);
+            Assert.Equal(1, afterRestart.Records.Count(entry => entry.EventType == HistoryEvents.CleanupRequested));
+            Assert.Equal(1, afterRestart.Records.Count(entry => entry.EventType == HistoryEvents.CleanupFailed));
+
+            persisted.SetMetadata("MovedCleanupNextAttemptAt", DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O"));
+            await _downloadRepository.UpdateAsync(persisted);
+            await restartedProcessor.RunCycleAsync(CancellationToken.None);
+
+            Assert.Equal(2, _gateway.GetCallCount(nameof(_gateway.RemoveAsync)));
+            var afterRetry = await GetCleanupHistoryAsync(download.Id);
+            Assert.Equal(1, afterRetry.Records.Count(entry => entry.EventType == HistoryEvents.CleanupRequested));
+            Assert.Equal(1, afterRetry.Records.Count(entry => entry.EventType == HistoryEvents.CleanupFailed));
+        }
+
+        [Fact]
+        public async Task RunCycleAsync_MissingExternalIdPersistsActionableDiagnosticWithoutCallingClient()
+        {
+            var client = await CreateRemovableClientAsync("remove");
+            var download = await AddMovedDownloadAsync(client, canBeRemoved: true);
+            download.Metadata.Remove("ClientDownloadId");
+            await _downloadRepository.UpdateAsync(download);
+            await AddCompletedImportJobAsync(download);
+
+            await _provider.GetRequiredService<IMovedDownloadCleanupProcessor>()
+                .RunCycleAsync(CancellationToken.None);
+
+            var persisted = (await _downloadRepository.GetByIdAsync(download.Id))!;
+            Assert.Equal(0, _gateway.GetCallCount(nameof(_gateway.RemoveAsync)));
+            Assert.Contains("not a valid client removal ID", persisted.GetMetadataString("MovedCleanupLastError"));
+            Assert.True(DateTimeOffset.TryParse(
+                persisted.GetMetadataString("MovedCleanupNextAttemptAt"),
+                out var nextAttempt));
+            Assert.True(nextAttempt > DateTimeOffset.UtcNow);
+        }
+
+        [Fact]
+        public async Task RunCycleAsync_UnavailableClientPersistsRetryAndRetainsMovedDownload()
+        {
+            var client = await CreateRemovableClientAsync("remove");
+            _gateway.RemoveException = new HttpRequestException("mock network failure");
+            var download = await AddMovedDownloadAsync(client, canBeRemoved: true);
+            await AddCompletedImportJobAsync(download);
+
+            await _provider.GetRequiredService<IMovedDownloadCleanupProcessor>()
+                .RunCycleAsync(CancellationToken.None);
+
+            var persisted = (await _downloadRepository.GetByIdAsync(download.Id))!;
+            Assert.NotNull(persisted);
+            Assert.Equal(DownloadStatus.Moved, persisted.Status);
+            Assert.Contains("could not be reached", persisted.GetMetadataString("MovedCleanupLastError"));
+            Assert.Equal(1, _gateway.GetCallCount(nameof(_gateway.RemoveAsync)));
+            Assert.True(DateTimeOffset.TryParse(
+                persisted.GetMetadataString("MovedCleanupNextAttemptAt"),
+                out var nextAttempt));
+            Assert.True(nextAttempt > DateTimeOffset.UtcNow);
+        }
+
+        [Fact]
         public async Task RunCycleAsync_FailedRemovalNeverDeletesOperationalRecord()
         {
             var client = await CreateDownloadClientConfiguration();
@@ -293,6 +398,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Cleanup
             var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithAudiobook(audiobook)
                 .WithDownloadClientConfiguration(client)
+                .WithClientDownloadId("external-retained-source")
                 .WithStatus(DownloadStatus.ImportPending)
                 .Build());
             download.SetMetadata("CanBeRemoved", true);

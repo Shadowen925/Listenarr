@@ -28,6 +28,8 @@ namespace Listenarr.Tests.Mocks
         public List<string> SourceFiles { get; set; } = [];
         public bool RemoveResult { get; set; }
         public bool? LastRemoveDeleteFiles { get; private set; }
+        public string? LastRemoveId { get; private set; }
+        public Exception? RemoveException { get; set; }
         public bool MarkImportedResult { get; set; } = true;
         public Exception? QueueItemException { get; set; }
         public Func<Download, Task>? BeforeMarkImportedAsync { get; set; }
@@ -54,6 +56,11 @@ namespace Listenarr.Tests.Mocks
         {
             RegisterMethodCall(nameof(RemoveAsync));
             LastRemoveDeleteFiles = deleteFiles;
+            LastRemoveId = id;
+            if (RemoveException != null)
+            {
+                throw RemoveException;
+            }
 
             return Task.FromResult(RemoveResult);
         }

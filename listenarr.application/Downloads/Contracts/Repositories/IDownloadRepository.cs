@@ -28,7 +28,7 @@ namespace Listenarr.Application.Downloads.Contracts.Repositories
         Task<List<Download>> GetAllAsync();
         Task<List<Download>> GetQueueDisplayCandidatesAsync();
         Task<List<Download>> GetQueueMatchingCandidatesAsync();
-        Task<List<string>> GetKnownClientItemIdsAsync();
+        Task<List<ClientDownloadItemIdentity>> GetKnownClientItemIdsAsync();
         Task<List<Download>> GetByClientAsync(string clientId);
         Task<Download?> GetByIdAsync(string id);
         Task<List<Download>> GetByIdsAsync(IEnumerable<string> ids);

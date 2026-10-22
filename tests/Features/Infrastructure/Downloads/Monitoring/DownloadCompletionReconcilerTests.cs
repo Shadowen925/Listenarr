@@ -352,6 +352,397 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
             }
         }
 
+        [Theory]
+        [InlineData("deluge", "/data/deluge/completed/")]
+        [InlineData("sabnzbd", "/data/sabnzbd/completed/")]
+        public async Task ReconcileAsync_UsesOnlyVerifiedDownloadSpecificDirectoryBeforeBroadDiscovery(
+            string clientId,
+            string remoteRoot)
+        {
+            var root = CreateTemporaryDirectory();
+            var targetDirectory = Path.Combine(root, "Dune");
+            var unrelatedDirectory = Path.Combine(root, "Unrelated");
+            Directory.CreateDirectory(targetDirectory);
+            Directory.CreateDirectory(unrelatedDirectory);
+            try
+            {
+                var targetFile = Path.Combine(targetDirectory, "B000R34YKC.m4b");
+                var unrelatedFile = Path.Combine(unrelatedDirectory, "B000R34YKC.m4b");
+                await File.WriteAllBytesAsync(targetFile, new byte[32]);
+                await File.WriteAllBytesAsync(unrelatedFile, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 20,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var timeProvider = new MutableTimeProvider(DateTimeOffset.UtcNow);
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    timeProvider,
+                    new AudioMetadata
+                    {
+                        Asin = audiobook.Asin,
+                        Title = audiobook.Title!,
+                        Artist = "Frank Herbert"
+                    },
+                    clientId: clientId,
+                    remoteRoot: remoteRoot);
+                var client = new DownloadClientConfiguration { Id = clientId };
+                var download = new Download
+                {
+                    Id = $"tracked-{clientId}-dune",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = clientId,
+                    ExpectedFileSize = 32
+                };
+                download.SetMetadata("ClientContentPath", $"{remoteRoot}Dune/");
+                var settings = new ApplicationSettings
+                {
+                    CompletedDownloadMinimumStabilitySeconds = 60,
+                    AutomaticImportReconciledDownloads = true
+                };
+
+                Assert.Empty(await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None));
+                timeProvider.Advance(TimeSpan.FromSeconds(60));
+                var recovered = await reconciler.ReconcileAsync(client, [download], settings, CancellationToken.None);
+
+                Assert.Contains(download.Id, recovered);
+                Assert.Equal(targetDirectory, download.DownloadPath);
+                Assert.Equal(
+                    new[] { targetFile },
+                    System.Text.Json.JsonSerializer.Deserialize<List<string>>(
+                        download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey)!)!);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_LeavesBroadMatchesPendingWhenMultipleFoldersMatch()
+        {
+            var root = CreateTemporaryDirectory();
+            var firstDirectory = Path.Combine(root, "First");
+            var secondDirectory = Path.Combine(root, "Second");
+            Directory.CreateDirectory(firstDirectory);
+            Directory.CreateDirectory(secondDirectory);
+            try
+            {
+                await File.WriteAllBytesAsync(Path.Combine(firstDirectory, "01.m4b"), new byte[32]);
+                await File.WriteAllBytesAsync(Path.Combine(secondDirectory, "02.m4b"), new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 21,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata
+                    {
+                        Asin = audiobook.Asin,
+                        Title = audiobook.Title!,
+                        Artist = "Frank Herbert"
+                    });
+                var download = new Download
+                {
+                    Id = "ambiguous-folders",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge",
+                    ExpectedFileSize = 32,
+                    DownloadPath = firstDirectory
+                };
+                download.SetMetadata("ClientContentPath", firstDirectory);
+                download.FinalPath = Path.Combine(secondDirectory, "02.m4b");
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal(DownloadStatus.Downloading, download.Status);
+                Assert.Contains("Multiple authorized directories", download.GetMetadataString("Recovery.Reason"));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_IgnoresDownloadSpecificPathOutsideAuthorizedMappingRoot()
+        {
+            var parent = CreateTemporaryDirectory();
+            var authorizedRoot = Path.Combine(parent, "authorized");
+            var unauthorizedDirectory = Path.Combine(parent, "outside");
+            Directory.CreateDirectory(authorizedRoot);
+            Directory.CreateDirectory(unauthorizedDirectory);
+            try
+            {
+                await File.WriteAllBytesAsync(
+                    Path.Combine(unauthorizedDirectory, "B000R34YKC.m4b"),
+                    new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 23,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var reconciler = CreateReconciler(
+                    authorizedRoot,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata
+                    {
+                        Asin = audiobook.Asin,
+                        Title = audiobook.Title!,
+                        Artist = "Frank Herbert"
+                    });
+                var download = new Download
+                {
+                    Id = "outside-authorized-root",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge",
+                    ExpectedFileSize = 32
+                };
+                download.SetMetadata("ClientContentPath", unauthorizedDirectory);
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal(DownloadStatus.Downloading, download.Status);
+                Assert.Equal("RecoveryPending", download.GetMetadataString("Recovery.State"));
+            }
+            finally
+            {
+                Directory.Delete(parent, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_DoesNotBroadenWhenPersistedPathMappingIsUnavailable()
+        {
+            var root = CreateTemporaryDirectory();
+            var targetDirectory = Path.Combine(root, "Dune");
+            Directory.CreateDirectory(targetDirectory);
+            try
+            {
+                await File.WriteAllBytesAsync(
+                    Path.Combine(targetDirectory, "B000R34YKC.m4b"),
+                    new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 24,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata
+                    {
+                        Asin = audiobook.Asin,
+                        Title = audiobook.Title!,
+                        Artist = "Frank Herbert"
+                    },
+                    candidateMappingUnavailable: true);
+                var download = new Download
+                {
+                    Id = "unavailable-specific-mapping",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge",
+                    ExpectedFileSize = 32
+                };
+                download.SetMetadata("ClientContentPath", "/data/deluge/completed/Dune/");
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal(DownloadStatus.Downloading, download.Status);
+                Assert.Contains("broader discovery was not attempted", download.GetMetadataString("Recovery.Reason"));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_LeavesRecoveryPendingWhenAuthorizedRootIsMissing()
+        {
+            var root = CreateTemporaryDirectory();
+            var missingRoot = Path.Combine(root, "missing");
+            try
+            {
+                var audiobook = new Audiobook
+                {
+                    Id = 22,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var mapping = new RemotePathMapping
+                {
+                    DownloadClientId = "deluge",
+                    RemotePath = "/data/deluge/completed/",
+                    LocalPath = missingRoot
+                };
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata { Asin = audiobook.Asin, Title = audiobook.Title!, Artist = "Frank Herbert" },
+                    mappings: [mapping],
+                    translatedLocalRoot: missingRoot);
+                var download = new Download
+                {
+                    Id = "missing-authorized-root",
+                    AudiobookId = audiobook.Id,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = "deluge"
+                };
+
+                var recovered = await reconciler.ReconcileAsync(
+                    new DownloadClientConfiguration { Id = "deluge" },
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None);
+
+                Assert.Empty(recovered);
+                Assert.Equal("RecoveryPending", download.GetMetadataString("Recovery.State"));
+                Assert.Contains("missing or is not mounted", download.GetMetadataString("Recovery.Reason"));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void DirectoryScanner_ReportsFileLimitAndReturnsDeterministicCandidates()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                var paths = new[]
+                {
+                    Path.Combine(root, "03.m4b"),
+                    Path.Combine(root, "01.m4b"),
+                    Path.Combine(root, "02.m4b")
+                };
+                foreach (var path in paths)
+                {
+                    File.WriteAllBytes(path, new byte[1]);
+                }
+
+                var scanner = CreateDirectoryScanner(maximumScannedFiles: 2);
+
+                var result = scanner.EnumerateAudioFiles([root], CancellationToken.None);
+
+                Assert.False(result.IsComplete);
+                Assert.Equal(
+                    new[] { paths[1], paths[2] }.OrderBy(path => path, StringComparer.Ordinal),
+                    result.Files);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void DirectoryScanner_ReportsDepthLimitWithoutTraversingDeeperDirectories()
+        {
+            var root = CreateTemporaryDirectory();
+            var deeperDirectory = Path.Combine(root, "child");
+            Directory.CreateDirectory(deeperDirectory);
+            try
+            {
+                var deeperFile = Path.Combine(deeperDirectory, "B000R34YKC.m4b");
+                File.WriteAllBytes(deeperFile, new byte[1]);
+                var scanner = CreateDirectoryScanner(maximumDirectoryDepth: 0);
+
+                var result = scanner.EnumerateAudioFiles([root], CancellationToken.None);
+
+                Assert.False(result.IsComplete);
+                Assert.Empty(result.Files);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void DirectoryScanner_ReportsDirectoryEntryLimitForNonAudioFiles()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                File.WriteAllText(Path.Combine(root, "01.txt"), "one");
+                File.WriteAllText(Path.Combine(root, "02.txt"), "two");
+                File.WriteAllText(Path.Combine(root, "03.txt"), "three");
+                var scanner = CreateDirectoryScanner(maximumScannedEntries: 2);
+
+                var result = scanner.EnumerateAudioFiles([root], CancellationToken.None);
+
+                Assert.False(result.IsComplete);
+                Assert.Empty(result.Files);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void DirectoryScanner_HonorsCancellationBeforeStartingTraversal()
+        {
+            var root = CreateTemporaryDirectory();
+            try
+            {
+                var scanner = CreateDirectoryScanner();
+                using var cancellation = new CancellationTokenSource();
+                cancellation.Cancel();
+
+                Assert.Throws<OperationCanceledException>(
+                    () => scanner.EnumerateAudioFiles([root], cancellation.Token));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
         [Fact]
         public async Task ReconcileAsync_DoesNotPromotePausedOrUndersizedFiles()
         {
@@ -496,8 +887,14 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
             TimeProvider timeProvider,
             AudioMetadata metadata,
             IReadOnlyCollection<RemotePathMapping>? mappings = null,
-            string? translatedLocalRoot = null)
+            string? translatedLocalRoot = null,
+            string clientId = "deluge",
+            string? remoteRoot = null,
+            bool candidateMappingUnavailable = false)
         {
+            remoteRoot ??= clientId == "sabnzbd"
+                ? "/data/sabnzbd/completed/"
+                : "/data/deluge/completed/";
             var mappingService = new Mock<IRemotePathMappingService>();
             mappingService
                 .Setup(service => service.GetPathMappingByClientAsync(It.IsAny<DownloadClientConfiguration>()))
@@ -505,8 +902,8 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 [
                     new RemotePathMapping
                     {
-                        DownloadClientId = "deluge",
-                        RemotePath = "/data/deluge/completed/",
+                        DownloadClientId = clientId,
+                        RemotePath = remoteRoot,
                         LocalPath = localRoot
                     }
                 ]);
@@ -514,7 +911,30 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 .Setup(service => service.TranslatePathAsync(
                     It.IsAny<DownloadClientConfiguration>(),
                     It.IsAny<string>()))
-                .ReturnsAsync(translatedLocalRoot ?? localRoot);
+                .ReturnsAsync((DownloadClientConfiguration _, string path) =>
+                {
+                    if (candidateMappingUnavailable
+                        && path != remoteRoot
+                        && path.StartsWith(remoteRoot, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException("The specific mapping is unavailable.");
+                    }
+
+                    if (translatedLocalRoot != null && path == remoteRoot)
+                    {
+                        return translatedLocalRoot;
+                    }
+
+                    if (path.StartsWith(remoteRoot, StringComparison.Ordinal))
+                    {
+                        var relativePath = path[remoteRoot.Length..]
+                            .Replace('/', Path.DirectorySeparatorChar)
+                            .Replace('\\', Path.DirectorySeparatorChar);
+                        return Path.GetFullPath(Path.Combine(localRoot, relativePath));
+                    }
+
+                    return path;
+                });
 
             var metadataService = new Mock<IMetadataService>();
             metadataService
@@ -533,6 +953,20 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 audiobookRepository.Object,
                 timeProvider,
                 NullLogger<DownloadCompletionReconciler>.Instance);
+        }
+
+        private static DownloadCompletionDirectoryScanner CreateDirectoryScanner(
+            int maximumScannedFiles = 1000,
+            int maximumDirectoryDepth = 5,
+            int maximumScannedEntries = 10000)
+        {
+            return new DownloadCompletionDirectoryScanner(
+                Mock.Of<IRemotePathMappingService>(),
+                new LocalFileSystem(),
+                NullLogger<DownloadCompletionReconciler>.Instance,
+                maximumScannedFiles,
+                maximumDirectoryDepth,
+                maximumScannedEntries);
         }
 
         private static string CreateTemporaryDirectory()

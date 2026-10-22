@@ -10,8 +10,13 @@ namespace Listenarr.Tests.Mocks.Api
         public bool AuthenticationSucceeded { get; set; } = true;
         public bool DaemonConnected { get; set; } = true;
         public string? UpdateUiResponseOverride { get; set; }
+        public string? RemoveTorrentResponseOverride { get; set; }
         public bool FailRequests { get; set; } = false;
+        public bool FailUpdateUi { get; set; } = false;
         public bool FailLabelAssignment { get; set; } = false;
+        public int RemoveTorrentCallCount { get; private set; }
+        public string? LastRemovedTorrentId { get; private set; }
+        public bool LastRemoveDeleteFiles { get; private set; }
 
         public DelugeApiMock()
         {
@@ -30,6 +35,23 @@ namespace Listenarr.Tests.Mocks.Api
             if (document.RootElement.TryGetProperty("method", out var methodProp))
             {
                 var method = methodProp.GetString();
+                if (method == "core.remove_torrent")
+                {
+                    RemoveTorrentCallCount++;
+                    if (document.RootElement.TryGetProperty("params", out var parameters) &&
+                        parameters.ValueKind == JsonValueKind.Array &&
+                        parameters.GetArrayLength() >= 2)
+                    {
+                        LastRemovedTorrentId = parameters[0].GetString();
+                        LastRemoveDeleteFiles = parameters[1].GetBoolean();
+                    }
+                }
+
+                if (method == "web.update_ui" && FailUpdateUi)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                }
+
                 string responseBody = method switch
                 {
                     "auth.login" => $$"""
@@ -102,6 +124,7 @@ namespace Listenarr.Tests.Mocks.Api
                       "error": null
                     }
                     """,
+                    "core.remove_torrent" when RemoveTorrentResponseOverride != null => RemoveTorrentResponseOverride,
                     "core.remove_torrent" => """
                     {
                       "id": 1,

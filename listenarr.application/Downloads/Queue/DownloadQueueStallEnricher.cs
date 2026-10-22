@@ -14,7 +14,19 @@ namespace Listenarr.Application.Downloads.Queue
             IReadOnlyCollection<DownloadClientConfiguration> enabledClients,
             ISet<string> clientsWithLiveQueue)
         {
-            var byId = items.ToDictionary(i => i.Id, StringComparer.OrdinalIgnoreCase);
+            var byIdentity = new Dictionary<ClientDownloadItemIdentity, List<QueueItem>>();
+            foreach (var item in items)
+            {
+                var identity = new ClientDownloadItemIdentity(item.DownloadClientId, item.Id);
+                if (!byIdentity.TryGetValue(identity, out var matchingItems))
+                {
+                    matchingItems = new List<QueueItem>();
+                    byIdentity.Add(identity, matchingItems);
+                }
+
+                matchingItems.Add(item);
+            }
+
             foreach (var download in trackedDownloads)
             {
                 if (string.Equals(download.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase)
@@ -27,9 +39,14 @@ namespace Listenarr.Application.Downloads.Queue
                     continue;
                 }
 
-                if (byId.TryGetValue(download.Id, out var existing))
+                var identity = new ClientDownloadItemIdentity(download.DownloadClientId, download.Id);
+                if (byIdentity.TryGetValue(identity, out var existingItems))
                 {
-                    Enrich(existing, download);
+                    foreach (var existing in existingItems)
+                    {
+                        Enrich(existing, download);
+                    }
+
                     continue;
                 }
 
@@ -76,6 +93,7 @@ namespace Listenarr.Application.Downloads.Queue
                 };
                 Enrich(synthetic, download);
                 items.Add(synthetic);
+                byIdentity.Add(identity, new List<QueueItem> { synthetic });
             }
         }
 

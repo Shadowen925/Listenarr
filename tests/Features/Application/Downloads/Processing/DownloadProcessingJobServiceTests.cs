@@ -69,8 +69,8 @@ namespace Listenarr.Tests.Features.Application.Downloads.Processing
         {
             var repository = new Mock<IDownloadProcessingJobRepository>(MockBehavior.Strict);
             repository
-                .Setup(repo => repo.GetJobsByStatusAsync(
-                    ProcessingJobStatus.Pending,
+                .Setup(repo => repo.TryClaimNextPendingAsync(
+                    It.IsAny<DateTime>(),
                     It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("Database unavailable"));
             var service = new DownloadProcessingJobService(

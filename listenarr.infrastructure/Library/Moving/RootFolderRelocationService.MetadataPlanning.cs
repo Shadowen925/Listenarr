@@ -219,14 +219,10 @@ public sealed partial class RootFolderRelocationService
             if (physicalObjectIdentity != null
                 && physicalIdentityObservedAtUtc.HasValue)
             {
-                var observedAtUtc = physicalIdentityObservedAtUtc.Value.Kind == DateTimeKind.Utc
-                    ? physicalIdentityObservedAtUtc.Value
-                    : DateTime.SpecifyKind(
-                        physicalIdentityObservedAtUtc.Value,
-                        DateTimeKind.Utc);
                 file.ApplyPhysicalObjectIdentity(
                     physicalObjectIdentity,
-                    observedAtUtc);
+                    PhysicalIdentityObservationTime.RestoreUtc(
+                        physicalIdentityObservedAtUtc.Value));
             }
             else
             {

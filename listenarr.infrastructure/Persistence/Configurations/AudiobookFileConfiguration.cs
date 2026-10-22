@@ -33,8 +33,8 @@ public sealed class AudiobookFileConfiguration : IEntityTypeConfiguration<Audiob
         builder.Property(file => file.PhysicalIdentityVersion).HasDefaultValue(1);
         builder.Property(file => file.PhysicalIdentityObservedAtUtc)
             .HasConversion(new ValueConverter<DateTime, DateTime>(
-                value => RequireUtc(value),
-                value => RestoreUtc(value)));
+                value => PhysicalIdentityObservationTime.RequireUtcForStorage(value),
+                value => PhysicalIdentityObservationTime.RestoreUtc(value)));
 
         builder.HasIndex(file => file.PathIdentityLookupKey);
         builder.HasIndex(file => file.PathOwnershipKey)
@@ -42,25 +42,4 @@ public sealed class AudiobookFileConfiguration : IEntityTypeConfiguration<Audiob
             .HasFilter("\"PathOwnershipKey\" IS NOT NULL");
     }
 
-    private static DateTime RequireUtc(DateTime value)
-    {
-        if (value.Kind != DateTimeKind.Utc)
-        {
-            throw new InvalidOperationException(
-                "Physical identity observations must be stored as UTC.");
-        }
-
-        return value;
-    }
-
-    private static DateTime RestoreUtc(DateTime value) =>
-        value.Kind switch
-        {
-            DateTimeKind.Utc => value,
-            DateTimeKind.Unspecified => DateTime.SpecifyKind(
-                value,
-                DateTimeKind.Utc),
-            _ => throw new InvalidOperationException(
-                "A local physical identity observation cannot be restored as UTC.")
-        };
 }

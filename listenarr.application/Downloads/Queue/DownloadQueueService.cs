@@ -24,7 +24,7 @@ namespace Listenarr.Application.Downloads.Queue
     /// Provides download queues from download clients
     /// Cache results for efficiency
     /// </summary>
-    public class DownloadQueueService(
+    public partial class DownloadQueueService(
         IMemoryCache cache,
         IConfigurationService configurationService,
         IDownloadRepository downloadRepository,
@@ -121,6 +121,8 @@ namespace Listenarr.Application.Downloads.Queue
                         var ownershipEstablished = false;
                         try
                         {
+                            queueItem.DownloadClientId = client.Id;
+
                             if (queueItem.Status == "completed" && queueItem.CompletionTime == null)
                             {
                                 queueItem.CompletionTime = DateTime.UtcNow;
@@ -174,7 +176,8 @@ namespace Listenarr.Application.Downloads.Queue
                             }
                             else
                             {
-                                if (!string.IsNullOrEmpty(queueItem.Id) && allKnownClientItemIds.Contains(queueItem.Id))
+                                if (!string.IsNullOrEmpty(queueItem.Id)
+                                    && allKnownClientItemIds.Contains(new ClientDownloadItemIdentity(client.Id, queueItem.Id)))
                                 {
                                     logger.LogDebug(
                                         "Queue item {QueueId} '{Title}' has known client ID from a tracked download and will be suppressed to avoid duplication",
@@ -233,17 +236,21 @@ namespace Listenarr.Application.Downloads.Queue
 
                     if (includeCompletedExternal)
                     {
-                        var existingIds = queueItems.Select(q => q.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var existingIds = queueItems
+                            .Select(q => new ClientDownloadItemIdentity(q.DownloadClientId, q.Id))
+                            .ToHashSet();
                         var unmatchedCompleted = clientQueue
                             .Where(q => (q.Status ?? string.Empty).Equals("completed", StringComparison.OrdinalIgnoreCase))
-                            .Where(q => !existingIds.Contains(q.Id))
+                            .Where(q => !existingIds.Contains(new ClientDownloadItemIdentity(client.Id, q.Id)))
                             .Where(q => !suppressedCompletedClientIds.Contains(q.Id))
-                            .Where(q => string.IsNullOrEmpty(q.Id) || !allKnownClientItemIds.Contains(q.Id))
+                            .Where(q => string.IsNullOrEmpty(q.Id)
+                                || !allKnownClientItemIds.Contains(new ClientDownloadItemIdentity(client.Id, q.Id)))
                             .ToList();
 
                         foreach (var uc in unmatchedCompleted)
                         {
-                            if (existingIds.Contains(uc.Id))
+                            var identity = new ClientDownloadItemIdentity(client.Id, uc.Id);
+                            if (existingIds.Contains(identity))
                             {
                                 continue;
                             }
@@ -283,7 +290,7 @@ namespace Listenarr.Application.Downloads.Queue
                                 Ratio = uc.Ratio
                             });
 
-                            existingIds.Add(uc.Id);
+                            existingIds.Add(identity);
                         }
                     }
 
@@ -300,7 +307,9 @@ namespace Listenarr.Application.Downloads.Queue
             {
                 try
                 {
-                    var existingIds = queueItems.Select(q => q.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var existingIds = queueItems
+                        .Select(q => new ClientDownloadItemIdentity(q.DownloadClientId, q.Id))
+                        .ToHashSet();
 
                     var completedExternal = listenarrDownloads
                         .Where(d => !string.Equals(d.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase) && d.Status == DownloadStatus.Completed)
@@ -308,7 +317,8 @@ namespace Listenarr.Application.Downloads.Queue
 
                     foreach (var download in completedExternal)
                     {
-                        if (existingIds.Contains(download.Id))
+                        var identity = new ClientDownloadItemIdentity(download.DownloadClientId, download.Id);
+                        if (existingIds.Contains(identity))
                         {
                             continue;
                         }
@@ -372,7 +382,7 @@ namespace Listenarr.Application.Downloads.Queue
                             ContentPath = resolvedItem?.ContentPath
                         });
 
-                        existingIds.Add(download.Id);
+                        existingIds.Add(identity);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
@@ -405,65 +415,11 @@ namespace Listenarr.Application.Downloads.Queue
             return snapshot.Items;
         }
 
-        private static bool IsUnmatchedCompletedExternalDisplayCandidate(QueueItem queueItem)
-        {
-            return string.Equals(queueItem.Status, "completed", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static QueueItem ToDirectDownloadQueueItem(Download download)
-        {
-            var quality = download.Metadata != null && download.Metadata.TryGetValue("Quality", out var qualityObj)
-                ? qualityObj?.ToString() ?? "Unknown"
-                : "Unknown";
-
-            return new QueueItem
-            {
-                Id = download.Id,
-                Title = download.Title ?? "Unknown",
-                Author = download.Artist,
-                Quality = quality,
-                Language = download.Language,
-                Status = ToQueueStatus(download.Status),
-                Progress = (double)download.Progress,
-                Size = download.TotalSize,
-                Downloaded = download.DownloadedSize,
-                DownloadSpeed = 0,
-                Eta = null,
-                DownloadClient = "Direct Download",
-                DownloadClientId = DirectDownloadMetadataKeys.ClientId,
-                DownloadClientType = "ddl",
-                AddedAt = download.StartedAt,
-                CanPause = false,
-                CanRemove = true,
-                AudiobookId = download.AudiobookId,
-                RemotePath = download.OriginalUrl,
-                LocalPath = download.DownloadPath,
-                ContentPath = string.IsNullOrWhiteSpace(download.FinalPath)
-                    ? download.DownloadPath
-                    : download.FinalPath,
-                ErrorMessage = download.ErrorMessage
-            };
-        }
-
-        private static string ToQueueStatus(DownloadStatus status) => status switch
-        {
-            DownloadStatus.Queued => "queued",
-            DownloadStatus.Downloading => "downloading",
-            DownloadStatus.Paused => "paused",
-            DownloadStatus.Completed => "completed",
-            DownloadStatus.Processing => "processing",
-            DownloadStatus.ImportPending => "importpending",
-            DownloadStatus.ImportBlocked => "importblocked",
-            DownloadStatus.Failed => "failed",
-            DownloadStatus.Moved => "moved",
-            _ => status.ToString().ToLowerInvariant()
-        };
-
         private async Task PersistDiscoveredClientIdentifiersAsync(
             Download matchedDownload,
             DownloadClientConfiguration client,
             string? originalClientId,
-            HashSet<string> allKnownClientItemIds)
+            HashSet<ClientDownloadItemIdentity> allKnownClientItemIds)
         {
             if (matchedDownload == null ||
                 string.IsNullOrWhiteSpace(originalClientId) ||
@@ -481,7 +437,7 @@ namespace Listenarr.Application.Downloads.Queue
                 await downloadRepository.UpdateMetadataAsync(matchedDownload.Id, "ClientDownloadId", originalClientId);
             }
 
-            allKnownClientItemIds.Add(originalClientId);
+            allKnownClientItemIds.Add(new ClientDownloadItemIdentity(client.Id, originalClientId));
 
             if (string.Equals(client.Type, "qbittorrent", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(client.Type, "transmission", StringComparison.OrdinalIgnoreCase) ||
