@@ -1136,7 +1136,11 @@ const allActivityItems = computed(() => {
       return false
     }
     // The client no longer has the transfer and the book isn't wanted (or already has files): nothing left to act on.
-    if ((item.sourcePathUnavailable || item.missingFromClient) && item.audiobookId != null) {
+    if (
+      (!isLiveInClient(item) || item.sourcePathUnavailable || item.missingFromClient) &&
+      !['processing', 'importpending', 'searching'].includes(status) &&
+      item.audiobookId != null
+    ) {
       const book = libraryStore.audiobooks.find((ab) => ab.id === item.audiobookId)
       if (
         book &&
@@ -1174,20 +1178,23 @@ const activityVersionFor = (item: QueueItem): string =>
     (item.activityLatestError ?? item.errorMessage ?? item.activityError ?? '').slice(0, 500),
   ])
 
-// Quick Add rows have volatile stage/error text, so they stay dismissed while their status is unchanged.
-const isActivityDismissed = (key: string, item: QueueItem): boolean => {
-  // Live transfers stay visible; dismissal only applies to finished, failed or client-lost entries.
-  if (
-    ['downloading', 'queued', 'paused'].includes(item.status.toLowerCase()) &&
-    !item.missingFromClient &&
-    !item.sourcePathUnavailable
-  ) {
-    return false
+// A row is live only while the download client actually reports it (DDL is owned by Listenarr).
+const isLiveInClient = (item: QueueItem): boolean => {
+  if (item.downloadClientType === 'DDL' || item.missingFromClient || item.sourcePathUnavailable) {
+    return item.downloadClientType === 'DDL'
   }
+  const ids = new Set([item.id, ...(item.activityAssociatedDownloadIds ?? [])])
+  return queue.value.some((q) => ids.has(q.id))
+}
+
+// Dismissals stick while the status is unchanged; volatile stage/error text must not resurrect rows.
+const isActivityDismissed = (key: string, item: QueueItem): boolean => {
+  const active = ['downloading', 'queued', 'paused'].includes(item.status.toLowerCase())
+  // Transfers the client really reports stay visible; client-lost ones can be dismissed.
+  if (active && isLiveInClient(item)) return false
   const stored = dismissedActivityVersions.value.get(key)
   if (stored === undefined) return false
   if (stored === activityVersionFor(item)) return true
-  if (!key.startsWith('quick-add:')) return false
   try {
     const parsed = JSON.parse(stored) as unknown
     return Array.isArray(parsed) && parsed[0] === item.status.toLowerCase()
