@@ -386,18 +386,22 @@
               <span>Activity</span>
               <Pill variant="count" v-if="activityCount > 0">{{ activityCount }}</Pill>
             </RouterLink>
-            <ul v-if="route.path === '/activity'" class="nav-subitems" aria-label="Activity sections">
-              <li v-for="section in activityNavSections" :key="section.id">
-                <RouterLink
-                  :to="section.id === 'queue' ? '/activity' : { path: '/activity', query: { section: section.id } }"
-                  class="nav-subitem"
-                  :class="{ active: activeActivitySection === section.id }"
-                  @click="closeMobileMenu"
-                >
-                  {{ section.label }}
-                </RouterLink>
-              </li>
-            </ul>
+            <div class="nav-sub" :class="{ open: route.path === '/activity' }">
+              <RouterLink
+                v-for="section in activityNavSections"
+                :key="section.id"
+                :to="
+                  section.id === 'queue'
+                    ? '/activity'
+                    : { path: '/activity', query: { section: section.id } }
+                "
+                class="nav-subitem"
+                :class="{ active: activeActivitySection === section.id }"
+                @click="closeMobileMenu"
+              >
+                <span>{{ section.label }}</span>
+              </RouterLink>
+            </div>
             <RouterLink
               to="/wanted"
               class="nav-item"
@@ -706,7 +710,8 @@ const confirmDanger = computed(() => confirm.danger.value)
 // Preload helper for route components on user intent (hover/focus/touch)
 function preload(name: string) {
   try {
-    preloadRoute(name)
+    // Best-effort warm-up: a failed chunk fetch must not surface as a global error toast.
+    Promise.resolve(preloadRoute(name)).catch(() => {})
   } catch {}
 }
 
@@ -2124,30 +2129,6 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
 .sidebar .nav-item.router-link-active svg,
 .sidebar .nav-item.router-link-active .ph {
   color: white;
-}
-
-.nav-subitems {
-  list-style: none;
-  margin: 0;
-  padding: 0.25rem 0;
-  background-color: rgba(0, 0, 0, 0.15);
-}
-
-.nav-subitem {
-  display: block;
-  padding: 0.5rem 1rem 0.5rem 3.25rem;
-  color: #aaa;
-  text-decoration: none;
-  font-size: 0.9rem;
-}
-
-.nav-subitem:hover,
-.nav-subitem.active {
-  color: white;
-}
-
-.nav-subitem.active {
-  font-weight: 600;
 }
 
 .sidebar-footer {

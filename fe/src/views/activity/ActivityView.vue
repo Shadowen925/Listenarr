@@ -1142,14 +1142,20 @@ const allActivityItems = computed(() => {
       item.audiobookId != null
     ) {
       const book = libraryStore.audiobooks.find((ab) => ab.id === item.audiobookId)
-      if (book && (book.filePath || (book.fileCount ?? 0) > 0 || (book.files?.length ?? 0) > 0)) {
+      if (
+        book &&
+        (book.wanted === false ||
+          book.filePath ||
+          (book.fileCount ?? 0) > 0 ||
+          (book.files?.length ?? 0) > 0)
+      ) {
         return false
       }
     }
     return true
   }
   return Array.from(grouped.entries())
-    .filter(([key, item]) => dismissedActivityVersions.value.get(key) !== activityVersionFor(item))
+    .filter(([key, item]) => !isActivityDismissed(key, item))
     .map(([, item]) => item)
     .filter(isQueueEntry)
 })
@@ -1171,6 +1177,22 @@ const activityVersionFor = (item: QueueItem): string =>
     item.activityStage ?? '',
     (item.activityLatestError ?? item.errorMessage ?? item.activityError ?? '').slice(0, 500),
   ])
+
+// Quick Add rows have volatile stage/error text, so they stay dismissed while their status is unchanged.
+const isActivityDismissed = (key: string, item: QueueItem): boolean => {
+  // Live transfers always stay visible; dismissal only applies to finished or failed entries.
+  if (['downloading', 'queued', 'paused'].includes(item.status.toLowerCase())) return false
+  const stored = dismissedActivityVersions.value.get(key)
+  if (stored === undefined) return false
+  if (stored === activityVersionFor(item)) return true
+  if (!key.startsWith('quick-add:')) return false
+  try {
+    const parsed = JSON.parse(stored) as unknown
+    return Array.isArray(parsed) && parsed[0] === item.status.toLowerCase()
+  } catch {
+    return false
+  }
+}
 
 // Build a lookup map from audiobook ID -> title for resolving friendly names
 const audiobookTitleMap = computed(() => {
@@ -1275,9 +1297,12 @@ const refreshQueue = async () => {
     applyQueueSnapshot(queueSnapshot)
     recentHistory.value = historySnapshot
     verifiedImportDownloadIds.value = new Set(importedDownloadIds)
-    dismissedActivityVersions.value = new Map(
-      dismissals.map((dismissal) => [dismissal.key, dismissal.version]),
-    )
+    // Newest dismissal first: keep it so an older version for the same key can't override it.
+    const latestDismissals = new Map<string, string>()
+    for (const dismissal of dismissals) {
+      if (!latestDismissals.has(dismissal.key)) latestDismissals.set(dismissal.key, dismissal.version)
+    }
+    dismissedActivityVersions.value = latestDismissals
     quickAddOperations.value = operations
     const quickAddIds = Array.from(new Set(operations.map((operation) => operation.audiobookId)))
     const diagnosticEntries = await Promise.all(

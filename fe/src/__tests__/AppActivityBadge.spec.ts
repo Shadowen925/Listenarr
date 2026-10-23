@@ -244,7 +244,7 @@ describe('App.vue activity badge', () => {
     await wrapper.vm.$nextTick()
 
     const sidebar = wrapper.find('.sidebar')
-    const [audiobookSubmenu, settingsSubmenu] = wrapper.findAll('.nav-sub')
+    const [audiobookSubmenu, , settingsSubmenu] = wrapper.findAll('.nav-sub')
     expect(sidebar.classes()).toContain('desktop-collapsed')
     expect(audiobookSubmenu.classes()).toContain('open')
     expect(settingsSubmenu.classes()).not.toContain('open')
