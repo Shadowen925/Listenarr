@@ -149,7 +149,7 @@ namespace Listenarr.Application.Audiobooks.Renaming
             var filePattern = isMultiFile ? settings.MultiFileNamingPattern : settings.FileNamingPattern;
             var variables = BuildNamingVariables(audiobook, folderPattern, filePattern, file.SequenceNumber, isMultiFile);
             var patternHasNumberTokens = !string.IsNullOrWhiteSpace(filePattern)
-                && (filePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0 || filePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0);
+                && (filePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0 || filePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0 || filePattern.IndexOf("PartNumber", StringComparison.OrdinalIgnoreCase) >= 0);
 
             string relativePath;
             if (string.IsNullOrWhiteSpace(folderPattern))
@@ -460,6 +460,7 @@ namespace Listenarr.Application.Audiobooks.Renaming
         private static bool PatternAllowsSubfolders(string pattern)
             => pattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0
                 || pattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0
+                || pattern.IndexOf("PartNumber", StringComparison.OrdinalIgnoreCase) >= 0
                 || pattern.IndexOf('/') >= 0
                 || pattern.IndexOf('\\') >= 0;
 

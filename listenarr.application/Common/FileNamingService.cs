@@ -142,6 +142,7 @@ namespace Listenarr.Application.Common
 
                 var patternAllowsSubfolders = effectiveFilePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0
                     || effectiveFilePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0
+                    || effectiveFilePattern.IndexOf("PartNumber", StringComparison.OrdinalIgnoreCase) >= 0
                     || effectiveFilePattern.IndexOf('/') >= 0
                     || effectiveFilePattern.IndexOf('\\') >= 0;
 
@@ -201,84 +202,10 @@ namespace Listenarr.Application.Common
                 return "";
             }
 
-            var result = pattern;
-
-            // Regex to match variables: {VariableName} or {VariableName:Format}
-            var variableRegex = new Regex(@"\{(\w+)(?::([^}]+))?\}", RegexOptions.IgnoreCase);
-
-            // Replace variables. If a variable is empty, emit a sentinel so we can clean up surrounding
-            // punctuation and separators (for example: remove "{Series}/" when Series is empty).
-            const string EmptySentinel = "__EMPTY_VAR__";
-            result = variableRegex.Replace(result, match =>
-            {
-                var variableName = match.Groups[1].Value;
-                var format = match.Groups[2].Success ? match.Groups[2].Value : null;
-
-                if (variables.TryGetValue(variableName, out var value))
-                {
-                    // Handle empty values
-                    if (value == null || string.IsNullOrWhiteSpace(value.ToString()))
-                    {
-                        return EmptySentinel;
-                    }
-
-                    string renderedValue;
-
-                    // Apply formatting if specified
-                    if (!string.IsNullOrEmpty(format))
-                    {
-                        // For numeric values with format (e.g., {DiskNumber:00})
-                        if (value is int intValue)
-                        {
-                            renderedValue = intValue.ToString(format);
-                        }
-                        else if (int.TryParse(value.ToString(), out var parsedInt))
-                        {
-                            renderedValue = parsedInt.ToString(format);
-                        }
-                        else if (decimal.TryParse(
-                                     value.ToString(),
-                                     NumberStyles.Number,
-                                     CultureInfo.InvariantCulture,
-                                     out var parsedDecimal))
-                        {
-                            if (parsedDecimal != decimal.Truncate(parsedDecimal)
-                                && format.All(character => character == '0'))
-                            {
-                                var absoluteValue = Math.Abs(parsedDecimal);
-                                var invariantValue = absoluteValue.ToString(
-                                    CultureInfo.InvariantCulture);
-                                var decimalSeparatorIndex = invariantValue.IndexOf('.');
-                                var paddedInteger = decimal.Truncate(absoluteValue)
-                                    .ToString(format, CultureInfo.InvariantCulture);
-                                renderedValue = (parsedDecimal < 0 ? "-" : string.Empty)
-                                    + paddedInteger
-                                    + invariantValue[decimalSeparatorIndex..];
-                            }
-                            else
-                            {
-                                renderedValue = parsedDecimal.ToString(
-                                    format,
-                                    CultureInfo.InvariantCulture);
-                            }
-                        }
-                        else
-                        {
-                            renderedValue = value.ToString() ?? string.Empty;
-                        }
-                    }
-                    else
-                    {
-                        renderedValue = value.ToString() ?? string.Empty;
-                    }
-
-                    return SanitizePathComponent(renderedValue);
-                }
-
-                // Variable not found, return sentinel so we can optionally remove surrounding chars
-                _logger.LogWarning("Variable {VariableName} not found in naming pattern", variableName);
-                return EmptySentinel;
-            });
+            // Expand {Token} groups. A bare empty token becomes a sentinel so the surrounding separators can be
+            // cleaned up below; a group with its own separators ({ - Series}) simply disappears when empty.
+            const string EmptySentinel = NamingTokenEngine.EmptySentinel;
+            var result = NamingTokenEngine.Expand(pattern, variables, SanitizePathComponent, _logger);
 
             // Cleanup: remove empty sentinel inside any brackets (e.g. "(__EMPTY_VAR__)" -> "")
             result = Regex.Replace(result, @"[\(\[\{]\s*" + EmptySentinel + @"\s*[\)\]\}]", string.Empty);

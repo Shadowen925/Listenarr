@@ -65,7 +65,8 @@ public sealed class ManualImportPathPlanner
         string? plannedFolderRelative = null;
         var patternHasNumberTokens = !string.IsNullOrWhiteSpace(filePattern)
             && (filePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0
-                || filePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0);
+                || filePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0
+                || filePattern.IndexOf("PartNumber", StringComparison.OrdinalIgnoreCase) >= 0);
 
         if (string.IsNullOrWhiteSpace(folderPattern))
         {
@@ -310,6 +311,7 @@ public sealed class ManualImportPathPlanner
     {
         return effectiveFilePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0
             || effectiveFilePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0
+            || effectiveFilePattern.IndexOf("PartNumber", StringComparison.OrdinalIgnoreCase) >= 0
             || effectiveFilePattern.IndexOf('/') >= 0
             || effectiveFilePattern.IndexOf('\\') >= 0;
     }

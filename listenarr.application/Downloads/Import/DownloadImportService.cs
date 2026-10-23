@@ -321,7 +321,7 @@ namespace Listenarr.Application.Downloads.Import
 
                             var baseFilePattern = isMultiFileBatch ? settings.MultiFileNamingPattern : settings.FileNamingPattern;
                             var ext = Path.GetExtension(file);
-                            var patternAllowsSubfolders = baseFilePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0 || baseFilePattern.Contains("ChapterNumber", StringComparison.OrdinalIgnoreCase) || baseFilePattern.Contains('/') || baseFilePattern.Contains('\\');
+                            var patternAllowsSubfolders = baseFilePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0 || baseFilePattern.Contains("ChapterNumber", StringComparison.OrdinalIgnoreCase) || baseFilePattern.Contains("PartNumber", StringComparison.OrdinalIgnoreCase) || baseFilePattern.Contains('/') || baseFilePattern.Contains('\\');
                             var filename = fileNamingService.ApplyNamingPattern(baseFilePattern, variablesForFile, !patternAllowsSubfolders);
                             if (!filename.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) filename += ext;
                             if (!patternAllowsSubfolders)

@@ -50,7 +50,7 @@
             placeholder="{Title}"
             @change="(e) => updateField('fileNamingPattern', (e.target as HTMLInputElement).value)"
           />
-          <button class="help-button" @click="openModal('file')" title="View pattern help">
+          <button class="help-button" @click="openModal('single')" title="View pattern help">
             <PhQuestion :size="18" />
           </button>
         </div>
@@ -73,7 +73,7 @@
               (e) => updateField('multiFileNamingPattern', (e.target as HTMLInputElement).value)
             "
           />
-          <button class="help-button" @click="openModal('file')" title="View pattern help">
+          <button class="help-button" @click="openModal('multi')" title="View pattern help">
             <PhQuestion :size="18" />
           </button>
         </div>
@@ -129,121 +129,59 @@
       </FormRow>
     </div>
 
-    <!-- Pattern Help Modal -->
-    <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>{{ modalTitle }}</h2>
-          <button class="close-btn" @click="closeModal">
-            <PhX :size="24" />
-          </button>
-        </div>
-        <div class="modal-body">
-          <div v-if="activePatternType === 'folder'" class="pattern-help">
-            <p><strong>Available Variables:</strong></p>
-            <ul>
-              <li><code>{Author}</code> - Author name</li>
-              <li><code>{Narrator}</code> - Narrator name(s)</li>
-              <li><code>{Series}</code> - Series name</li>
-              <li><code>{SeriesBook}</code> - Optional "Book XX" label for books in a series</li>
-              <li><code>{Title}</code> - Book title</li>
-              <li><code>{Subtitle}</code> - Book subtitle</li>
-              <li><code>{Edition}</code> - User-defined edition label</li>
-              <li><code>{Publisher}</code> - Publisher name</li>
-              <li><code>{Language}</code> - Metadata language</li>
-              <li><code>{Asin}</code> - Audible ASIN</li>
-              <li>
-                <code>{SeriesNumber}</code> or <code>{SeriesNumber:00}</code> - Position in series
-                (00 = zero-padded; decimal positions like 4.5 are not padded)
-              </li>
-              <li><code>{Year}</code> - Publication year</li>
-            </ul>
-            <p class="example"><strong>Example:</strong> <code>{Author}/{Series}/{Title}</code></p>
-            <p class="result">
-              <strong>Result:</strong> <code>Stephen King/The Dark Tower/The Gunslinger</code>
-            </p>
-          </div>
-          <div v-else-if="activePatternType === 'file'" class="pattern-help">
-            <p><strong>Available Variables:</strong></p>
-            <ul>
-              <li><code>{Author}</code> - Author name</li>
-              <li><code>{Narrator}</code> - Narrator name(s)</li>
-              <li><code>{Series}</code> - Series name</li>
-              <li><code>{SeriesBook}</code> - Optional "Book XX" label for books in a series</li>
-              <li><code>{Title}</code> - Book title</li>
-              <li><code>{Subtitle}</code> - Book subtitle</li>
-              <li><code>{Edition}</code> - User-defined edition label</li>
-              <li><code>{Publisher}</code> - Publisher name</li>
-              <li><code>{Language}</code> - Metadata language</li>
-              <li><code>{Asin}</code> - Audible ASIN</li>
-              <li>
-                <code>{SeriesNumber}</code> or <code>{SeriesNumber:00}</code> - Position in series
-                (00 = zero-padded; decimal positions like 4.5 are not padded)
-              </li>
-              <li>
-                <code>{DiskNumber}</code> or <code>{DiskNumber:00}</code> - Disk/part number (00 =
-                zero-padded)
-              </li>
-              <li>
-                <code>{ChapterNumber}</code> or <code>{ChapterNumber:00}</code> - Chapter number (00
-                = zero-padded)
-              </li>
-              <li><code>{Year}</code> - Publication year</li>
-              <li><code>{Quality}</code> - Audio quality (bitrate or format)</li>
-            </ul>
-            <p class="example">
-              <strong>Example:</strong> <code>{Title} - {Edition} ({Language}) [{Asin}]</code>
-            </p>
-            <p class="result">
-              <strong>Result:</strong>
-              <code>The Gunslinger - Revised Edition (English) [B000FC1R84].m4b</code>
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+    <NamingTokenModal
+      v-if="showModal"
+      :key="activePatternType"
+      :initial="activePatternValue"
+      :multi-file="activePatternType === 'multi'"
+      @close="closeModal"
+      @apply="applyFromModal"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import type { ApplicationSettings } from '@/types'
 import { ref, computed } from 'vue'
-import { PhFolder, PhQuestion, PhX, PhWarning } from '@phosphor-icons/vue'
+import { PhFolder, PhQuestion, PhWarning } from '@phosphor-icons/vue'
 import FormRow from '@/components/settings/FormRow.vue'
+import NamingTokenModal from '@/components/settings/NamingTokenModal.vue'
+import { renderNamingPattern } from '@/utils/namingTokens'
 
 const props = defineProps<{ settings: Partial<ApplicationSettings> }>()
 const emit = defineEmits<{
   'update:settings': [value: Partial<ApplicationSettings>]
 }>()
 
+type PatternTarget = 'folder' | 'single' | 'multi'
+
 const showModal = ref(false)
-const activePatternType = ref<'folder' | 'file'>('folder')
+const activePatternType = ref<PatternTarget>('folder')
 const folderPattern = ref(props.settings.folderNamingPattern || '')
 const filePatternSingleFile = ref(props.settings.fileNamingPattern || '')
 const filePatternMultiFile = ref(props.settings.multiFileNamingPattern || '{Title}-{DiskNumber:00}')
 
-// Sample values for testing patterns
-const sampleVariables = {
-  Author: 'Stephen King',
-  Narrator: 'George Guidall',
-  Series: 'The Dark Tower',
-  SeriesBook: 'Book 02',
-  Title: 'The Gunslinger',
-  Subtitle: 'The Dark Tower Begins',
-  Edition: 'Revised Edition',
-  Publisher: 'Penguin Audio',
-  Language: 'English',
-  Asin: 'B000FC1R84',
-  SeriesNumber: '2',
-  Year: '1982',
-  DiskNumber: '3',
-  ChapterNumber: '3',
-  Quality: '128kbps',
-}
-
-const modalTitle = computed(() =>
-  activePatternType.value === 'folder' ? 'Folder Naming Pattern Help' : 'File Naming Pattern Help',
+const activePatternValue = computed(() =>
+  activePatternType.value === 'folder'
+    ? folderPattern.value
+    : activePatternType.value === 'single'
+      ? filePatternSingleFile.value
+      : filePatternMultiFile.value,
 )
+
+const PATTERN_FIELDS = {
+  folder: 'folderNamingPattern',
+  single: 'fileNamingPattern',
+  multi: 'multiFileNamingPattern',
+} as const
+
+function applyFromModal(value: string) {
+  if (activePatternType.value === 'folder') folderPattern.value = value
+  else if (activePatternType.value === 'single') filePatternSingleFile.value = value
+  else filePatternMultiFile.value = value
+  updateField(PATTERN_FIELDS[activePatternType.value], value)
+  showModal.value = false
+}
 
 function applyPattern(
   pattern: string,
@@ -252,60 +190,14 @@ function applyPattern(
 ): string {
   if (!pattern) return ''
 
-  let result = pattern
-
-  // Replace all variables with sample values
-  for (const [key, value] of Object.entries(sampleVariables)) {
-    if (key === 'DiskNumber' || key === 'ChapterNumber' || key === 'SeriesNumber') {
-      // Handle zero-padding for disk, chapter, and series numbers using the sample value
-      const paddedRegex = new RegExp(`\\{${key}:00\\}`, 'g')
-      const paddedSample = value.toString().padStart(2, '0')
-      result = result.replace(paddedRegex, paddedSample)
-      result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), value)
-    } else {
-      const regex = new RegExp(`\\{${key}\\}`, 'g')
-      result = result.replace(regex, value)
-    }
-  }
-
-  // For multi-file preview, show how files would be named
   if (type === 'file' && multiFile) {
-    // Check if pattern includes DiskNumber or ChapterNumber for uniqueness
-    const hasDiskNumber = pattern.includes('{DiskNumber')
-    const hasChapterNumber = pattern.includes('{ChapterNumber')
-
-    if (!hasDiskNumber && !hasChapterNumber) {
-      // Pattern doesn't differentiate files - show warning
-      return `⚠️ ${result}.ext (all files would have the same name!)`
+    if (!/\{[^{}]*(DiskNumber|ChapterNumber|PartNumber)/i.test(pattern)) {
+      return `⚠️ ${renderNamingPattern(pattern)}.ext (all files would have the same name!)`
     }
-
-    // Generate unique filenames by simulating different disk/chapter numbers
-    let file1 = result
-    let file2 = result
-    const file3 = result
-
-    // Replace DiskNumber variants
-    if (hasDiskNumber) {
-      const diskSample = sampleVariables.DiskNumber.toString().padStart(2, '0')
-      const diskRegex = new RegExp(diskSample, 'g')
-      file1 = file1.replace(diskRegex, '01')
-      file2 = file2.replace(diskRegex, '02')
-      // file3 already contains the sample value for the third file — no-op replacement removed
-    }
-
-    // Replace ChapterNumber variants
-    if (hasChapterNumber) {
-      const chapterSample = sampleVariables.ChapterNumber.toString().padStart(2, '0')
-      const chapterRegex = new RegExp(chapterSample, 'g')
-      file1 = file1.replace(chapterRegex, '01')
-      file2 = file2.replace(chapterRegex, '02')
-      // file3 already contains the sample value for the third file — no-op replacement removed
-    }
-
-    return `${file1}.ext, ${file2}.ext, ${file3}.ext...`
+    return [1, 2, 3].map((n) => `${renderNamingPattern(pattern, n)}.ext`).join(', ') + '...'
   }
 
-  return result
+  return renderNamingPattern(pattern)
 }
 
 function updateField(field: keyof ApplicationSettings, value: unknown) {
@@ -352,7 +244,7 @@ const pathLengthWarning = computed<string | null>(() => {
   )
 })
 
-function openModal(type: 'folder' | 'file') {
+function openModal(type: PatternTarget) {
   activePatternType.value = type
   showModal.value = true
 }
@@ -488,117 +380,6 @@ h3 svg {
   outline: none;
   border-color: var(--brand-500);
   box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.1);
-}
-
-/* Modal Styles */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 1rem;
-}
-
-.modal-content {
-  background-color: #2a2a2a;
-  border-radius: 8px;
-  max-width: 600px;
-  width: 100%;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.5rem;
-  border-bottom: 1px solid #444;
-}
-
-.modal-header h2 {
-  margin: 0;
-  color: #fff;
-  font-size: 1.3rem;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  color: #adb5bd;
-  cursor: pointer;
-  padding: 0.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s;
-}
-
-.close-btn:hover {
-  color: #fff;
-}
-
-.modal-body {
-  padding: 1.5rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.pattern-help ul {
-  list-style: none;
-  padding: 0;
-  margin: 0.75rem 0;
-}
-
-.pattern-help li {
-  padding: 0.5rem 0;
-  color: #ddd;
-  line-height: 1.6;
-}
-
-.pattern-help li code {
-  background-color: #1a1a1a;
-  padding: 0.2rem 0.4rem;
-  border-radius: 3px;
-  color: #4dd0e1;
-  font-size: 0.9em;
-}
-
-.pattern-help p {
-  margin: 1rem 0 0.5rem 0;
-  color: #ddd;
-  line-height: 1.6;
-}
-
-.pattern-help p code {
-  background-color: #1a1a1a;
-  padding: 0.2rem 0.4rem;
-  border-radius: 3px;
-  color: #4dd0e1;
-}
-
-.pattern-help .example {
-  margin-top: 1.5rem;
-  padding: 0.75rem;
-  background-color: #1a1a1a;
-  border-left: 3px solid var(--brand-500);
-  border-radius: 4px;
-}
-
-.pattern-help .result {
-  margin: 0.75rem 0 0 0;
-  padding: 0;
-  background-color: transparent;
-  border-left: none;
-  color: #90caf9;
 }
 
 .pattern-preview {
