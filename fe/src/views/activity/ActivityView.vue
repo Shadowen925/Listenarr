@@ -1135,12 +1135,8 @@ const allActivityItems = computed(() => {
     if (status === 'completed' && (item.sourcePathUnavailable || item.missingFromClient)) {
       return false
     }
-    // The client no longer has the files and the book is already in the library: nothing left to act on.
-    if (
-      (item.sourcePathUnavailable || item.missingFromClient) &&
-      !['downloading', 'queued', 'paused'].includes(status) &&
-      item.audiobookId != null
-    ) {
+    // The client no longer has the transfer and the book isn't wanted (or already has files): nothing left to act on.
+    if ((item.sourcePathUnavailable || item.missingFromClient) && item.audiobookId != null) {
       const book = libraryStore.audiobooks.find((ab) => ab.id === item.audiobookId)
       if (
         book &&
@@ -1180,8 +1176,14 @@ const activityVersionFor = (item: QueueItem): string =>
 
 // Quick Add rows have volatile stage/error text, so they stay dismissed while their status is unchanged.
 const isActivityDismissed = (key: string, item: QueueItem): boolean => {
-  // Live transfers always stay visible; dismissal only applies to finished or failed entries.
-  if (['downloading', 'queued', 'paused'].includes(item.status.toLowerCase())) return false
+  // Live transfers stay visible; dismissal only applies to finished, failed or client-lost entries.
+  if (
+    ['downloading', 'queued', 'paused'].includes(item.status.toLowerCase()) &&
+    !item.missingFromClient &&
+    !item.sourcePathUnavailable
+  ) {
+    return false
+  }
   const stored = dismissedActivityVersions.value.get(key)
   if (stored === undefined) return false
   if (stored === activityVersionFor(item)) return true

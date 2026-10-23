@@ -800,15 +800,24 @@ const systemIssues = ref(0)
 // directly and make sure to unwrap the ref in case the store exposes a
 // computed/ref instead of a raw array.
 import { unref } from 'vue'
+const missingFromClientIds = computed(
+  () =>
+    new Set(
+      queueItems.value
+        .filter((item) => item.missingFromClient || item.sourcePathUnavailable)
+        .map((item) => item.id),
+    ),
+)
 const activeDownloads = computed(() => {
   const raw = unref(downloadsStore.activeDownloads)
-  return Array.isArray(raw) ? raw : []
+  return Array.isArray(raw) ? raw.filter((d) => !missingFromClientIds.value.has(d?.id)) : []
 })
 
 // Step 2: Count active queue items (memoized)
 const activeQueueCount = computed(
   () =>
     queueItems.value.filter((item) => {
+      if (item.missingFromClient || item.sourcePathUnavailable) return false
       const status = (item.status || '').toString().toLowerCase()
       return status === 'downloading' || status === 'paused' || status === 'queued'
     }).length,
