@@ -198,6 +198,7 @@ namespace Listenarr.Tests.Features.Application.Mapping
 
         [Theory]
         [InlineData(DownloadStatus.ImportPending)]
+        [InlineData(DownloadStatus.ImportBlocked)]
         [InlineData(DownloadStatus.Processing)]
         [InlineData(DownloadStatus.Moved)]
         [Trait("Method", "UpdateFromQueueItem")]

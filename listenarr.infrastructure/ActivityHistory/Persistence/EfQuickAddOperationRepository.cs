@@ -55,8 +55,9 @@ public sealed class EfQuickAddOperationRepository(ListenArrDbContext db)
                 .SingleOrDefaultAsync(candidate => candidate.AudiobookId == audiobookId, cancellationToken);
             if (operation == null
                 || operation.State is QuickAddOperationState.Imported
-                    or QuickAddOperationState.NoMatchingReleases
-                    or QuickAddOperationState.FailedNeedsAttention
+                || (operation.State == QuickAddOperationState.NoMatchingReleases
+                    && state != QuickAddOperationState.Imported)
+                || operation.State == QuickAddOperationState.FailedNeedsAttention
                 || QuickAddOperation.StateOrder(operation.State) > targetOrder
                 || (state == QuickAddOperationState.FailedNeedsAttention
                     && processingJobId == null
@@ -80,7 +81,8 @@ public sealed class EfQuickAddOperationRepository(ListenArrDbContext db)
         var activeStates = Enum.GetValues<QuickAddOperationState>()
             .Where(candidate =>
                 candidate != QuickAddOperationState.Imported
-                && candidate != QuickAddOperationState.NoMatchingReleases
+                && (candidate != QuickAddOperationState.NoMatchingReleases
+                    || state == QuickAddOperationState.Imported)
                 && candidate != QuickAddOperationState.FailedNeedsAttention
                 && QuickAddOperation.StateOrder(candidate) <= targetOrder)
             .ToArray();

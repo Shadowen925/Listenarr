@@ -13,7 +13,8 @@ namespace Listenarr.Application.Mapping
             if (download.Status is DownloadStatus.Completed
                 or DownloadStatus.Moved
                 or DownloadStatus.Processing
-                or DownloadStatus.ImportPending)
+                or DownloadStatus.ImportPending
+                or DownloadStatus.ImportBlocked)
             {
                 UpdateImportOwnedMetadata(download, item);
                 return download;

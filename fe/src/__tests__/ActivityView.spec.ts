@@ -1214,4 +1214,38 @@ describe('ActivityView', () => {
       'internal-download-2',
     ])
   })
+
+  it('separates searchable persistent history from the live queue', async () => {
+    mockSignalR()
+    const api = mockApi({
+      getHistory: vi.fn(async () => ({
+        history: [],
+        total: 0,
+        limit: 50,
+        offset: 0,
+      })),
+    })
+    mockConfigurationStore(false)
+    mockLibraryStore()
+    mockDownloadsStore()
+
+    const wrapper = await mountActivityView()
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).toEqual([
+      'Queue',
+      'History',
+      'Blocklist',
+      'Ignored Downloads',
+    ])
+
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(api.getHistory).toHaveBeenCalledWith(
+      50,
+      0,
+      expect.objectContaining({ searchTerm: '', eventType: '', outcome: '' }),
+    )
+    expect(wrapper.find('.activity-history-list').exists()).toBe(true)
+    expect(wrapper.find('.activity-list').exists()).toBe(false)
+  })
 })

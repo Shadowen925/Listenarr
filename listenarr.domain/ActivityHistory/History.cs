@@ -134,6 +134,7 @@ namespace Listenarr.Domain.ActivityHistory
         public string? DownloadId { get; set; }
         public string? DownloadClientId { get; set; }
         public string? CorrelationId { get; set; }
+        public string? SearchTerm { get; set; }
     }
 
     public sealed record HistoryPage(List<History> Records, int Total, int Limit, int Offset);

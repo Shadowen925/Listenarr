@@ -1149,6 +1149,10 @@ export interface History {
   data?: string
   outcome?: string
   downloadId?: string
+  downloadClientId?: string
+  correlationId?: string
+  error?: string
+  sourceTitle?: string
 }
 
 export interface Indexer {

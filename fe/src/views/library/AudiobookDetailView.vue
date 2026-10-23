@@ -250,92 +250,6 @@
     <div class="tab-content">
       <!-- Details Tab -->
       <div id="details" v-if="activeTab === 'details'" class="details-content">
-        <section class="automatic-search-diagnostics" aria-live="polite">
-          <div class="diagnostics-heading">
-            <h3>Automatic search diagnostics</h3>
-            <button
-              v-if="automaticSearchHistory.length"
-              type="button"
-              class="nav-btn"
-              @click="exportAutomaticSearchDiagnostics"
-            >
-              Export JSON
-            </button>
-          </div>
-          <p v-if="automaticSearchHistoryLoading">Loading search history…</p>
-          <p v-else-if="automaticSearchHistoryError" role="alert">
-            {{ automaticSearchHistoryError }}
-          </p>
-          <p v-else-if="automaticSearchHistory.length === 0">
-            No automatic search history has been recorded yet.
-          </p>
-          <ul v-else class="search-history-list">
-            <li v-for="entry in automaticSearchHistory" :key="entry.id">
-              <time :datetime="entry.searchTimestamp">
-                {{ formatDiagnosticTime(entry.searchTimestamp) }}
-              </time>
-              <strong>{{ entry.searchTrigger }} — {{ entry.finalOutcome }}</strong>
-              <span>
-                {{ entry.resultsReturned }} raw results;
-                {{ entry.distinctCandidateCount ?? 0 }} distinct;
-                {{ entry.identityMatchCount ?? 0 }} identity matches;
-                {{ entry.qualityRejectedCount ?? 0 }} quality rejected; indexers:
-                {{ entry.indexersQueried.join(', ') || 'none recorded' }}
-              </span>
-              <span v-if="entry.queriesAttempted?.length">
-                Queries: {{ (entry.queriesAttempted ?? []).join(' · ') }}
-              </span>
-              <span
-                v-for="(outcome, index) in entry.indexerOutcomes ?? []"
-                :key="`${outcome.query}-${outcome.indexerName}-${index}`"
-              >
-                {{ outcome.indexerName }} / {{ outcome.query }}: {{ outcome.outcome }} ({{
-                  outcome.resultsReturned
-                }}
-                results)
-                <template v-if="outcome.failureReason"> — {{ outcome.failureReason }}</template>
-              </span>
-              <span v-if="entry.selectedRelease">Selected: {{ entry.selectedRelease }}</span>
-              <span v-if="entry.downloadClient">Client: {{ entry.downloadClient }}</span>
-              <span v-if="entry.rejectionReasons.length">
-                Rejections: {{ entry.rejectionReasons.join(', ') }}
-              </span>
-              <span v-for="(attempt, index) in entry.submissionAttempts" :key="index">
-                {{ attempt.outcome }}: {{ attempt.releaseTitle }}
-                <template v-if="attempt.clientType"> via {{ attempt.clientType }}</template>
-                <template v-if="attempt.failureReason"> ({{ attempt.failureReason }})</template>
-              </span>
-              <span v-if="entry.nextRetryAt">
-                Next retry: {{ formatDiagnosticTime(entry.nextRetryAt) }}
-              </span>
-            </li>
-          </ul>
-          <div v-if="automaticSearchEvents.length" class="live-search-diagnostics">
-            <strong>Live updates</strong>
-            <ul>
-              <li
-                v-for="(event, index) in automaticSearchEvents"
-                :key="`${event.receivedAt}-${index}`"
-              >
-                <time :datetime="event.receivedAt">{{
-                  formatDiagnosticTime(event.receivedAt)
-                }}</time>
-                <span>{{ event.message }}</span>
-                <span v-if="typeof event.details?.query === 'string'">
-                  Query: {{ event.details.query }}
-                </span>
-                <span v-if="typeof event.details?.outcome === 'string'">
-                  Outcome: {{ event.details.outcome }}
-                </span>
-                <span v-if="typeof event.details?.resultCount === 'number'">
-                  {{ event.details.resultCount }} releases,
-                  {{ event.details.eligibleCount ?? 0 }} eligible,
-                  {{ event.details.rejectedCount ?? 0 }} rejected
-                </span>
-              </li>
-            </ul>
-          </div>
-        </section>
         <div class="details-grid">
           <div class="detail-card">
             <h3>Author Information</h3>
@@ -495,6 +409,94 @@
             </div>
           </div>
         </div>
+        <details class="automatic-search-diagnostics">
+          <summary>Automatic search diagnostics</summary>
+          <section aria-live="polite">
+            <div class="diagnostics-heading">
+              <button
+                v-if="automaticSearchHistory.length"
+                type="button"
+                class="nav-btn"
+                @click="exportAutomaticSearchDiagnostics"
+              >
+                Export JSON
+              </button>
+            </div>
+            <p v-if="automaticSearchHistoryLoading">Loading search history…</p>
+            <p v-else-if="automaticSearchHistoryError" role="alert">
+              {{ automaticSearchHistoryError }}
+            </p>
+            <p v-else-if="automaticSearchHistory.length === 0">
+              No automatic search history has been recorded yet.
+            </p>
+            <ul v-else class="search-history-list">
+              <li v-for="entry in automaticSearchHistory" :key="entry.id">
+                <time :datetime="entry.searchTimestamp">
+                  {{ formatDiagnosticTime(entry.searchTimestamp) }}
+                </time>
+                <strong>{{ entry.searchTrigger }} — {{ entry.finalOutcome }}</strong>
+                <span>
+                  {{ entry.resultsReturned }} raw results;
+                  {{ entry.distinctCandidateCount ?? 0 }} distinct;
+                  {{ entry.identityMatchCount ?? 0 }} identity matches;
+                  {{ entry.qualityRejectedCount ?? 0 }} quality rejected; indexers:
+                  {{ entry.indexersQueried.join(', ') || 'none recorded' }}
+                </span>
+                <span v-if="entry.queriesAttempted?.length">
+                  Queries: {{ (entry.queriesAttempted ?? []).join(' / ') }}
+                </span>
+                <span
+                  v-for="(outcome, index) in entry.indexerOutcomes ?? []"
+                  :key="`${outcome.query}-${outcome.indexerName}-${index}`"
+                >
+                  {{ outcome.indexerName }} / {{ outcome.query }}: {{ outcome.outcome }} ({{
+                    outcome.resultsReturned
+                  }}
+                  results)
+                  <template v-if="outcome.failureReason"> — {{ outcome.failureReason }}</template>
+                </span>
+                <span v-if="entry.selectedRelease">Selected: {{ entry.selectedRelease }}</span>
+                <span v-if="entry.downloadClient">Client: {{ entry.downloadClient }}</span>
+                <span v-if="entry.rejectionReasons.length">
+                  Rejections: {{ entry.rejectionReasons.join(', ') }}
+                </span>
+                <span v-for="(attempt, index) in entry.submissionAttempts" :key="index">
+                  {{ attempt.outcome }}: {{ attempt.releaseTitle }}
+                  <template v-if="attempt.clientType"> via {{ attempt.clientType }}</template>
+                  <template v-if="attempt.failureReason"> ({{ attempt.failureReason }})</template>
+                </span>
+                <span v-if="entry.nextRetryAt">
+                  Next retry: {{ formatDiagnosticTime(entry.nextRetryAt) }}
+                </span>
+              </li>
+            </ul>
+            <div v-if="automaticSearchEvents.length" class="live-search-diagnostics">
+              <strong>Live updates</strong>
+              <ul>
+                <li
+                  v-for="(event, index) in automaticSearchEvents"
+                  :key="`${event.receivedAt}-${index}`"
+                >
+                  <time :datetime="event.receivedAt">{{
+                    formatDiagnosticTime(event.receivedAt)
+                  }}</time>
+                  <span>{{ event.message }}</span>
+                  <span v-if="typeof event.details?.query === 'string'">
+                    Query: {{ event.details.query }}
+                  </span>
+                  <span v-if="typeof event.details?.outcome === 'string'">
+                    Outcome: {{ event.details.outcome }}
+                  </span>
+                  <span v-if="typeof event.details?.resultCount === 'number'">
+                    {{ event.details.resultCount }} releases,
+                    {{ event.details.eligibleCount ?? 0 }} eligible,
+                    {{ event.details.rejectedCount ?? 0 }} rejected
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </details>
       </div>
 
       <!-- Files Tab -->
@@ -544,10 +546,10 @@
               <div class="file-info">
                 <PhFileAudio />
                 <span class="file-name">{{ getFileName(f.path) }}</span>
-                <small class="file-meta"
-                  >â€¢ {{ f.format ? f.format.toUpperCase() : '' }}
-                  {{ f.durationSeconds ? 'â€¢ ' + formatDuration(f.durationSeconds) : '' }}</small
-                >
+                <small class="file-meta">
+                  <span v-if="f.format">{{ f.format.toUpperCase() }}</span>
+                  <span v-if="f.durationSeconds">{{ formatDuration(f.durationSeconds) }}</span>
+                </small>
               </div>
               <div class="file-actions">
                 <span class="file-size" v-if="f.size">{{ formatFileSize(f.size) }}</span>
@@ -1739,7 +1741,7 @@ async function rescanMetadata() {
 
     toast.success(
       'Metadata rescanned',
-      details.length > 0 ? details.join(' â€¢ ') : 'Audiobook metadata refreshed successfully.',
+      details.length > 0 ? details.join(', ') : 'Audiobook metadata refreshed successfully.',
     )
   } catch (err) {
     errorTracking.captureException(err as Error, {
@@ -2911,6 +2913,16 @@ function formatDate(dateString?: string): string {
   color: #cbd2d9;
 }
 
+.automatic-search-diagnostics summary {
+  cursor: pointer;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.automatic-search-diagnostics[open] summary {
+  margin-bottom: 0.75rem;
+}
+
 .diagnostics-heading {
   display: flex;
   justify-content: space-between;
@@ -3260,6 +3272,9 @@ a.identifier-link:hover {
 }
 
 .file-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
   color: #999;
 }
 

@@ -1877,9 +1877,21 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
                 ErrorMessage = "Import failed",
                 Metadata = new Dictionary<string, object> { ["DownloadType"] = "DDL" }
             };
+            var ignored = new Download
+            {
+                Id = "ddl-ignored",
+                Title = "DDL Ignored",
+                DownloadClientId = "DDL",
+                Status = DownloadStatus.ImportBlocked,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["DownloadType"] = "DDL",
+                    ["Activity.Ignored"] = true
+                }
+            };
 
             var downloadRepoMock = new Mock<IDownloadRepository>();
-            SetupQueueRepository(downloadRepoMock, new List<Download> { downloading, importPending, importBlocked });
+            SetupQueueRepository(downloadRepoMock, new List<Download> { downloading, importPending, importBlocked, ignored });
 
             var configMock = new Mock<IConfigurationService>();
             configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
@@ -1909,6 +1921,63 @@ namespace Listenarr.Tests.Features.Application.Downloads.Queue
             Assert.Equal("importpending", items["ddl-importpending"].Status);
             Assert.Equal("importblocked", items["ddl-importblocked"].Status);
             Assert.Equal("Import failed", items["ddl-importblocked"].ErrorMessage);
+            Assert.DoesNotContain(result, item => item.Id == "ddl-ignored");
+        }
+
+        [Fact]
+        [Trait("Scenario", "IgnoredDownloadQueueSuppression")]
+        public async Task GetQueueAsync_SuppressesIgnoredCompletedClientDownload_EvenWhenExternalCompletionsAreShown()
+        {
+            var client = new DownloadClientConfiguration
+            {
+                Id = "sab-1",
+                Name = "SABnzbd",
+                Type = "sabnzbd",
+                IsEnabled = true
+            };
+            var ignored = new Download
+            {
+                Id = "tracked-ignored",
+                DownloadClientId = "sab-1",
+                Title = "Retained Completed Download",
+                Status = DownloadStatus.ImportBlocked,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["ClientDownloadId"] = "sab-history-identity",
+                    ["Activity.Ignored"] = true
+                }
+            };
+            var configMock = new Mock<IConfigurationService>();
+            configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
+                .ReturnsAsync(new List<DownloadClientConfiguration> { client });
+            configMock.Setup(c => c.GetApplicationSettingsAsync())
+                .ReturnsAsync(new ApplicationSettings { ShowCompletedExternalDownloads = true });
+
+            var downloadRepoMock = new Mock<IDownloadRepository>();
+            SetupQueueRepository(downloadRepoMock, new List<Download> { ignored });
+            var processingJobRepoMock = new Mock<IDownloadProcessingJobRepository>();
+            var gatewayMock = new Mock<IDownloadClientGateway>();
+            gatewayMock.Setup(g => g.GetQueueAsync(client, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<QueueItem>
+                {
+                    new()
+                    {
+                        Id = "sab-history-identity",
+                        Title = "Retained Completed Download",
+                        Status = "completed"
+                    }
+                });
+
+            var service = CreateService(
+                configMock.Object,
+                downloadRepoMock.Object,
+                processingJobRepoMock.Object,
+                gatewayMock.Object,
+                new Mock<IAppMetricsService>().Object);
+
+            var result = await service.GetQueueAsync();
+
+            Assert.Empty(result);
         }
 
         private static bool IsQueueDisplayCandidate(Download d)

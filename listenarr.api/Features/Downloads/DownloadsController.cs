@@ -23,7 +23,7 @@ namespace Listenarr.Api.Features.Downloads;
 [ApiController]
 [Route("api/v{version:apiVersion}/downloads")]
 [Tags("Downloads")]
-public class DownloadsController : ControllerBase
+public partial class DownloadsController : ControllerBase
 {
     private readonly IDownloadRepository _downloadRepository;
     private readonly IDownloadService _downloadService;
@@ -31,12 +31,14 @@ public class DownloadsController : ControllerBase
     private readonly IConfigurationService _configurationService;
     private readonly IMemoryCache? _cache;
     private readonly IDownloadProcessingJobService? _downloadProcessingJobService;
+    private readonly IDownloadProcessingJobRepository _downloadProcessingJobRepository;
 
     public DownloadsController(
         IDownloadRepository downloadRepository,
         IDownloadService downloadService,
         ILogger<DownloadsController> logger,
         IConfigurationService configurationService,
+        IDownloadProcessingJobRepository downloadProcessingJobRepository,
         IMemoryCache? cache = null,
         IDownloadProcessingJobService? downloadProcessingJobService = null)
     {
@@ -46,6 +48,8 @@ public class DownloadsController : ControllerBase
         _configurationService = configurationService;
         _cache = cache;
         _downloadProcessingJobService = downloadProcessingJobService;
+        _downloadProcessingJobRepository = downloadProcessingJobRepository
+            ?? throw new ArgumentNullException(nameof(downloadProcessingJobRepository));
     }
     /// <summary>
     /// Retrieve cached torrent bytes (if cached) for a given download id (synchronous for tests)
@@ -280,6 +284,7 @@ public class DownloadsController : ControllerBase
                            d.Status == DownloadStatus.Downloading ||
                            d.Status == DownloadStatus.Processing ||
                            d.Status == DownloadStatus.ImportPending)
+                .Where(d => !IsTrue(d.GetMetadataString("Activity.Ignored")))
                 .Where(d =>
                     d.DownloadClientId == "DDL" ||
                     (!string.IsNullOrEmpty(d.DownloadClientId) && enabledClientIds.Contains(d.DownloadClientId)))

@@ -51,6 +51,15 @@ namespace Listenarr.Infrastructure.ActivityHistory.Persistence
                 filtered = filtered.Where(h => h.DownloadClientId == query.DownloadClientId);
             if (!string.IsNullOrWhiteSpace(query.CorrelationId))
                 filtered = filtered.Where(h => h.CorrelationId == query.CorrelationId);
+            if (!string.IsNullOrWhiteSpace(query.SearchTerm))
+            {
+                var searchTerm = query.SearchTerm.Trim().ToLowerInvariant();
+                filtered = filtered.Where(h =>
+                    (h.AudiobookTitle != null && h.AudiobookTitle.ToLower().Contains(searchTerm))
+                    || (h.SourceTitle != null && h.SourceTitle.ToLower().Contains(searchTerm))
+                    || (h.Message != null && h.Message.ToLower().Contains(searchTerm))
+                    || (h.Error != null && h.Error.ToLower().Contains(searchTerm)));
+            }
 
             var total = await filtered.CountAsync(ct);
             var ascending = string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase);

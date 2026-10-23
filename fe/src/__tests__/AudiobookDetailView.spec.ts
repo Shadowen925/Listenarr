@@ -141,6 +141,11 @@ describe('AudiobookDetailView image recache behavior', () => {
     const wrapper = mount(AudiobookDetailViewCmp, { global: { plugins: [pinia] } })
     await new Promise((resolve) => setTimeout(resolve, 10))
 
+    const diagnostics = wrapper.get('details.automatic-search-diagnostics')
+    expect((diagnostics.element as HTMLDetailsElement).open).toBe(false)
+    expect(diagnostics.element.previousElementSibling?.classList.contains('details-grid')).toBe(
+      true,
+    )
     expect(wrapper.find('.search-history-list').text()).toContain('Periodic — AllSubmissionsFailed')
     expect(wrapper.find('.search-history-list').text()).toContain('Queries: Dune Frank Herbert')
     expect(wrapper.find('.search-history-list').text()).toContain(

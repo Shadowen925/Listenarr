@@ -38,7 +38,10 @@ namespace Listenarr.Application.Downloads.Queue
                 ContentPath = string.IsNullOrWhiteSpace(download.FinalPath)
                     ? download.DownloadPath
                     : download.FinalPath,
-                ErrorMessage = download.ErrorMessage,
+                ErrorMessage = download.ImportBlockMessages?.LastOrDefault() ?? download.ErrorMessage,
+                RecoveryState = download.GetMetadataString("Recovery.State")
+                    ?? (download.Status == DownloadStatus.ImportBlocked ? "ImportFailed" : null),
+                RecoveryReason = download.GetMetadataString("Recovery.Reason"),
                 ActivityOperationIdentity = CreateActivityOperationIdentity(
                     download.DownloadClientId,
                     download.GetExternalId() ?? download.Id)
@@ -49,6 +52,11 @@ namespace Listenarr.Application.Downloads.Queue
             string? downloadClientId,
             string externalId) =>
             $"{downloadClientId}:{externalId}";
+
+        internal static bool IsActivityIgnored(Download download) =>
+            download.GetMetadataString("Activity.Ignored") is string value
+            && (value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("1", StringComparison.OrdinalIgnoreCase));
 
         private static string ToQueueStatus(DownloadStatus status) => status switch
         {

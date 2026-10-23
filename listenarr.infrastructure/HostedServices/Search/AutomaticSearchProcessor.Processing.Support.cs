@@ -1,10 +1,97 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Listenarr.Domain.Common;
+using Listenarr.Application.Search.Matching;
 
 namespace Listenarr.Infrastructure.HostedServices.Search;
 
 public partial class AutomaticSearchProcessor
 {
+    private (List<SearchResult> Matches, int RejectedCount) FilterIdentityMatchedResults(
+        Audiobook audiobook,
+        IReadOnlyCollection<SearchResult> results)
+    {
+        var matches = results
+            .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
+            .ToList();
+        var rejectedCount = results.Count - matches.Count;
+        if (rejectedCount > 0)
+        {
+            _logger.LogWarning(
+                "Discarded {Count} distinct automatic search result(s) with conflicting audiobook identity for '{Title}'",
+                rejectedCount,
+                audiobook.Title);
+        }
+
+        return (matches, rejectedCount);
+    }
+
+    private async Task<bool> TryResolveVerifiedNoMatchAsync(
+        Audiobook audiobook,
+        QuickAddOperation? operation,
+        IQuickAddOperationRepository quickAddOperations,
+        IAudiobookFileRepository fileRepository,
+        IAudiobookScanService audiobookScanService,
+        CancellationToken cancellationToken)
+    {
+        if (operation?.State != QuickAddOperationState.NoMatchingReleases
+            || !await HasVerifiedRegisteredFileAtCutoffAsync(
+                audiobook,
+                fileRepository,
+                audiobookScanService,
+                cancellationToken))
+        {
+            return false;
+        }
+
+        await quickAddOperations.AdvanceAsync(
+            audiobook.Id,
+            QuickAddOperationState.Imported,
+            cancellationToken: cancellationToken);
+        return true;
+    }
+
+    private bool ShouldSkipForExistingQuality(
+        Audiobook audiobook,
+        QuickAddOperation? operation,
+        bool cutoffMet)
+    {
+        if (!cutoffMet)
+        {
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Quality cutoff already met for audiobook '{Title}', skipping automatic search",
+            audiobook.Title);
+        if (operation?.State != QuickAddOperationState.NoMatchingReleases)
+        {
+            return true;
+        }
+
+        _logger.LogInformation(
+            "Prior no-match state for audiobook {AudiobookId} is not backed by a verified registered file; preserving search eligibility",
+            audiobook.Id);
+        return false;
+    }
+
+    private async Task<bool> TryReopenNoMatchAsync(
+        QuickAddOperation? operation,
+        IQuickAddOperationRepository quickAddOperations,
+        CancellationToken cancellationToken)
+    {
+        if (operation?.State != QuickAddOperationState.NoMatchingReleases
+            || await quickAddOperations.RetryAsync(operation.Id, cancellationToken))
+        {
+            return true;
+        }
+
+        _logger.LogWarning(
+            "Could not reopen prior no-match search operation {OperationId}",
+            operation.Id);
+        return false;
+    }
+
     private async Task<(QuickAddOperation? Operation, IReadOnlyList<Download> Downloads, bool ShouldSkip)>
         GetSearchContextAsync(
             Audiobook audiobook,
@@ -25,8 +112,7 @@ public partial class AutomaticSearchProcessor
             }
         }
 
-        if (operation?.State is QuickAddOperationState.NoMatchingReleases
-            or QuickAddOperationState.Imported
+        if (operation?.State is QuickAddOperationState.Imported
             or QuickAddOperationState.Queued
             or QuickAddOperationState.Downloading
             or QuickAddOperationState.DownloadCompleted
@@ -82,6 +168,98 @@ public partial class AutomaticSearchProcessor
             activeDownload.Id,
             activeDownload.Status);
         return (operation, downloads, true);
+    }
+
+    private async Task<bool> HasVerifiedRegisteredFileAtCutoffAsync(
+        Audiobook audiobook,
+        IAudiobookFileRepository fileRepository,
+        IAudiobookScanService audiobookScanService,
+        CancellationToken cancellationToken)
+    {
+        var profile = audiobook.QualityProfile;
+        if (profile == null)
+        {
+            return false;
+        }
+        if (profile.Qualities?.Any(quality => quality.Quality == profile.CutoffQuality) != true)
+        {
+            return false;
+        }
+
+        var registeredFiles = await fileRepository.GetByAudiobookIdAsync(
+            audiobook.Id,
+            cancellationToken);
+        var allFiles = await fileRepository.GetAllAsync(cancellationToken);
+        foreach (var file in registeredFiles)
+        {
+            if (file.PathIdentityState != PathIdentityState.Valid
+                || string.IsNullOrWhiteSpace(file.PathOwnershipKey)
+                || string.IsNullOrWhiteSpace(file.PhysicalObjectIdentity)
+                || allFiles.Count(candidate =>
+                    string.Equals(
+                        candidate.PathOwnershipKey,
+                        file.PathOwnershipKey,
+                        StringComparison.Ordinal)) != 1
+                || !QualityMatcher.MeetsCutoff(
+                    new AudioQualityInput
+                    {
+                        Codec = file.Codec,
+                        Container = file.Container,
+                        Format = file.Format,
+                        BitrateBitsPerSecond = file.Bitrate,
+                        Path = file.Path
+                    },
+                    profile))
+            {
+                continue;
+            }
+
+            var path = file.Path;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            if (!Path.IsPathRooted(path))
+            {
+                if (string.IsNullOrWhiteSpace(audiobook.BasePath))
+                {
+                    continue;
+                }
+
+                path = Path.Combine(audiobook.BasePath, path);
+            }
+
+            try
+            {
+                await using var stream = new FileStream(
+                    path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                if (stream.Length > 0
+                    && (!file.Size.HasValue || file.Size.Value == stream.Length)
+                    && !string.IsNullOrWhiteSpace(audiobook.BasePath)
+                    && await audiobookScanService.RegisterExistingFileAsync(
+                        audiobook.Id,
+                        audiobook.BasePath,
+                        path,
+                        "automatic-search-availability",
+                        cancellationToken))
+                {
+                    return true;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _logger.LogDebug(
+                    exception,
+                    "Registered file for audiobook {AudiobookId} could not be verified as readable",
+                    audiobook.Id);
+            }
+        }
+
+        return false;
     }
 
     private async Task BroadcastRawSearchProgressAsync(

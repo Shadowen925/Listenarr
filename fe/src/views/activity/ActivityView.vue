@@ -23,9 +23,13 @@
         Activity
       </h1>
       <div class="activity-actions">
-        <button class="btn btn-secondary" @click="clearCompleted">Clear Completed</button>
-        <button class="btn btn-secondary" @click="clearFailed">Clear Failed / Dismissed</button>
-        <div class="filter-input-wrapper">
+        <button v-if="activeSection === 'queue'" class="btn btn-secondary" @click="clearCompleted">
+          Clear Completed
+        </button>
+        <button v-if="activeSection === 'queue'" class="btn btn-secondary" @click="clearFailed">
+          Clear Failed / Dismissed
+        </button>
+        <div v-if="activeSection === 'queue'" class="filter-input-wrapper">
           <PhMagnifyingGlass class="filter-icon" />
           <input
             v-model="filterText"
@@ -37,293 +41,475 @@
             <PhX />
           </button>
         </div>
-        <button class="btn btn-secondary" @click="refreshQueue" :disabled="loading">
+        <button class="btn btn-secondary" @click="refreshCurrentSection" :disabled="loading">
           <component :is="loading ? PhSpinner : PhArrowClockwise" />
           Refresh
         </button>
       </div>
     </div>
 
-    <details class="queue-health-details" :class="{ 'has-warning': queueHealthClients.length > 0 }">
-      <summary :aria-label="`Download client health: ${queueHealthSummary}`">
-        <PhWarningCircle v-if="queueHealthClients.length > 0" aria-hidden="true" />
-        <PhCheckCircle v-else aria-hidden="true" />
-        <span>{{ queueHealthSummary }}</span>
-      </summary>
-      <div class="queue-health-panel">
-        <strong>{{ queueHealthTitle }}</strong>
-        <span v-if="queueHealthClients.length > 0">{{ queueHealthMessage }}</span>
-        <span v-else-if="queueClientStatuses.length > 0">
-          All configured download clients are reporting live queue data.
-        </span>
-        <span v-else>No download-client status was included in the latest queue snapshot.</span>
+    <nav class="activity-subnav" role="tablist" aria-label="Activity sections">
+      <button
+        v-for="section in activitySections"
+        :key="section.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === section.id"
+        :class="{ active: activeSection === section.id }"
+        @click="selectActivitySection(section.id)"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
+
+    <section v-if="activeSection === 'queue'" class="activity-queue-panel" role="tabpanel">
+      <details
+        class="queue-health-details"
+        :class="{ 'has-warning': queueHealthClients.length > 0 }"
+      >
+        <summary :aria-label="`Download client health: ${queueHealthSummary}`">
+          <PhWarningCircle v-if="queueHealthClients.length > 0" aria-hidden="true" />
+          <PhCheckCircle v-else aria-hidden="true" />
+          <span>{{ queueHealthSummary }}</span>
+        </summary>
+        <div class="queue-health-panel">
+          <strong>{{ queueHealthTitle }}</strong>
+          <span v-if="queueHealthClients.length > 0">{{ queueHealthMessage }}</span>
+          <span v-else-if="queueClientStatuses.length > 0">
+            All configured download clients are reporting live queue data.
+          </span>
+          <span v-else>No download-client status was included in the latest queue snapshot.</span>
+        </div>
+      </details>
+
+      <div class="activity-summary" aria-live="polite">
+        <span>{{ activeActivityCount }} active</span>
+        <span>{{ attentionActivityCount }} need attention</span>
       </div>
-    </details>
 
-    <div class="activity-summary" aria-live="polite">
-      <span>{{ activeActivityCount }} active</span>
-      <span>{{ attentionActivityCount }} need attention</span>
-    </div>
+      <div v-if="filteredQueue.length > 0" class="activity-list">
+        <article v-for="item in filteredQueue" :key="item.id" class="activity-row">
+          <div class="activity-row-main">
+            <div class="activity-copy">
+              <RouterLink
+                v-if="item.audiobookId"
+                :to="`/audiobooks/${item.audiobookId}`"
+                class="activity-title"
+                :title="getDisplayTitle(item)"
+              >
+                {{ getDisplayTitle(item) }}
+              </RouterLink>
+              <span v-else class="activity-title" :title="getDisplayTitle(item)">
+                {{ getDisplayTitle(item) }}
+              </span>
+              <div class="activity-meta">
+                <span>{{ item.downloadClient || 'Download client' }}</span>
+                <span v-if="item.activityStage">{{ item.activityStage }}</span>
+                <span v-if="item.size > 0">
+                  {{ formatBytes(item.downloaded ?? 0) }} / {{ formatBytes(item.size) }}
+                </span>
+                <span v-if="item.downloadSpeed > 0" class="speed-text">
+                  {{ formatBytes(item.downloadSpeed) }}/s
+                </span>
+                <span v-if="item.eta" class="eta-text">ETA {{ formatEta(item.eta) }}</span>
+              </div>
+            </div>
 
-    <div v-if="filteredQueue.length > 0" class="activity-list">
-      <article v-for="item in filteredQueue" :key="item.id" class="activity-row">
-        <div class="activity-row-main">
-          <div class="activity-copy">
-            <RouterLink
-              v-if="item.audiobookId"
-              :to="`/audiobooks/${item.audiobookId}`"
-              class="activity-title"
-              :title="getDisplayTitle(item)"
-            >
-              {{ getDisplayTitle(item) }}
-            </RouterLink>
-            <span v-else class="activity-title" :title="getDisplayTitle(item)">
-              {{ getDisplayTitle(item) }}
-            </span>
-            <div class="activity-meta">
-              <span>{{ item.downloadClient || 'Download client' }}</span>
-              <span v-if="item.activityStage">{{ item.activityStage }}</span>
-              <span v-if="item.size > 0">
-                {{ formatBytes(item.downloaded ?? 0) }} / {{ formatBytes(item.size) }}
+            <div class="activity-controls">
+              <span
+                :class="['status-badge', item.status, statusClass(item)]"
+                :title="item.recoveryReason || undefined"
+                :aria-label="
+                  item.recoveryReason
+                    ? `${displayStatus(item)}: ${item.recoveryReason}`
+                    : displayStatus(item)
+                "
+              >
+                {{ displayStatus(item) }}
               </span>
-              <span v-if="item.downloadSpeed > 0" class="speed-text">
-                {{ formatBytes(item.downloadSpeed) }}/s
+              <span
+                v-if="item.isStaleSnapshot"
+                class="stale-badge"
+                :title="getSnapshotStatusTitle(item)"
+              >
+                Cached
               </span>
-              <span v-if="item.eta" class="eta-text">ETA {{ formatEta(item.eta) }}</span>
+              <button
+                v-if="
+                  canRetryRecoveredImport(item) ||
+                  (item.activityOperationId && item.activityStage === 'Import Failed')
+                "
+                class="btn btn-secondary activity-import-button"
+                :data-testid="`retry-import-${item.id}`"
+                @click="
+                  item.activityOperationId ? retryActivitySearch(item) : retryRecoveredImport(item)
+                "
+              >
+                Retry Import
+              </button>
+              <button
+                v-else-if="canImportCompletedExternal(item) || canManuallyMatchRecovery(item)"
+                class="btn btn-secondary activity-import-button"
+                :data-testid="`import-download-${item.id}`"
+                @click="openManualImport(item)"
+              >
+                {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
+              </button>
+              <button
+                v-if="
+                  item.activityKey &&
+                  item.status === 'failed' &&
+                  item.activityStage !== 'Import Failed'
+                "
+                class="btn btn-secondary activity-action-button"
+                :disabled="retryingActivityKeys.has(item.activityKey)"
+                @click="retryActivitySearch(item)"
+              >
+                {{ retryingActivityKeys.has(item.activityKey) ? 'Retrying...' : 'Retry Search' }}
+              </button>
+              <RouterLink
+                v-if="item.activityKey"
+                class="btn btn-secondary activity-action-button"
+                :to="{ name: 'audiobook-detail', params: { id: item.audiobookId } }"
+              >
+                Manual Search
+              </RouterLink>
+              <button
+                class="btn btn-secondary activity-action-button"
+                :aria-label="`Dismiss ${getDisplayTitle(item)} from Activity`"
+                @click="dismissActivityItem(item)"
+              >
+                Dismiss
+              </button>
+              <details class="activity-details">
+                <summary>Details</summary>
+                <dl>
+                  <div>
+                    <dt>Download ID</dt>
+                    <dd>{{ item.id }}</dd>
+                  </div>
+                  <div v-if="item.quality && item.quality !== '*'">
+                    <dt>Quality</dt>
+                    <dd>{{ item.quality }}</dd>
+                  </div>
+                  <div v-if="item.language">
+                    <dt>Language</dt>
+                    <dd>{{ item.language }}</dd>
+                  </div>
+                  <div v-if="item.remotePath">
+                    <dt>Remote path</dt>
+                    <dd>{{ item.remotePath }}</dd>
+                  </div>
+                  <div v-if="item.localPath">
+                    <dt>Local path</dt>
+                    <dd>{{ item.localPath }}</dd>
+                  </div>
+                  <div v-if="item.contentPath">
+                    <dt>Content path</dt>
+                    <dd>{{ item.contentPath }}</dd>
+                  </div>
+                  <div v-if="item.seeders != null">
+                    <dt>Seeders</dt>
+                    <dd>{{ item.seeders }}</dd>
+                  </div>
+                  <div v-if="item.ratio != null">
+                    <dt>Ratio</dt>
+                    <dd>{{ item.ratio.toFixed(2) }}</dd>
+                  </div>
+                  <div v-if="item.recoveryReason">
+                    <dt>Recovery</dt>
+                    <dd>{{ item.recoveryReason }}</dd>
+                  </div>
+                  <div v-if="item.sourcePathUnavailableReason">
+                    <dt>Source</dt>
+                    <dd>{{ item.sourcePathUnavailableReason }}</dd>
+                  </div>
+                  <div v-if="item.errorMessage">
+                    <dt>Error</dt>
+                    <dd>{{ item.errorMessage }}</dd>
+                  </div>
+                  <div v-if="item.activityStage">
+                    <dt>Operation</dt>
+                    <dd>{{ item.activityStage }}</dd>
+                  </div>
+                  <div v-if="item.activityOperationId">
+                    <dt>Operation ID</dt>
+                    <dd>{{ item.activityOperationId }}</dd>
+                  </div>
+                  <div v-if="item.activityAssociatedDownloadIds?.length">
+                    <dt>Associated download IDs</dt>
+                    <dd>{{ item.activityAssociatedDownloadIds.join(', ') }}</dd>
+                  </div>
+                  <div v-if="item.activityAssociatedProcessingJobIds?.length">
+                    <dt>Processing job IDs</dt>
+                    <dd>{{ item.activityAssociatedProcessingJobIds.join(', ') }}</dd>
+                  </div>
+                  <div v-if="item.activityRetryCount != null">
+                    <dt>Retry count</dt>
+                    <dd>{{ item.activityRetryCount }}</dd>
+                  </div>
+                  <div v-if="item.activityLastAttemptAt">
+                    <dt>Last attempt</dt>
+                    <dd>{{ new Date(item.activityLastAttemptAt).toLocaleString() }}</dd>
+                  </div>
+                  <div v-if="item.activityLatestError">
+                    <dt>Latest error</dt>
+                    <dd>{{ item.activityLatestError }}</dd>
+                  </div>
+                  <div v-if="item.activityDiagnosticId">
+                    <dt>Diagnostic ID</dt>
+                    <dd>{{ item.activityDiagnosticId }}</dd>
+                  </div>
+                  <div v-if="item.activitySelectedRelease">
+                    <dt>Selected release</dt>
+                    <dd>{{ item.activitySelectedRelease }}</dd>
+                  </div>
+                  <div v-if="item.activityError">
+                    <dt>Search details</dt>
+                    <dd>{{ item.activityError }}</dd>
+                  </div>
+                  <div v-if="detailsLine(item)">
+                    <dt>Diagnostics</dt>
+                    <dd>{{ detailsLine(item) }}</dd>
+                  </div>
+                </dl>
+                <div class="activity-secondary-actions">
+                  <button
+                    v-if="item.canRemove"
+                    class="btn-icon btn-danger-icon"
+                    @click="removeFromQueue(item)"
+                    title="Remove from Queue"
+                  >
+                    <PhX />
+                    <span>Remove</span>
+                  </button>
+                  <button
+                    class="btn-icon"
+                    data-testid="download-event-history"
+                    @click="openDownloadEvents(item)"
+                    title="View download event history"
+                    aria-label="View download event history"
+                  >
+                    <PhClock />
+                    <span>History</span>
+                  </button>
+                  <button
+                    v-if="
+                      item.activityAssociatedDownloadIds?.length &&
+                      ['failed', 'importblocked'].includes(item.status.toLowerCase())
+                    "
+                    class="btn btn-secondary activity-action-button"
+                    @click="ignoreActivityItem(item)"
+                  >
+                    Ignore download
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
-
-          <div class="activity-controls">
-            <span
-              :class="['status-badge', item.status, statusClass(item)]"
-              :title="item.recoveryReason || undefined"
-              :aria-label="
-                item.recoveryReason
-                  ? `${displayStatus(item)}: ${item.recoveryReason}`
-                  : displayStatus(item)
-              "
+          <div class="activity-progress-row">
+            <ProgressBar
+              v-if="activityProgress(item) !== null"
+              :value="activityProgress(item) ?? 0"
+              :downloaded="item.downloaded"
+              :total="item.size"
+              variant="activity"
+              height="small"
+              :animating="item.status === 'downloading' || item.status === 'moving'"
+            />
+            <div
+              v-else-if="item.activityIndeterminate"
+              class="activity-indeterminate"
+              role="progressbar"
+              aria-label="Automatic search in progress"
             >
-              {{ displayStatus(item) }}
+              <span />
+            </div>
+            <span v-else class="activity-progress-state">{{ displayStatus(item) }}</span>
+            <span v-if="activityProgress(item) !== null" class="progress-label">
+              {{ Math.round(activityProgress(item) ?? 0) }}%
             </span>
             <span
-              v-if="item.isStaleSnapshot"
-              class="stale-badge"
-              :title="getSnapshotStatusTitle(item)"
+              v-if="item.sourcePathUnavailable || item.missingFromClient"
+              class="stale-badge source-unavailable-badge"
             >
-              Cached
+              {{ item.sourcePathUnavailable ? 'Source unavailable' : 'Missing from client' }}
             </span>
-            <button
-              v-if="
-                canRetryRecoveredImport(item) ||
-                (item.activityOperationId && item.activityStage === 'Import Failed')
-              "
-              class="btn btn-secondary activity-import-button"
-              :data-testid="`retry-import-${item.id}`"
-              @click="
-                item.activityOperationId ? retryActivitySearch(item) : retryRecoveredImport(item)
-              "
-            >
-              Retry Import
-            </button>
-            <button
-              v-else-if="canImportCompletedExternal(item) || canManuallyMatchRecovery(item)"
-              class="btn btn-secondary activity-import-button"
-              :data-testid="`import-download-${item.id}`"
-              @click="openManualImport(item)"
-            >
-              {{ canManuallyMatchRecovery(item) ? 'Match / Import' : 'Import' }}
-            </button>
-            <button
-              v-if="
-                item.activityKey &&
-                item.status === 'failed' &&
-                item.activityStage !== 'Import Failed'
-              "
-              class="btn btn-secondary activity-action-button"
-              :disabled="retryingActivityKeys.has(item.activityKey)"
-              @click="retryActivitySearch(item)"
-            >
-              {{ retryingActivityKeys.has(item.activityKey) ? 'Retrying...' : 'Retry Search' }}
-            </button>
-            <RouterLink
-              v-if="item.activityKey"
-              class="btn btn-secondary activity-action-button"
-              :to="{ name: 'audiobook-detail', params: { id: item.audiobookId } }"
-            >
-              Manual Search
-            </RouterLink>
-            <button
-              class="btn btn-secondary activity-action-button"
-              :aria-label="`Dismiss ${getDisplayTitle(item)} from Activity`"
-              @click="dismissActivityItem(item)"
-            >
-              Dismiss
-            </button>
-            <details class="activity-details">
-              <summary>Details</summary>
-              <dl>
-                <div>
-                  <dt>Download ID</dt>
-                  <dd>{{ item.id }}</dd>
-                </div>
-                <div v-if="item.quality && item.quality !== '*'">
-                  <dt>Quality</dt>
-                  <dd>{{ item.quality }}</dd>
-                </div>
-                <div v-if="item.language">
-                  <dt>Language</dt>
-                  <dd>{{ item.language }}</dd>
-                </div>
-                <div v-if="item.remotePath">
-                  <dt>Remote path</dt>
-                  <dd>{{ item.remotePath }}</dd>
-                </div>
-                <div v-if="item.localPath">
-                  <dt>Local path</dt>
-                  <dd>{{ item.localPath }}</dd>
-                </div>
-                <div v-if="item.contentPath">
-                  <dt>Content path</dt>
-                  <dd>{{ item.contentPath }}</dd>
-                </div>
-                <div v-if="item.seeders != null">
-                  <dt>Seeders</dt>
-                  <dd>{{ item.seeders }}</dd>
-                </div>
-                <div v-if="item.ratio != null">
-                  <dt>Ratio</dt>
-                  <dd>{{ item.ratio.toFixed(2) }}</dd>
-                </div>
-                <div v-if="item.recoveryReason">
-                  <dt>Recovery</dt>
-                  <dd>{{ item.recoveryReason }}</dd>
-                </div>
-                <div v-if="item.sourcePathUnavailableReason">
-                  <dt>Source</dt>
-                  <dd>{{ item.sourcePathUnavailableReason }}</dd>
-                </div>
-                <div v-if="item.errorMessage">
-                  <dt>Error</dt>
-                  <dd>{{ item.errorMessage }}</dd>
-                </div>
-                <div v-if="item.activityStage">
-                  <dt>Operation</dt>
-                  <dd>{{ item.activityStage }}</dd>
-                </div>
-                <div v-if="item.activityOperationId">
-                  <dt>Operation ID</dt>
-                  <dd>{{ item.activityOperationId }}</dd>
-                </div>
-                <div v-if="item.activityAssociatedDownloadIds?.length">
-                  <dt>Associated download IDs</dt>
-                  <dd>{{ item.activityAssociatedDownloadIds.join(', ') }}</dd>
-                </div>
-                <div v-if="item.activityAssociatedProcessingJobIds?.length">
-                  <dt>Processing job IDs</dt>
-                  <dd>{{ item.activityAssociatedProcessingJobIds.join(', ') }}</dd>
-                </div>
-                <div v-if="item.activityRetryCount != null">
-                  <dt>Retry count</dt>
-                  <dd>{{ item.activityRetryCount }}</dd>
-                </div>
-                <div v-if="item.activityLastAttemptAt">
-                  <dt>Last attempt</dt>
-                  <dd>{{ new Date(item.activityLastAttemptAt).toLocaleString() }}</dd>
-                </div>
-                <div v-if="item.activityLatestError">
-                  <dt>Latest error</dt>
-                  <dd>{{ item.activityLatestError }}</dd>
-                </div>
-                <div v-if="item.activityDiagnosticId">
-                  <dt>Diagnostic ID</dt>
-                  <dd>{{ item.activityDiagnosticId }}</dd>
-                </div>
-                <div v-if="item.activitySelectedRelease">
-                  <dt>Selected release</dt>
-                  <dd>{{ item.activitySelectedRelease }}</dd>
-                </div>
-                <div v-if="item.activityError">
-                  <dt>Search details</dt>
-                  <dd>{{ item.activityError }}</dd>
-                </div>
-                <div v-if="detailsLine(item)">
-                  <dt>Diagnostics</dt>
-                  <dd>{{ detailsLine(item) }}</dd>
-                </div>
-              </dl>
-              <div class="activity-secondary-actions">
-                <button
-                  v-if="item.canRemove"
-                  class="btn-icon btn-danger-icon"
-                  @click="removeFromQueue(item)"
-                  title="Remove from Queue"
-                >
-                  <PhX />
-                  <span>Remove</span>
-                </button>
-                <button
-                  class="btn-icon"
-                  data-testid="download-event-history"
-                  @click="openDownloadEvents(item)"
-                  title="View download event history"
-                  aria-label="View download event history"
-                >
-                  <PhClock />
-                  <span>History</span>
-                </button>
-              </div>
-            </details>
           </div>
-        </div>
-        <div class="activity-progress-row">
-          <ProgressBar
-            v-if="activityProgress(item) !== null"
-            :value="activityProgress(item) ?? 0"
-            :downloaded="item.downloaded"
-            :total="item.size"
-            variant="activity"
-            height="small"
-            :animating="item.status === 'downloading' || item.status === 'moving'"
-          />
-          <div
-            v-else-if="item.activityIndeterminate"
-            class="activity-indeterminate"
-            role="progressbar"
-            aria-label="Automatic search in progress"
-          >
-            <span />
-          </div>
-          <span v-else class="activity-progress-state">{{ displayStatus(item) }}</span>
-          <span v-if="activityProgress(item) !== null" class="progress-label">
-            {{ Math.round(activityProgress(item) ?? 0) }}%
-          </span>
-          <span
-            v-if="item.sourcePathUnavailable || item.missingFromClient"
-            class="stale-badge source-unavailable-badge"
-          >
-            {{ item.sourcePathUnavailable ? 'Source unavailable' : 'Missing from client' }}
-          </span>
-        </div>
-      </article>
-    </div>
+        </article>
+      </div>
 
-    <!-- Empty State -->
-    <EmptyState
-      v-else-if="filteredQueue.length === 0 && !loading"
-      :title="filterText ? 'No Matching Downloads' : 'No Active Downloads'"
-      :message="
-        filterText
-          ? 'No downloads match your filter.'
-          : 'Downloads will appear here when you send items to your download clients.'
-      "
+      <!-- Empty State -->
+      <EmptyState
+        v-else-if="filteredQueue.length === 0 && !loading"
+        :title="filterText ? 'No Matching Downloads' : 'No Active Downloads'"
+        :message="
+          filterText
+            ? 'No downloads match your filter.'
+            : 'Downloads will appear here when you send items to your download clients.'
+        "
+      >
+        <template #icon>
+          <PhQueue :size="48" />
+        </template>
+      </EmptyState>
+
+      <!-- Loading State -->
+      <LoadingState v-if="loading && queue.length === 0" message="Loading queue..." />
+    </section>
+
+    <section v-else-if="activeSection === 'history'" class="activity-section-panel" role="tabpanel">
+      <div class="activity-history-filters">
+        <input
+          v-model="historySearch"
+          type="search"
+          aria-label="Search history"
+          placeholder="Search history..."
+          @keyup.enter="loadHistoryPage(0)"
+        />
+        <select
+          v-model="historyEventType"
+          aria-label="Filter by event type"
+          @change="loadHistoryPage(0)"
+        >
+          <option value="">All event types</option>
+          <option v-for="eventType in historyEventTypes" :key="eventType" :value="eventType">
+            {{ eventType }}
+          </option>
+        </select>
+        <select
+          v-model="historyOutcome"
+          aria-label="Filter by outcome"
+          @change="loadHistoryPage(0)"
+        >
+          <option value="">All outcomes</option>
+          <option value="Succeeded">Succeeded</option>
+          <option value="Failed">Failed</option>
+          <option value="Skipped">Skipped</option>
+        </select>
+        <select
+          v-model="historyClientId"
+          aria-label="Filter by download client"
+          @change="loadHistoryPage(0)"
+        >
+          <option value="">All clients</option>
+          <option v-for="client in historyClientIds" :key="client" :value="client">
+            {{ client }}
+          </option>
+        </select>
+        <input
+          v-model.number="historyAudiobookId"
+          type="number"
+          min="1"
+          aria-label="Filter by audiobook ID"
+          placeholder="Audiobook ID"
+          @keyup.enter="loadHistoryPage(0)"
+        />
+        <button class="btn btn-secondary" type="button" @click="loadHistoryPage(0)">Search</button>
+      </div>
+      <p v-if="historyLoading">Loading history...</p>
+      <p v-else-if="historyError" role="alert">{{ historyError }}</p>
+      <ol v-else class="activity-history-list">
+        <li v-for="entry in historyEntries" :key="entry.id">
+          <time :datetime="entry.timestamp">{{ new Date(entry.timestamp).toLocaleString() }}</time>
+          <strong>{{ entry.eventType }}</strong>
+          <RouterLink v-if="entry.audiobookId" :to="`/audiobooks/${entry.audiobookId}`">{{
+            entry.audiobookTitle || `Audiobook ${entry.audiobookId}`
+          }}</RouterLink>
+          <span v-else>{{ entry.audiobookTitle || entry.sourceTitle || 'Activity' }}</span>
+          <span :class="['history-outcome', (entry.outcome || '').toLowerCase()]">
+            {{ entry.outcome || 'Unknown' }}
+          </span>
+          <p>{{ entry.error || entry.message }}</p>
+          <small v-if="entry.downloadClientId">Client: {{ entry.downloadClientId }}</small>
+        </li>
+        <li v-if="historyEntries.length === 0">No history entries match these filters.</li>
+      </ol>
+      <div class="activity-pagination">
+        <button
+          class="btn btn-secondary"
+          type="button"
+          :disabled="historyLoading || historyOffset === 0"
+          @click="loadHistoryPage(Math.max(0, historyOffset - historyPageSize))"
+        >
+          Previous
+        </button>
+        <span
+          >{{ historyTotal === 0 ? 0 : historyOffset + 1 }}–{{
+            Math.min(historyOffset + historyPageSize, historyTotal)
+          }}
+          of {{ historyTotal }}</span
+        >
+        <button
+          class="btn btn-secondary"
+          type="button"
+          :disabled="historyLoading || historyOffset + historyPageSize >= historyTotal"
+          @click="loadHistoryPage(historyOffset + historyPageSize)"
+        >
+          Next
+        </button>
+      </div>
+    </section>
+
+    <section
+      v-else-if="activeSection === 'blocklist'"
+      class="activity-section-panel"
+      role="tabpanel"
     >
-      <template #icon>
-        <PhQueue :size="48" />
-      </template>
-    </EmptyState>
+      <p v-if="blocklistLoading">Loading blocklist...</p>
+      <p v-else-if="blocklistError" role="alert">{{ blocklistError }}</p>
+      <ul v-else class="activity-record-list">
+        <li v-for="rejection in releaseRejections" :key="rejection.id">
+          <div>
+            <strong>{{ rejection.releaseTitle || rejection.releaseKey }}</strong>
+            <RouterLink v-if="rejection.audiobookId" :to="`/audiobooks/${rejection.audiobookId}`"
+              >Audiobook {{ rejection.audiobookId }}</RouterLink
+            >
+            <p>{{ rejection.reason }}</p>
+            <small
+              >{{ rejection.source }} · {{ new Date(rejection.createdAt).toLocaleString() }}</small
+            >
+          </div>
+          <button
+            class="btn btn-secondary"
+            type="button"
+            @click="removeReleaseRejection(rejection.id)"
+          >
+            Remove
+          </button>
+        </li>
+        <li v-if="releaseRejections.length === 0">No rejected releases are blocklisted.</li>
+      </ul>
+    </section>
 
-    <!-- Loading State -->
-    <LoadingState v-if="loading && queue.length === 0" message="Loading queue..." />
+    <section v-else class="activity-section-panel" role="tabpanel">
+      <p v-if="ignoredLoading">Loading ignored downloads...</p>
+      <p v-else-if="ignoredError" role="alert">{{ ignoredError }}</p>
+      <ul v-else class="activity-record-list">
+        <li v-for="download in ignoredDownloads" :key="download.id">
+          <div>
+            <strong>{{ download.title }}</strong>
+            <RouterLink v-if="download.audiobookId" :to="`/audiobooks/${download.audiobookId}`"
+              >Audiobook {{ download.audiobookId }}</RouterLink
+            >
+            <p>{{ download.downloadClientId }} · {{ download.externalId || download.id }}</p>
+            <small v-if="download.sourceRetained"
+              >Client source retained after verified import</small
+            >
+            <small v-else>{{ download.ignoreReason || download.status }}</small>
+          </div>
+          <button
+            v-if="download.ignored"
+            class="btn btn-secondary"
+            type="button"
+            @click="restoreIgnoredDownload(download.id)"
+          >
+            Restore monitoring
+          </button>
+        </li>
+        <li v-if="ignoredDownloads.length === 0">No ignored or retained downloads.</li>
+      </ul>
+    </section>
 
     <!-- Remove from Queue dialog -->
     <DownloadActionDialog
@@ -420,6 +606,7 @@ import type {
   DownloadRemovalMode,
   DownloadEvent,
   History,
+  ReleaseRejection,
   AutomaticSearchDiagnosticHistoryItem,
   QuickAddOperationActivityItem,
 } from '@/types'
@@ -433,8 +620,33 @@ const moveJobsStore = useMoveJobsStore()
 const configStore = useConfigurationStore()
 
 const filterText = ref('')
+const activitySections = [
+  { id: 'queue', label: 'Queue' },
+  { id: 'history', label: 'History' },
+  { id: 'blocklist', label: 'Blocklist' },
+  { id: 'ignored', label: 'Ignored Downloads' },
+] as const
+type ActivitySection = (typeof activitySections)[number]['id']
+const activeSection = ref<ActivitySection>('queue')
 const queue = ref<QueueItem[]>([])
 const recentHistory = ref<History[]>([])
+const historyEntries = ref<History[]>([])
+const historySearch = ref('')
+const historyEventType = ref('')
+const historyOutcome = ref('')
+const historyClientId = ref('')
+const historyAudiobookId = ref<number | undefined>()
+const historyOffset = ref(0)
+const historyTotal = ref(0)
+const historyPageSize = 50
+const historyLoading = ref(false)
+const historyError = ref('')
+const releaseRejections = ref<ReleaseRejection[]>([])
+const blocklistLoading = ref(false)
+const blocklistError = ref('')
+const ignoredDownloads = ref<Awaited<ReturnType<typeof apiService.getIgnoredDownloads>>>([])
+const ignoredLoading = ref(false)
+const ignoredError = ref('')
 const verifiedImportDownloadIds = ref(new Set<string>())
 const activitySearchDiagnostics = ref(new Map<number, AutomaticSearchDiagnosticHistoryItem>())
 const quickAddOperations = ref<QuickAddOperationActivityItem[]>([])
@@ -968,6 +1180,24 @@ const filteredQueue = computed(() => {
   })
 })
 
+const historyEventTypes = computed(() =>
+  Array.from(
+    new Set([...recentHistory.value, ...historyEntries.value].map((entry) => entry.eventType)),
+  )
+    .filter(Boolean)
+    .sort(),
+)
+
+const historyClientIds = computed(() =>
+  Array.from(
+    new Set(
+      [...recentHistory.value, ...historyEntries.value]
+        .map((entry) => entry.downloadClientId)
+        .filter((clientId): clientId is string => Boolean(clientId)),
+    ),
+  ).sort(),
+)
+
 const activeActivityCount = computed(
   () =>
     allActivityItems.value.filter((item) =>
@@ -1051,6 +1281,128 @@ const refreshQueue = async () => {
     })
   } finally {
     loading.value = false
+  }
+}
+
+const loadHistoryPage = async (offset: number) => {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const page = await apiService.getHistory(historyPageSize, offset, {
+      searchTerm: historySearch.value,
+      eventType: historyEventType.value,
+      outcome: historyOutcome.value,
+      downloadClientId: historyClientId.value,
+      audiobookId: historyAudiobookId.value,
+    })
+    historyEntries.value = page.history
+    historyOffset.value = page.offset
+    historyTotal.value = page.total
+  } catch (error) {
+    historyError.value = 'Unable to load activity history.'
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'loadHistoryPage',
+    })
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const loadReleaseRejections = async () => {
+  blocklistLoading.value = true
+  blocklistError.value = ''
+  try {
+    releaseRejections.value = await apiService.getAllReleaseRejections()
+  } catch (error) {
+    blocklistError.value = 'Unable to load rejected releases.'
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'loadReleaseRejections',
+    })
+  } finally {
+    blocklistLoading.value = false
+  }
+}
+
+const loadIgnoredDownloads = async () => {
+  ignoredLoading.value = true
+  ignoredError.value = ''
+  try {
+    ignoredDownloads.value = await apiService.getIgnoredDownloads()
+  } catch (error) {
+    ignoredError.value = 'Unable to load ignored downloads.'
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'loadIgnoredDownloads',
+    })
+  } finally {
+    ignoredLoading.value = false
+  }
+}
+
+const selectActivitySection = async (section: ActivitySection) => {
+  activeSection.value = section
+  await refreshCurrentSection()
+}
+
+const refreshCurrentSection = async () => {
+  switch (activeSection.value) {
+    case 'queue':
+      await refreshQueue()
+      break
+    case 'history':
+      await loadHistoryPage(historyOffset.value)
+      break
+    case 'blocklist':
+      await loadReleaseRejections()
+      break
+    case 'ignored':
+      await loadIgnoredDownloads()
+      break
+  }
+}
+
+const removeReleaseRejection = async (id: number) => {
+  try {
+    await apiService.clearReleaseRejection(id)
+    await loadReleaseRejections()
+  } catch (error) {
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'removeReleaseRejection',
+    })
+    useToast().error('Blocklist update failed', 'Unable to remove this release from the blocklist.')
+  }
+}
+
+const restoreIgnoredDownload = async (id: string) => {
+  try {
+    await apiService.restoreDownloadMonitoring(id)
+    await Promise.all([loadIgnoredDownloads(), refreshQueue()])
+  } catch (error) {
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'restoreIgnoredDownload',
+    })
+    useToast().error('Monitoring restore failed', 'Unable to restore download monitoring.')
+  }
+}
+
+const ignoreActivityItem = async (item: QueueItem) => {
+  const downloadIds = Array.from(new Set(item.activityAssociatedDownloadIds ?? [item.id]))
+  try {
+    for (const id of downloadIds) {
+      await apiService.ignoreDownload(id)
+    }
+    useToast().success('Download ignored', 'The operation will no longer be retried automatically.')
+    await Promise.all([refreshQueue(), loadIgnoredDownloads()])
+  } catch (error) {
+    errorTracking.captureException(error as Error, {
+      component: 'ActivityView',
+      operation: 'ignoreActivityItem',
+    })
+    useToast().error('Unable to ignore download', (error as Error).message)
   }
 }
 
@@ -1377,7 +1729,6 @@ onMounted(async () => {
     applyQueueSnapshot(updatedQueue)
   })
   await refreshQueue()
-  await refreshQueue()
 
   queueRefreshInterval = setInterval(async () => {
     try {
@@ -1434,8 +1785,112 @@ onUnmounted(() => {
 
 .activity-actions {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
+  justify-content: flex-end;
+}
+
+.activity-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.activity-subnav button {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.9rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #adb5bd;
+  cursor: pointer;
+}
+
+.activity-subnav button.active,
+.activity-subnav button:hover {
+  border-bottom-color: #4dabf7;
+  color: #f8fafc;
+}
+
+.activity-section-panel {
+  min-width: 0;
+  color: #e2e8f0;
+}
+
+.activity-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.activity-history-filters input,
+.activity-history-filters select {
+  min-width: 9rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #454b54;
+  border-radius: 0.4rem;
+  background: #20242b;
+  color: #f8fafc;
+}
+
+.activity-history-list,
+.activity-record-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-history-list li,
+.activity-record-list li {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) minmax(8rem, auto) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.5rem 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.55rem;
+  background: var(--color-surface, #1e1e1e);
+}
+
+.activity-history-list time,
+.activity-record-list small {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.activity-history-list p,
+.activity-record-list p {
+  grid-column: 1 / -1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-history-list small {
+  color: #94a3b8;
+}
+
+.activity-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.history-outcome.failed {
+  color: #fa5252;
+}
+
+.history-outcome.succeeded {
+  color: #51cf66;
 }
 
 .filter-input-wrapper {
@@ -2175,6 +2630,11 @@ h3 {
 
 /* Mobile responsive */
 @media (max-width: 768px) {
+  .activity-history-list li,
+  .activity-record-list li {
+    grid-template-columns: 1fr;
+  }
+
   .page-header {
     flex-direction: column;
     align-items: flex-start;
@@ -2184,6 +2644,7 @@ h3 {
 
   .activity-actions {
     width: 100%;
+    justify-content: flex-start;
     flex-wrap: wrap;
   }
 

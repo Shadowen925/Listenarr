@@ -125,6 +125,12 @@ describe('ActivityView responsive list', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10))
 
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).toEqual([
+      'Queue',
+      'History',
+      'Blocklist',
+      'Ignored Downloads',
+    ])
     expect(wrapper.findAll('.activity-row')).toHaveLength(25)
     expect(wrapper.find('.activity-details summary').text()).toBe('Details')
     expect(wrapper.find('.activity-progress-row').exists()).toBe(true)

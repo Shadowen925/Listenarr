@@ -61,6 +61,7 @@ namespace Listenarr.Api.Features.ActivityHistory
         /// <param name="downloadId">Optional download filter.</param>
         /// <param name="downloadClientId">Optional download-client filter.</param>
         /// <param name="correlationId">Optional workflow-correlation filter.</param>
+        /// <param name="searchTerm">Optional text search across audiobook, release, and event details.</param>
         [HttpGet]
         public async Task<IActionResult> GetAll(
             [FromQuery] int limit = 50,
@@ -74,7 +75,8 @@ namespace Listenarr.Api.Features.ActivityHistory
             [FromQuery] int? audiobookId = null,
             [FromQuery] string? downloadId = null,
             [FromQuery] string? downloadClientId = null,
-            [FromQuery] string? correlationId = null)
+            [FromQuery] string? correlationId = null,
+            [FromQuery] string? searchTerm = null)
         {
             var page = await _history.QueryAsync(new HistoryQuery
             {
@@ -89,7 +91,8 @@ namespace Listenarr.Api.Features.ActivityHistory
                 AudiobookId = audiobookId,
                 DownloadId = downloadId,
                 DownloadClientId = downloadClientId,
-                CorrelationId = correlationId
+                CorrelationId = correlationId,
+                SearchTerm = searchTerm
             });
 
             return Ok(new

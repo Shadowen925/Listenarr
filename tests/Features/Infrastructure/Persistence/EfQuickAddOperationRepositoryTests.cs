@@ -81,6 +81,30 @@ public sealed class EfQuickAddOperationRepositoryTests : BaseTests
     }
 
     [Fact]
+    public async Task AdvanceAsync_CanResolveNoMatchAfterAnExistingFileSatisfiesTheAudiobook()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<ListenArrDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new ListenArrDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var operation = NewOperation(1, "existing-file-satisfies");
+        operation.State = QuickAddOperationState.NoMatchingReleases;
+        db.QuickAddOperations.Add(operation);
+        await db.SaveChangesAsync();
+
+        Assert.True(await new EfQuickAddOperationRepository(db).AdvanceAsync(
+            1,
+            QuickAddOperationState.Imported));
+
+        Assert.Equal(
+            QuickAddOperationState.Imported,
+            (await db.QuickAddOperations.AsNoTracking().SingleAsync()).State);
+    }
+
+    [Fact]
     public async Task GetUnresolvedAsync_ReturnsOldOperationsBeyondActivityHistoryLimits()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

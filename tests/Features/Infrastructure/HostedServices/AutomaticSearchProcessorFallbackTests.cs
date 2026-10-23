@@ -27,6 +27,8 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         public Mock<IDownloadService> Downloads { get; } = new();
         public Mock<IQuickAddOperationRepository> QuickAddOperations { get; } = new();
         public Mock<ISearchService> Search { get; } = new();
+        public Mock<IAudiobookFileRepository> AudiobookFiles { get; } = new();
+        public Mock<IAudiobookScanService> AudiobookScanService { get; } = new();
         public Mock<IAutomaticIndexerSearchService>? AutomaticIndexerSearch { get; private set; }
         public Mock<IQualityProfileService> QualityProfileService { get; } = new();
         public List<string> SearchQueries { get; } = [];
@@ -64,8 +66,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                     repository.GetByAudiobookIdAsync(Audiobook.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
 
-            var audiobookFileRepository = new Mock<IAudiobookFileRepository>();
-            audiobookFileRepository.Setup(repository =>
+            AudiobookFiles.Setup(repository =>
                     repository.GetByAudiobookIdAsync(Audiobook.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
 
@@ -157,7 +158,8 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
             services.AddLogging();
             services.AddSingleton(audiobookRepository.Object);
             services.AddSingleton(downloadRepository.Object);
-            services.AddSingleton(audiobookFileRepository.Object);
+            services.AddSingleton(AudiobookFiles.Object);
+            services.AddSingleton(AudiobookScanService.Object);
             services.AddSingleton(Search.Object);
             services.AddSingleton(QualityProfileService.Object);
             services.AddSingleton(Downloads.Object);
@@ -246,6 +248,153 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         Assert.Equal(["best"], fixture.SubmissionOrder);
         Assert.Equal("DuplicatePrevented", Assert.Single(fixture.Diagnostics).FinalOutcome);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_PriorNoMatchWithoutRegisteredFile_RemainsSearchEligible()
+    {
+        using var fixture = new Fixture();
+        var operation = new QuickAddOperation
+        {
+            Id = "prior-no-match",
+            AudiobookId = fixture.Audiobook.Id,
+            State = QuickAddOperationState.NoMatchingReleases
+        };
+        fixture.QuickAddOperations
+            .Setup(repository => repository.GetByAudiobookIdAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(operation);
+        fixture.QuickAddOperations
+            .Setup(repository => repository.RetryAsync(operation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        fixture.QuickAddOperations
+            .Setup(repository => repository.AdvanceAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<QuickAddOperationState>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        fixture.Search.Verify(service => service.SearchAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<List<string>?>(),
+            It.IsAny<SearchSortBy>(),
+            It.IsAny<SearchSortDirection>(),
+            true), Times.Exactly(2));
+        fixture.QuickAddOperations.Verify(
+            repository => repository.RetryAsync(operation.Id, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SearchAudiobookAsync_RegisteredFileWithVerifiedGeneration_ResolvesPriorNoMatch()
+    {
+        using var fixture = new Fixture();
+        var basePath = FileService.GetTempDirectory("verified-audiobook");
+        fixture.Audiobook.BasePath = basePath;
+        fixture.Audiobook.QualityProfile = new QualityProfile
+        {
+            Id = 1,
+            Name = "MP3",
+            CutoffQuality = "MP3",
+            Qualities =
+            [
+                new QualityDefinition { Quality = "MP3", Priority = 1 }
+            ]
+        };
+        var filePath = await FileService.GetFileAsync(basePath, "book.mp3", "audio bytes");
+        var semantics = await _provider.GetRequiredService<IFileSystemSemanticsResolver>()
+            .ResolveAsync(filePath, FileSystemCaseSensitivityMode.Auto);
+        Assert.Equal(PathIdentityState.Valid, semantics.State);
+        var file = new AudiobookFile
+        {
+            Id = 63,
+            AudiobookId = fixture.Audiobook.Id,
+            Size = new FileInfo(filePath).Length,
+            Format = "mp3",
+            Codec = "mp3",
+            Bitrate = 128_000
+        };
+        file.ApplyPathIdentity(
+            filePath,
+            AudiobookFilePathIdentity.CreateValid(
+                filePath,
+                semantics.Semantics,
+                FileSystemCaseSensitivityMode.Auto,
+                semantics.BoundaryPath));
+        file.ApplyPhysicalObjectIdentity("verified-physical-object", DateTime.UtcNow);
+        fixture.AudiobookFiles
+            .Setup(repository => repository.GetByAudiobookIdAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([file]);
+        fixture.AudiobookFiles
+            .Setup(repository => repository.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([file]);
+        fixture.AudiobookScanService
+            .Setup(service => service.RegisterExistingFileAsync(
+                fixture.Audiobook.Id,
+                basePath,
+                filePath,
+                "automatic-search-availability",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var operation = new QuickAddOperation
+        {
+            Id = "prior-no-match",
+            AudiobookId = fixture.Audiobook.Id,
+            State = QuickAddOperationState.NoMatchingReleases
+        };
+        fixture.QuickAddOperations
+            .Setup(repository => repository.GetByAudiobookIdAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(operation);
+        fixture.QuickAddOperations
+            .Setup(repository => repository.AdvanceAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<QuickAddOperationState>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        fixture.AudiobookScanService.Verify(service => service.RegisterExistingFileAsync(
+            fixture.Audiobook.Id,
+            basePath,
+            filePath,
+            "automatic-search-availability",
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.QuickAddOperations.Verify(repository => repository.AdvanceAsync(
+            fixture.Audiobook.Id,
+            QuickAddOperationState.Imported,
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Search.Verify(service => service.SearchAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<List<string>?>(),
+            It.IsAny<SearchSortBy>(),
+            It.IsAny<SearchSortDirection>(),
+            true), Times.Never);
     }
 
     [Fact]

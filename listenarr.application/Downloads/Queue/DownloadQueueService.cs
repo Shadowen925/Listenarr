@@ -62,6 +62,7 @@ namespace Listenarr.Application.Downloads.Queue
             // so DDL reservations, progress, completion, and import-pending work
             // are visible in Activity.
             queueItems.AddRange(listenarrDownloads
+                .Where(download => !DownloadQueueService.IsActivityIgnored(download))
                 .Where(download => string.Equals(download.DownloadClientId, DirectDownloadMetadataKeys.ClientId, StringComparison.OrdinalIgnoreCase))
                 .Select(ToDirectDownloadQueueItem));
 
@@ -134,6 +135,19 @@ namespace Listenarr.Application.Downloads.Queue
                                 var originalClientId = queueItem.Id;
                                 ownershipEstablished = true;
 
+                                if (IsActivityIgnored(matchedDownload))
+                                {
+                                    if (!string.IsNullOrWhiteSpace(originalClientId))
+                                    {
+                                        suppressedCompletedClientIds.Add(originalClientId);
+                                    }
+
+                                    logger.LogDebug(
+                                        "Suppressing explicitly ignored client item {QueueId}",
+                                        originalClientId);
+                                    continue;
+                                }
+
                                 if (matchedDownload.Status == DownloadStatus.Moved)
                                 {
                                     if (!string.IsNullOrWhiteSpace(originalClientId))
@@ -171,6 +185,18 @@ namespace Listenarr.Application.Downloads.Queue
                                 if (string.IsNullOrWhiteSpace(queueItem.Language) && !string.IsNullOrWhiteSpace(matchedDownload.Language))
                                 {
                                     queueItem.Language = matchedDownload.Language;
+                                }
+
+                                if (matchedDownload.Status is DownloadStatus.ImportPending
+                                    or DownloadStatus.Processing
+                                    or DownloadStatus.ImportBlocked)
+                                {
+                                    queueItem.Status = ToQueueStatus(matchedDownload.Status);
+                                    queueItem.ErrorMessage = matchedDownload.ImportBlockMessages?.LastOrDefault()
+                                        ?? matchedDownload.ErrorMessage;
+                                    queueItem.RecoveryState = matchedDownload.GetMetadataString("Recovery.State")
+                                        ?? (matchedDownload.Status == DownloadStatus.ImportBlocked ? "ImportFailed" : null);
+                                    queueItem.RecoveryReason = matchedDownload.GetMetadataString("Recovery.Reason");
                                 }
 
                                 logger.LogDebug(

@@ -172,6 +172,59 @@ namespace Listenarr.Tests.Features.Api.Features.Downloads
         }
 
         [Fact]
+        public async Task IgnoreDownload_PersistsIdentityAndRestoreQueuesOnlyTheExistingRecord()
+        {
+            await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithId("d-ignore")
+                .WithStatus(DownloadStatus.Completed)
+                .WithDownloadClientConfiguration(_client)
+                .Build());
+            var controller = MockUtils.CreateDownloadsController(_provider);
+
+            var ignored = await controller.IgnoreDownload("d-ignore");
+
+            Assert.IsType<OkObjectResult>(ignored);
+            var persisted = await _downloadRepository.FindAsync("d-ignore");
+            Assert.Equal(DownloadStatus.ImportBlocked, persisted!.Status);
+            Assert.True(bool.Parse(persisted.GetMetadataString("Activity.Ignored")!));
+
+            var restored = await controller.RestoreDownloadMonitoring("d-ignore");
+
+            Assert.IsType<OkObjectResult>(restored);
+            persisted = await _downloadRepository.FindAsync("d-ignore");
+            Assert.Equal(DownloadStatus.ImportPending, persisted!.Status);
+            Assert.False(persisted.Metadata.ContainsKey("Activity.Ignored"));
+            Assert.Single(await _downloadProcessingJobRepository.GetByDownloadIdAsync("d-ignore"));
+            Assert.Single(
+                await _downloadRepository.GetAllAsync(),
+                download => download.Id == "d-ignore");
+        }
+
+        [Fact]
+        public async Task IgnoreDownload_RejectsAnOperationWithAnActiveImportJob()
+        {
+            await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithId("d-ignore-active")
+                .WithStatus(DownloadStatus.Completed)
+                .WithDownloadClientConfiguration(_client)
+                .Build());
+            await _downloadProcessingJobRepository.AddAsync(new DownloadProcessingJob
+            {
+                Id = "job-ignore-active",
+                DownloadId = "d-ignore-active",
+                JobType = ProcessingJobType.MoveOrCopyFile,
+                Status = ProcessingJobStatus.Pending
+            });
+
+            var result = await MockUtils.CreateDownloadsController(_provider)
+                .IgnoreDownload("d-ignore-active");
+
+            Assert.IsType<ConflictObjectResult>(result);
+            var persisted = await _downloadRepository.FindAsync("d-ignore-active");
+            Assert.False(persisted!.Metadata.ContainsKey("Activity.Ignored"));
+        }
+
+        [Fact]
         [Trait("Method", "ClearFailedDownloads")]
         [Trait("Scenario", "ClearFailedRemovesFailedAndImportBlockedOnly")]
         public async Task ClearFailedDownloads_RemovesOnlyFailedAndImportBlocked()

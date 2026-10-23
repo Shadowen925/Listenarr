@@ -32,6 +32,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             IAudiobookRepository audiobookRepository,
             IDownloadRepository downloadRepository,
             IAudiobookFileRepository fileRepository,
+            IAudiobookScanService audiobookScanService,
             IReleaseRejectionRepository releaseRejections,
             IQuickAddOperationRepository quickAddOperations,
             IConfigurationService configurationService,
@@ -67,10 +68,25 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             _logger.LogInformation("Audiobook '{Title}': cutoff met={CutoffMet}, best existing quality={BestQuality}",
                 audiobook.Title, cutoffMet, bestExistingQuality ?? "none");
 
-            // Skip automatic search if quality cutoff is already met
-            if (cutoffMet)
+            if (await TryResolveVerifiedNoMatchAsync(
+                audiobook,
+                quickAddOperation,
+                quickAddOperations,
+                fileRepository,
+                audiobookScanService,
+                stoppingToken))
             {
-                _logger.LogInformation("Quality cutoff already met for audiobook '{Title}', skipping automatic search", audiobook.Title);
+                return 0;
+            }
+
+            // Skip automatic search if quality cutoff is already met
+            if (ShouldSkipForExistingQuality(audiobook, quickAddOperation, cutoffMet))
+            {
+                return 0;
+            }
+
+            if (!await TryReopenNoMatchAsync(quickAddOperation, quickAddOperations, stoppingToken))
+            {
                 return 0;
             }
 
@@ -158,18 +174,8 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                     QuickAddOperationState.EvaluatingReleases,
                     cancellationToken: stoppingToken);
             }
-            searchResults = rawSearchResults
-                .Where(result => AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result))
-                .ToList();
+            (searchResults, identityRejectedCount) = FilterIdentityMatchedResults(audiobook, rawSearchResults);
             identityMatchCount = searchResults.Count;
-            identityRejectedCount = rawSearchResults.Count - searchResults.Count;
-            if (identityRejectedCount > 0)
-            {
-                _logger.LogWarning(
-                    "Discarded {Count} distinct automatic search result(s) with conflicting audiobook identity for '{Title}'",
-                    identityRejectedCount,
-                    audiobook.Title);
-            }
 
             _logger.LogInformation(
                 "Found {Count} matching search results for audiobook '{Title}' using query '{Query}'",

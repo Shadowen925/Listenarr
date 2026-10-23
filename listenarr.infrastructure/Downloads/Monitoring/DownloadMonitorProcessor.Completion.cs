@@ -29,6 +29,14 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
             Download previous,
             CancellationToken cancellationToken = default)
         {
+            if (IsIgnoredByUser(current))
+            {
+                logger.LogDebug(
+                    "Skipping completion callbacks for explicitly ignored download {DownloadId}",
+                    LogRedaction.SanitizeText(current.Id));
+                return;
+            }
+
             switch (previous.Status, current.Status)
             {
                 case (DownloadStatus.Completed, DownloadStatus.Completed)
@@ -52,6 +60,11 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
 
         private async Task OnDownloadCompleted(Download download)
         {
+            if (IsIgnoredByUser(download))
+            {
+                return;
+            }
+
             using var scope = scopeFactory.CreateScope();
             var downloadProcessingJobService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobService>();
             try
@@ -101,10 +114,19 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
 
         private async Task QueueRecoveredImportAsync(Download download)
         {
+            if (IsIgnoredByUser(download))
+            {
+                return;
+            }
+
             using var scope = scopeFactory.CreateScope();
             var downloadProcessingJobService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobService>();
             await downloadProcessingJobService.EnqueueAsync(download);
         }
+
+        private static bool IsIgnoredByUser(Download download) =>
+            bool.TryParse(download.GetMetadataString("Activity.Ignored"), out var ignored)
+            && ignored;
 
         private async Task OnDownloadUpdated(Download download, CancellationToken cancellationToken)
         {

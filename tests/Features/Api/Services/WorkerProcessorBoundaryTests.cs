@@ -334,6 +334,7 @@ namespace Listenarr.Tests.Features.Api.Services
             _services.AddSingleton(audiobookRepository.Object);
             _services.AddSingleton(downloadRepository.Object);
             _services.AddSingleton(fileRepository.Object);
+            _services.AddSingleton(Mock.Of<IAudiobookScanService>());
             _services.AddSingleton(searchService.Object);
             _services.AddSingleton(rejections.Object);
             _services.AddSingleton(configurationService.Object);

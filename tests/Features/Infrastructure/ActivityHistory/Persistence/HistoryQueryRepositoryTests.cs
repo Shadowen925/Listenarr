@@ -48,6 +48,37 @@ namespace Listenarr.Tests.Features.Infrastructure.ActivityHistory.Persistence
         }
 
         [Fact]
+        public async Task QueryAsync_SearchesAudiobookAndEventDetailsWithoutChangingHistoryIdentity()
+        {
+            var matching = Entry(
+                "searchable",
+                HistoryEvents.ImportFailed,
+                HistoryOutcome.Failed,
+                DateTime.UtcNow);
+            matching.AudiobookTitle = "Harry Potter Full-Cast";
+            matching.Error = "The destination file could not be verified.";
+            var unrelated = Entry(
+                "unrelated",
+                HistoryEvents.Imported,
+                HistoryOutcome.Succeeded,
+                DateTime.UtcNow);
+            unrelated.AudiobookTitle = "Other audiobook";
+            _db.History.AddRange(matching, unrelated);
+            await _db.SaveChangesAsync();
+
+            var page = await _repository.QueryAsync(new HistoryQuery
+            {
+                SearchTerm = "full-cast",
+                Outcome = HistoryOutcome.Failed,
+                Limit = 10
+            });
+
+            var record = Assert.Single(page.Records);
+            Assert.Equal(matching.Id, record.Id);
+            Assert.Equal(1, page.Total);
+        }
+
+        [Fact]
         public async Task DeleteAllAsync_RemovesAllHistoryIncludingFormerMoveScanRequests()
         {
             _db.History.AddRange(

@@ -101,6 +101,7 @@ const buildApiImageUrl = (identifier: string, sourceUrl?: string): string => {
     params.append('url', sourceUrl)
     url += `?${params.toString()}`
   }
+
   return url
 }
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i
@@ -737,6 +738,33 @@ class ApiService {
     return this.request<Download[]>('/downloads')
   }
 
+  async getIgnoredDownloads(): Promise<
+    Array<{
+      id: string
+      audiobookId?: number
+      title: string
+      status: string
+      downloadClientId: string
+      externalId?: string
+      ignored: boolean
+      sourceRetained: boolean
+      ignoredAt?: string
+      ignoreReason?: string
+    }>
+  > {
+    return this.request('/downloads/ignored')
+  }
+
+  async ignoreDownload(id: string): Promise<void> {
+    await this.request(`/downloads/${encodeURIComponent(id)}/ignore`, { method: 'POST' })
+  }
+
+  async restoreDownloadMonitoring(id: string): Promise<void> {
+    await this.request(`/downloads/${encodeURIComponent(id)}/restore-monitoring`, {
+      method: 'POST',
+    })
+  }
+
   async getDownload(id: string): Promise<Download> {
     return this.request<Download>(`/downloads/${id}`)
   }
@@ -825,6 +853,10 @@ class ApiService {
     const params =
       audiobookId === undefined ? '' : `?audiobookId=${encodeURIComponent(audiobookId)}`
     return this.request<ReleaseRejection[]>(`/download/rejections${params}`)
+  }
+
+  async getAllReleaseRejections(): Promise<ReleaseRejection[]> {
+    return this.request<ReleaseRejection[]>('/download/rejections')
   }
 
   async clearReleaseRejection(id: number): Promise<void> {
@@ -1990,6 +2022,13 @@ class ApiService {
   async getHistory(
     limit?: number,
     offset?: number,
+    filters?: {
+      searchTerm?: string
+      eventType?: string
+      outcome?: string
+      downloadClientId?: string
+      audiobookId?: number
+    },
   ): Promise<{
     history: History[]
     total: number
@@ -1999,6 +2038,11 @@ class ApiService {
     const params = new URLSearchParams()
     if (limit) params.append('limit', limit.toString())
     if (offset) params.append('offset', offset.toString())
+    if (filters?.searchTerm?.trim()) params.append('searchTerm', filters.searchTerm.trim())
+    if (filters?.eventType) params.append('eventType', filters.eventType)
+    if (filters?.outcome) params.append('outcome', filters.outcome)
+    if (filters?.downloadClientId) params.append('downloadClientId', filters.downloadClientId)
+    if (filters?.audiobookId) params.append('audiobookId', filters.audiobookId.toString())
     const queryString = params.toString()
     return this.request<{
       history: History[]
