@@ -1123,9 +1123,19 @@ const allActivityItems = computed(() => {
       item.errorMessage
   }
 
+  // Imported downloads are history, not queue; completed ones leave once the client entry is gone
+  // (Sonarr/Radarr/Chaptarr queue excludes Imported).
+  const isQueueEntry = (item: QueueItem): boolean => {
+    const status = item.status.toLowerCase()
+    if (['moved', 'imported'].includes(status)) return false
+    return !(
+      status === 'completed' && (item.sourcePathUnavailable || item.missingFromClient)
+    )
+  }
   return Array.from(grouped.entries())
     .filter(([key, item]) => dismissedActivityVersions.value.get(key) !== activityVersionFor(item))
     .map(([, item]) => item)
+    .filter(isQueueEntry)
 })
 
 const activityKeyFor = (item: QueueItem): string =>

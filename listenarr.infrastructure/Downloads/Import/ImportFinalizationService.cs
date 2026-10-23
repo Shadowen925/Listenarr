@@ -332,13 +332,48 @@ namespace Listenarr.Infrastructure.Downloads.Import
             }
 
             var verifiedOutputPaths = canonicalOutputs.ToList();
-            var hasUnresolvedFileMutation = await db.FileMutationJournals
+            var openJournals = await db.FileMutationJournals
                 .AsNoTracking()
-                .AnyAsync(
-                    journal => (journal.AudiobookId == audiobookId
-                            || verifiedOutputPaths.Contains(journal.DestinationPath))
-                        && journal.State != FileMutationJournalState.Completed,
-                    cancellationToken);
+                .Where(journal => (journal.AudiobookId == audiobookId
+                        || verifiedOutputPaths.Contains(journal.DestinationPath))
+                    && journal.State != FileMutationJournalState.Completed)
+                .Select(journal => new
+                {
+                    journal.DestinationPath,
+                    journal.UpdatedAt,
+                    journal.State,
+                    journal.AudiobookFileId
+                })
+                .ToListAsync(cancellationToken);
+            var hasUnresolvedFileMutation = false;
+            foreach (var open in openJournals)
+            {
+                // Parked failures (NeedsAttention/TargetStaged) for a destination whose published
+                // generation was just verified above, or for a non-audio companion file, no longer
+                // describe a mutation that can affect this import.
+                var parked = open.State is FileMutationJournalState.NeedsAttention
+                    or FileMutationJournalState.TargetStaged;
+                if (parked
+                    && (FileMutationOwner.IsCompanionFile(open.AudiobookFileId)
+                        || verifiedOutputPaths.Contains(open.DestinationPath)))
+                {
+                    continue;
+                }
+
+                // A later completed mutation of the same destination supersedes an abandoned attempt.
+                var superseded = await db.FileMutationJournals
+                    .AsNoTracking()
+                    .AnyAsync(
+                        journal => journal.DestinationPath == open.DestinationPath
+                            && journal.State == FileMutationJournalState.Completed
+                            && journal.UpdatedAt > open.UpdatedAt,
+                        cancellationToken);
+                if (!superseded)
+                {
+                    hasUnresolvedFileMutation = true;
+                    break;
+                }
+            }
             if (hasUnresolvedFileMutation)
             {
                 throw new ApplicationConflictException(

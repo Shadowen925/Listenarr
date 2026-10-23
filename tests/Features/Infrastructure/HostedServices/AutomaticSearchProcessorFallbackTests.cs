@@ -25,6 +25,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
         public List<AutomaticSearchDiagnostic> Diagnostics { get; } = [];
         public Mock<IReleaseRejectionRepository> Rejections { get; } = new();
         public Mock<IDownloadService> Downloads { get; } = new();
+        public Mock<IDownloadRepository> DownloadRepository { get; } = new();
         public Mock<IQuickAddOperationRepository> QuickAddOperations { get; } = new();
         public Mock<ISearchService> Search { get; } = new();
         public Mock<IAudiobookFileRepository> AudiobookFiles { get; } = new();
@@ -61,7 +62,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
             audiobookRepository.Setup(repository => repository.UpdateAsync(It.IsAny<Audiobook>()))
                 .ReturnsAsync(true);
 
-            var downloadRepository = new Mock<IDownloadRepository>();
+            var downloadRepository = DownloadRepository;
             downloadRepository.Setup(repository =>
                     repository.GetByAudiobookIdAsync(Audiobook.Id, It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
@@ -456,6 +457,33 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
                 rejection.ReleaseKey == ReleaseRejection.IdKey("bad-source")),
             It.IsAny<CancellationToken>()), Times.Once);
         Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
+    }
+
+    [Theory]
+    [InlineData(DownloadStatus.Completed)]
+    [InlineData(DownloadStatus.Moved)]
+    [InlineData(DownloadStatus.ImportBlocked)]
+    public async Task SearchAudiobookAsync_DoesNotRegrabReleaseAlreadyDownloaded(DownloadStatus priorStatus)
+    {
+        using var fixture = new Fixture(("already-grabbed", 100), ("new-release", 80));
+        fixture.DownloadRepository
+            .Setup(repository => repository.GetByAudiobookIdAsync(
+                fixture.Audiobook.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Download
+                {
+                    Title = "Release already-grabbed",
+                    AudiobookId = fixture.Audiobook.Id,
+                    Status = priorStatus,
+                    Metadata = new Dictionary<string, object> { ["ReleaseId"] = "already-grabbed" }
+                }
+            ]);
+
+        await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
+
+        Assert.DoesNotContain("already-grabbed", fixture.SubmissionOrder);
+        Assert.Contains("new-release", fixture.SubmissionOrder);
     }
 
     [Fact]

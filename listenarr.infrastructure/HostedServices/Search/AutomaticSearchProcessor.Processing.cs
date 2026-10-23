@@ -243,9 +243,18 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 rejectedReleases.AddKey(rejection.ReleaseKey);
             }
 
-            foreach (var failedDownload in allDownloads.Where(download => download.Status == DownloadStatus.Failed))
+            // Failed releases are blocklisted; releases we already grabbed (even when their import
+            // is still pending or needs attention) must never be grabbed again, like Sonarr's history check.
+            foreach (var priorDownload in allDownloads.Where(download =>
+                download.Status is DownloadStatus.Failed
+                    or DownloadStatus.Completed
+                    or DownloadStatus.Moved
+                    or DownloadStatus.ImportBlocked
+                    or DownloadStatus.ImportPending
+                    or DownloadStatus.Processing
+                    or DownloadStatus.Ready))
             {
-                rejectedReleases.AddDownload(failedDownload);
+                rejectedReleases.AddDownload(priorDownload);
             }
             var releaseRejectionCount = scoredResults.Count(result =>
                 rejectedReleases.Matches(result.SearchResult));
