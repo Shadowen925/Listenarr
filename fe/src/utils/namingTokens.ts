@@ -254,7 +254,7 @@ function keyOf(name: string): string {
   return name.toLowerCase().replace(/[ ._-]/g, '')
 }
 
-function formatValue(raw: string, format: string | undefined, part: number): string {
+function formatValue(raw: string, format: string | undefined): string {
   if (!format) return raw
   const digits = format.toLowerCase() === 'smart' ? String(SAMPLE.partcount).length : format.length
   if (/^0+$/.test(format) || format.toLowerCase() === 'smart') {
@@ -286,7 +286,7 @@ function renderGroup(inner: string, part: number): string {
       empty = true
       return ''
     }
-    value = formatValue(value, format, part)
+    value = formatValue(value, format)
     const letters = name.replace(/[^A-Za-z]/g, '')
     if (letters && letters === letters.toUpperCase() && letters.length > 1)
       value = value.toUpperCase()
