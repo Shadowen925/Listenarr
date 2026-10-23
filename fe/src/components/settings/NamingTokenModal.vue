@@ -35,11 +35,17 @@
         <h3>Examples</h3>
         <table class="token-table">
           <thead>
-            <tr><th>Pattern</th><th>Generic</th><th>The Gunslinger</th></tr>
+            <tr>
+              <th>Pattern</th>
+              <th>Generic</th>
+              <th>The Gunslinger</th>
+            </tr>
           </thead>
           <tbody>
             <tr v-for="row in NAMING_EXAMPLES" :key="row.token">
-              <td><button class="token-btn" @click="setDraft(row.token)">{{ row.token }}</button></td>
+              <td>
+                <button class="token-btn" @click="setDraft(row.token)">{{ row.token }}</button>
+              </td>
               <td>{{ row.generic }}</td>
               <td>{{ row.example }}</td>
             </tr>
@@ -63,8 +69,8 @@
           </table>
         </template>
         <p class="hint">
-          Tokens that show "Empty" for the sample book are only filled in when the book's metadata or
-          release provides a value; unfilled ones are omitted from the name.
+          Tokens that show "Empty" for the sample book are only filled in when the book's metadata
+          or release provides a value; unfilled ones are omitted from the name.
         </p>
       </div>
 

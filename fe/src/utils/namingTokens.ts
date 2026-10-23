@@ -89,7 +89,11 @@ export const NAMING_TOKEN_CATEGORIES: NamingTokenCategory[] = [
       t('{SeriesPosition:00}', '03', '01'),
       t('{SeriesTitleNumber}', 'Story Trilogy #3', 'The Dark Tower #1'),
       t('{SeriesFolder}', 'Story Trilogy', 'The Dark Tower'),
-      t('{BookTitle-WithSeries}', "The Story's Title!: Subtitle! - Story Trilogy #3", 'The Gunslinger - The Dark Tower #1'),
+      t(
+        '{BookTitle-WithSeries}',
+        "The Story's Title!: Subtitle! - Story Trilogy #3",
+        'The Gunslinger - The Dark Tower #1',
+      ),
       t('{ - SeriesPosition}', '- 3', '- 1'),
       t('{ - SeriesPosition:00}', '- 03', '- 01'),
       t('{BookSeries}', 'Book 3', 'Book 1'),
@@ -133,7 +137,10 @@ export const NAMING_TOKEN_CATEGORIES: NamingTokenCategory[] = [
   },
   {
     name: 'Graphic Audio',
-    tokens: [t('{GraphicAudio}', 'GraphicAudio', ''), t('{AudioProductionType}', 'GraphicAudio', '')],
+    tokens: [
+      t('{GraphicAudio}', 'GraphicAudio', ''),
+      t('{AudioProductionType}', 'GraphicAudio', ''),
+    ],
   },
   {
     name: 'Other',
@@ -148,7 +155,7 @@ export const NAMING_TOKEN_CATEGORIES: NamingTokenCategory[] = [
     name: 'Listenarr',
     tokens: [
       t('{Author}', 'Story Author', 'Stephen King'),
-      t('{Title}', 'The Story\'s Title', 'The Gunslinger'),
+      t('{Title}', "The Story's Title", 'The Gunslinger'),
       t('{Subtitle}', 'Subtitle', ''),
       t('{Edition}', 'Revised Edition', 'Revised Edition'),
       t('{Publisher}', 'Penguin Audio', 'Penguin Audio'),
@@ -281,7 +288,8 @@ function renderGroup(inner: string, part: number): string {
     }
     value = formatValue(value, format, part)
     const letters = name.replace(/[^A-Za-z]/g, '')
-    if (letters && letters === letters.toUpperCase() && letters.length > 1) value = value.toUpperCase()
+    if (letters && letters === letters.toUpperCase() && letters.length > 1)
+      value = value.toUpperCase()
     else if (letters && letters === letters.toLowerCase()) value = value.toLowerCase()
     const separator = /[A-Za-z0-9]([._-])[A-Za-z]/.exec(name)?.[1]
     return separator && key !== 'booktitlewithseries' ? value.replace(/ /g, separator) : value
@@ -300,7 +308,11 @@ export function renderNamingPattern(pattern: string, part = 3): string {
   result = result.replace(new RegExp(`${SENTINEL}\\s*[-–—:_]\\s*`, 'g'), '')
   result = result.replace(new RegExp(`/?${SENTINEL}/?`, 'g'), '/')
   result = result.split(SENTINEL).join('')
-  return result.replace(/\/{2,}/g, '/').replace(/ {2,}/g, ' ').replace(/^\/|\/$/g, '').trim()
+  return result
+    .replace(/\/{2,}/g, '/')
+    .replace(/ {2,}/g, ' ')
+    .replace(/^\/|\/$/g, '')
+    .trim()
 }
 
 /** Rewrites a token's spelling according to the Space/Case dropdowns. */

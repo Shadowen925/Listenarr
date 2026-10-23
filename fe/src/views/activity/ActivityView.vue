@@ -466,9 +466,7 @@
               >Audiobook {{ rejection.audiobookId }}</RouterLink
             >
             <p>{{ rejection.reason }}</p>
-            <small
-              >{{ rejection.source }} Â· {{ formatApiDateTime(rejection.createdAt) }}</small
-            >
+            <small>{{ rejection.source }} Â· {{ formatApiDateTime(rejection.createdAt) }}</small>
           </div>
           <button
             class="btn btn-secondary"
@@ -563,9 +561,7 @@
         <p v-else-if="eventHistoryLoading">Loading download history...</p>
         <ol v-else-if="downloadEvents.length" class="event-history-list">
           <li v-for="event in downloadEvents" :key="event.id" :class="event.outcome.toLowerCase()">
-            <time :datetime="event.timestamp">{{
-              formatApiDateTime(event.timestamp)
-            }}</time>
+            <time :datetime="event.timestamp">{{ formatApiDateTime(event.timestamp) }}</time>
             <strong>{{ event.eventType }}</strong>
             <span>{{ event.message || event.outcome }}</span>
           </li>
@@ -1309,7 +1305,8 @@ const refreshQueue = async () => {
     // Newest dismissal first: keep it so an older version for the same key can't override it.
     const latestDismissals = new Map<string, string>()
     for (const dismissal of dismissals) {
-      if (!latestDismissals.has(dismissal.key)) latestDismissals.set(dismissal.key, dismissal.version)
+      if (!latestDismissals.has(dismissal.key))
+        latestDismissals.set(dismissal.key, dismissal.version)
     }
     dismissedActivityVersions.value = latestDismissals
     quickAddOperations.value = operations
