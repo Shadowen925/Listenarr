@@ -386,6 +386,18 @@
               <span>Activity</span>
               <Pill variant="count" v-if="activityCount > 0">{{ activityCount }}</Pill>
             </RouterLink>
+            <ul v-if="route.path === '/activity'" class="nav-subitems" aria-label="Activity sections">
+              <li v-for="section in activityNavSections" :key="section.id">
+                <RouterLink
+                  :to="section.id === 'queue' ? '/activity' : { path: '/activity', query: { section: section.id } }"
+                  class="nav-subitem"
+                  :class="{ active: activeActivitySection === section.id }"
+                  @click="closeMobileMenu"
+                >
+                  {{ section.label }}
+                </RouterLink>
+              </li>
+            </ul>
             <RouterLink
               to="/wanted"
               class="nav-item"
@@ -1637,6 +1649,18 @@ const logout = async () => {
 }
 
 const route = useRoute()
+
+const activityNavSections = [
+  { id: 'queue', label: 'Queue' },
+  { id: 'history', label: 'History' },
+  { id: 'blocklist', label: 'Blocklist' },
+  { id: 'ignored', label: 'Ignored Downloads' },
+] as const
+const activeActivitySection = computed(() => {
+  const value = route.query.section
+  const candidate = Array.isArray(value) ? value[0] : value
+  return activityNavSections.some((section) => section.id === candidate) ? candidate : 'queue'
+})
 const hideLayout = computed(() => {
   const meta = route.meta as Record<string, unknown> | undefined
   return !!(meta && meta.hideLayout)
@@ -2100,6 +2124,30 @@ these are not present, the Google Fonts import in `fe/index.html` will be used a
 .sidebar .nav-item.router-link-active svg,
 .sidebar .nav-item.router-link-active .ph {
   color: white;
+}
+
+.nav-subitems {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  background-color: rgba(0, 0, 0, 0.15);
+}
+
+.nav-subitem {
+  display: block;
+  padding: 0.5rem 1rem 0.5rem 3.25rem;
+  color: #aaa;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.nav-subitem:hover,
+.nav-subitem.active {
+  color: white;
+}
+
+.nav-subitem.active {
+  font-weight: 600;
 }
 
 .sidebar-footer {

@@ -250,7 +250,7 @@
                   </div>
                   <div v-if="item.activityLastAttemptAt">
                     <dt>Last attempt</dt>
-                    <dd>{{ new Date(item.activityLastAttemptAt).toLocaleString() }}</dd>
+                    <dd>{{ formatApiDateTime(item.activityLastAttemptAt) }}</dd>
                   </div>
                   <div v-if="item.activityLatestError">
                     <dt>Latest error</dt>
@@ -411,7 +411,7 @@
       <p v-else-if="historyError" role="alert">{{ historyError }}</p>
       <ol v-else class="activity-history-list">
         <li v-for="entry in historyEntries" :key="entry.id">
-          <time :datetime="entry.timestamp">{{ new Date(entry.timestamp).toLocaleString() }}</time>
+          <time :datetime="entry.timestamp">{{ formatApiDateTime(entry.timestamp) }}</time>
           <strong>{{ entry.eventType }}</strong>
           <RouterLink v-if="entry.audiobookId" :to="`/audiobooks/${entry.audiobookId}`">{{
             entry.audiobookTitle || `Audiobook ${entry.audiobookId}`
@@ -435,7 +435,7 @@
           Previous
         </button>
         <span
-          >{{ historyTotal === 0 ? 0 : historyOffset + 1 }}–{{
+          >{{ historyTotal === 0 ? 0 : historyOffset + 1 }}â€“{{
             Math.min(historyOffset + historyPageSize, historyTotal)
           }}
           of {{ historyTotal }}</span
@@ -467,7 +467,7 @@
             >
             <p>{{ rejection.reason }}</p>
             <small
-              >{{ rejection.source }} · {{ new Date(rejection.createdAt).toLocaleString() }}</small
+              >{{ rejection.source }} Â· {{ formatApiDateTime(rejection.createdAt) }}</small
             >
           </div>
           <button
@@ -492,7 +492,7 @@
             <RouterLink v-if="download.audiobookId" :to="`/audiobooks/${download.audiobookId}`"
               >Audiobook {{ download.audiobookId }}</RouterLink
             >
-            <p>{{ download.downloadClientId }} · {{ download.externalId || download.id }}</p>
+            <p>{{ download.downloadClientId }} Â· {{ download.externalId || download.id }}</p>
             <small v-if="download.sourceRetained"
               >Client source retained after verified import</small
             >
@@ -564,7 +564,7 @@
         <ol v-else-if="downloadEvents.length" class="event-history-list">
           <li v-for="event in downloadEvents" :key="event.id" :class="event.outcome.toLowerCase()">
             <time :datetime="event.timestamp">{{
-              new Date(event.timestamp).toLocaleString()
+              formatApiDateTime(event.timestamp)
             }}</time>
             <strong>{{ event.eventType }}</strong>
             <span>{{ event.message || event.outcome }}</span>
@@ -577,7 +577,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, unref } from 'vue'
+import { ref, computed, onMounted, onUnmounted, unref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { formatApiDateTime } from '@/utils/dateTime'
 import {
   PhActivity,
   PhSpinner,
@@ -620,6 +622,8 @@ const moveJobsStore = useMoveJobsStore()
 const configStore = useConfigurationStore()
 
 const filterText = ref('')
+const route = useRoute() as ReturnType<typeof useRoute> | undefined
+const router = useRouter() as ReturnType<typeof useRouter> | undefined
 const activitySections = [
   { id: 'queue', label: 'Queue' },
   { id: 'history', label: 'History' },
@@ -844,7 +848,7 @@ const convertMoveJobToQueueItem = (job: TrackedMoveJob): QueueItem => ({
   downloadSpeed: 0,
   eta: undefined,
   quality: '',
-  downloadClient: job.phase ? `Library move · ${job.phase}` : 'Library move',
+  downloadClient: job.phase ? `Library move Â· ${job.phase}` : 'Library move',
   downloadClientId: 'LISTENARR_MOVE',
   downloadClientType: 'move',
   addedAt: '',
@@ -858,7 +862,7 @@ const showCompletedExternalDownloads = computed(
   () => configStore.applicationSettings?.showCompletedExternalDownloads ?? false,
 )
 
-// All activity items — unified list of queue + downloads
+// All activity items â€” unified list of queue + downloads
 const isDirectDownload = (downloadClientId?: string): boolean =>
   (downloadClientId || '').toString().toUpperCase() === 'DDL'
 
@@ -1128,9 +1132,19 @@ const allActivityItems = computed(() => {
   const isQueueEntry = (item: QueueItem): boolean => {
     const status = item.status.toLowerCase()
     if (['moved', 'imported'].includes(status)) return false
-    return !(
-      status === 'completed' && (item.sourcePathUnavailable || item.missingFromClient)
-    )
+    if (status === 'completed' && (item.sourcePathUnavailable || item.missingFromClient)) {
+      return false
+    }
+    // The client no longer has the files and the book is already in the library: nothing left to act on.
+    if (
+      item.sourcePathUnavailable &&
+      ['failed', 'importblocked', 'importpending', 'completed'].includes(status) &&
+      item.audiobookId != null
+    ) {
+      const book = libraryStore.audiobooks.find((ab) => ab.id === item.audiobookId)
+      if (book && (book.filePath || (book.files?.length ?? 0) > 0)) return false
+    }
+    return true
   }
   return Array.from(grouped.entries())
     .filter(([key, item]) => dismissedActivityVersions.value.get(key) !== activityVersionFor(item))
@@ -1351,9 +1365,34 @@ const loadIgnoredDownloads = async () => {
   }
 }
 
+const isActivitySection = (value: unknown): value is ActivitySection =>
+  activitySections.some((section) => section.id === value)
+
+const sectionFromRoute = (): ActivitySection => {
+  const value = route?.query?.section
+  const candidate = Array.isArray(value) ? value[0] : value
+  return isActivitySection(candidate) ? candidate : 'queue'
+}
+
 const selectActivitySection = async (section: ActivitySection) => {
+  if (route && router && sectionFromRoute() !== section) {
+    await router.push({ path: route.path, query: section === 'queue' ? {} : { section } })
+    return
+  }
   activeSection.value = section
   await refreshCurrentSection()
+}
+
+if (route) {
+  watch(
+    () => route.query.section,
+    async () => {
+      const next = sectionFromRoute()
+      if (next === activeSection.value) return
+      activeSection.value = next
+      await refreshCurrentSection()
+    },
+  )
 }
 
 const refreshCurrentSection = async () => {
@@ -1670,7 +1709,7 @@ const detailsLine = (item: QueueItem): string => {
   const err = item.replacementError || item.stallReason || item.errorMessage
   if (err) parts.push(err)
   if (item.sourcePathUnavailableReason) parts.push(item.sourcePathUnavailableReason)
-  return parts.join(' · ')
+  return parts.join(' Â· ')
 }
 
 const formatBytes = (bytes: number): string => {
@@ -1731,6 +1770,7 @@ const formatEta = (seconds: number): string => {
 // Subscribe to SignalR for real-time updates
 onMounted(async () => {
   moveJobsStore.start()
+  activeSection.value = sectionFromRoute()
 
   await downloadsStore.loadDownloads()
   await configStore.loadApplicationSettings()
