@@ -1137,12 +1137,14 @@ const allActivityItems = computed(() => {
     }
     // The client no longer has the files and the book is already in the library: nothing left to act on.
     if (
-      item.sourcePathUnavailable &&
-      ['failed', 'importblocked', 'importpending', 'completed'].includes(status) &&
+      (item.sourcePathUnavailable || item.missingFromClient) &&
+      !['downloading', 'queued', 'paused'].includes(status) &&
       item.audiobookId != null
     ) {
       const book = libraryStore.audiobooks.find((ab) => ab.id === item.audiobookId)
-      if (book && (book.filePath || (book.files?.length ?? 0) > 0)) return false
+      if (book && (book.filePath || (book.fileCount ?? 0) > 0 || (book.files?.length ?? 0) > 0)) {
+        return false
+      }
     }
     return true
   }
