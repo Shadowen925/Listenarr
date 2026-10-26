@@ -170,6 +170,54 @@ public partial class AutomaticSearchProcessor
         return (operation, downloads, true);
     }
 
+    private async Task<bool> FailIfQualityProfileMissingAsync(
+        Audiobook audiobook,
+        QuickAddOperation? operation,
+        IQuickAddOperationRepository quickAddOperations,
+        CancellationToken cancellationToken)
+    {
+        if (audiobook.QualityProfile != null)
+        {
+            return false;
+        }
+
+        _logger.LogWarning(
+            "Audiobook '{Title}' has no quality profile assigned",
+            audiobook.Title);
+        if (operation != null)
+        {
+            await quickAddOperations.AdvanceAsync(
+                audiobook.Id,
+                QuickAddOperationState.FailedNeedsAttention,
+                failureReason: "No quality profile is assigned to this audiobook.",
+                cancellationToken: cancellationToken);
+        }
+
+        return true;
+    }
+
+    private async Task<bool> VerifyBlankCutoffHasRegisteredFileAsync(
+        Audiobook audiobook,
+        QuickAddOperation? operation,
+        bool cutoffMet,
+        IAudiobookFileRepository fileRepository,
+        IAudiobookScanService audiobookScanService,
+        CancellationToken cancellationToken)
+    {
+        if (!cutoffMet
+            || !string.IsNullOrWhiteSpace(audiobook.QualityProfile?.CutoffQuality)
+            || operation?.State == QuickAddOperationState.NoMatchingReleases)
+        {
+            return cutoffMet;
+        }
+
+        return await HasVerifiedRegisteredFileAtCutoffAsync(
+            audiobook,
+            fileRepository,
+            audiobookScanService,
+            cancellationToken);
+    }
+
     private async Task<bool> HasVerifiedRegisteredFileAtCutoffAsync(
         Audiobook audiobook,
         IAudiobookFileRepository fileRepository,

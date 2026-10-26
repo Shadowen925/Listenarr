@@ -395,75 +395,23 @@ public partial class FileMover
             && TargetMatchesMarkerlessJournal(targetEntry, journal);
         if (targetEntry == null || !targetMatchesJournal)
         {
-            if (targetEntry != null
-                && targetEntry.VisiblePathMatches()
-                && !string.IsNullOrWhiteSpace(journal.SourceSha256)
-                && await MatchesMarkerlessContentAsync(
-                    targetEntry,
-                    journal.SourceLength,
-                    journal.SourceSha256,
-                    cancellationToken))
+            if (targetEntry != null)
             {
-                var observedIdentity = targetEntry.GetObjectIdentity();
-                var outcome = await _fileMutationJournalStore!
-                    .AdvanceWithCommitValidationAsync(
-                        journal.OperationId,
-                        FileMutationJournalState.TargetVerified,
-                        observedIdentity,
-                        audiobookId: null,
-                        error: null,
-                        async token =>
-                        {
-                            using var currentTarget =
-                                gate.DestinationParent.TryOpenExistingFile(
-                                    gate.DestinationName,
-                                    requireDeleteAccess: false);
-                            return currentTarget != null
-                                && currentTarget.VisiblePathMatches()
-                                && currentTarget.MatchesObjectIdentity(observedIdentity)
-                                && await MatchesMarkerlessContentAsync(
-                                    currentTarget,
-                                    journal.SourceLength,
-                                    journal.SourceSha256,
-                                    token)
-                                    ? RegistrationPublicationMatchOutcome.Match
-                                    : RegistrationPublicationMatchOutcome.Mismatch;
-                        },
-                        cancellationToken,
-                        allowVerifiedTargetIdentityReplacement: true);
-                if (outcome == RegistrationPublicationMatchOutcome.Match)
+                var recoveredJournal = await TryRecoverVerifiedMarkerlessTargetAsync(
+                    gate,
+                    journal,
+                    targetEntry,
+                    cancellationToken);
+                if (recoveredJournal != null)
                 {
-                    return await _fileMutationJournalStore.GetAsync(
-                        journal.OperationId,
-                        cancellationToken)
-                        ?? throw new InvalidOperationException(
-                            "The markerless registration journal disappeared.");
+                    return recoveredJournal;
                 }
             }
 
-            if (targetEntry != null
-                && !string.IsNullOrWhiteSpace(
-                    journal.TargetPhysicalObjectIdentity)
-                && targetEntry.VisiblePathMatches())
-            {
-                FileMoverIdentityDiagnostics.LogTargetIdentityMismatch(
-                    _logger,
-                    journal,
-                    targetEntry);
-            }
-
-            await MarkMarkerlessRegistrationNeedsAttentionAsync(
+            return await MarkMarkerlessRegistrationTargetMismatchAsync(
                 journal,
-                targetEntry == null
-                    ? "The registration destination is missing before content verification."
-                    : FileMutationJournalRecoveryPolicy
-                        .RegisteredTargetIdentityMismatch,
+                targetEntry,
                 cancellationToken);
-            return await _fileMutationJournalStore!.GetAsync(
-                journal.OperationId,
-                cancellationToken)
-                ?? throw new InvalidOperationException(
-                    "The markerless registration journal disappeared.");
         }
 
         if (!await MatchesMarkerlessTargetContentAsync(

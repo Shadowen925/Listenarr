@@ -49,17 +49,12 @@ namespace Listenarr.Infrastructure.HostedServices.Search
                 stoppingToken);
             if (shouldSkip) return 0;
 
-            if (audiobook.QualityProfile == null)
+            if (await FailIfQualityProfileMissingAsync(
+                audiobook,
+                quickAddOperation,
+                quickAddOperations,
+                stoppingToken))
             {
-                _logger.LogWarning("Audiobook '{Title}' has no quality profile assigned", audiobook.Title);
-                if (quickAddOperation != null)
-                {
-                    await quickAddOperations.AdvanceAsync(
-                        audiobook.Id,
-                        QuickAddOperationState.FailedNeedsAttention,
-                        failureReason: "No quality profile is assigned to this audiobook.",
-                        cancellationToken: stoppingToken);
-                }
                 return 0;
             }
 
@@ -68,16 +63,9 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             _logger.LogInformation("Audiobook '{Title}': cutoff met={CutoffMet}, best existing quality={BestQuality}",
                 audiobook.Title, cutoffMet, bestExistingQuality ?? "none");
 
-            if (cutoffMet
-                && string.IsNullOrWhiteSpace(audiobook.QualityProfile.CutoffQuality)
-                && quickAddOperation?.State != QuickAddOperationState.NoMatchingReleases)
-            {
-                cutoffMet = await HasVerifiedRegisteredFileAtCutoffAsync(
-                    audiobook,
-                    fileRepository,
-                    audiobookScanService,
-                    stoppingToken);
-            }
+            cutoffMet = await VerifyBlankCutoffHasRegisteredFileAsync(
+                audiobook, quickAddOperation, cutoffMet,
+                fileRepository, audiobookScanService, stoppingToken);
 
             if (await TryResolveVerifiedNoMatchAsync(
                 audiobook,

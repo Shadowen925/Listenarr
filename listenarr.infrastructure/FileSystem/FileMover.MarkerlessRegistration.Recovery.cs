@@ -6,6 +6,90 @@ namespace Listenarr.Infrastructure.FileSystem;
 
 public partial class FileMover
 {
+    private async Task<FileMutationJournal> MarkMarkerlessRegistrationTargetMismatchAsync(
+        FileMutationJournal journal,
+        PinnedDirectoryCreation.PinnedFileEntry? target,
+        CancellationToken cancellationToken)
+    {
+        if (target != null
+            && !string.IsNullOrWhiteSpace(journal.TargetPhysicalObjectIdentity)
+            && target.VisiblePathMatches())
+        {
+            FileMoverIdentityDiagnostics.LogTargetIdentityMismatch(
+                _logger,
+                journal,
+                target);
+        }
+
+        await MarkMarkerlessRegistrationNeedsAttentionAsync(
+            journal,
+            target == null
+                ? "The registration destination is missing before content verification."
+                : FileMutationJournalRecoveryPolicy.RegisteredTargetIdentityMismatch,
+            cancellationToken);
+        return await _fileMutationJournalStore!.GetAsync(
+            journal.OperationId,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                "The markerless registration journal disappeared.");
+    }
+
+    private async Task<FileMutationJournal?> TryRecoverVerifiedMarkerlessTargetAsync(
+        FileMoveGateLease gate,
+        FileMutationJournal journal,
+        PinnedDirectoryCreation.PinnedFileEntry target,
+        CancellationToken cancellationToken)
+    {
+        if (!target.VisiblePathMatches()
+            || string.IsNullOrWhiteSpace(journal.SourceSha256)
+            || !await MatchesMarkerlessContentAsync(
+                target,
+                journal.SourceLength,
+                journal.SourceSha256,
+                cancellationToken))
+        {
+            return null;
+        }
+
+        var observedIdentity = target.GetObjectIdentity();
+        var outcome = await _fileMutationJournalStore!
+            .AdvanceWithCommitValidationAsync(
+                journal.OperationId,
+                FileMutationJournalState.TargetVerified,
+                observedIdentity,
+                audiobookId: null,
+                error: null,
+                async token =>
+                {
+                    using var currentTarget =
+                        gate.DestinationParent.TryOpenExistingFile(
+                            gate.DestinationName,
+                            requireDeleteAccess: false);
+                    return currentTarget != null
+                        && currentTarget.VisiblePathMatches()
+                        && currentTarget.MatchesObjectIdentity(observedIdentity)
+                        && await MatchesMarkerlessContentAsync(
+                            currentTarget,
+                            journal.SourceLength,
+                            journal.SourceSha256,
+                            token)
+                            ? RegistrationPublicationMatchOutcome.Match
+                            : RegistrationPublicationMatchOutcome.Mismatch;
+                },
+                cancellationToken,
+                allowVerifiedTargetIdentityReplacement: true);
+        if (outcome != RegistrationPublicationMatchOutcome.Match)
+        {
+            return null;
+        }
+
+        return await _fileMutationJournalStore.GetAsync(
+            journal.OperationId,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                "The markerless registration journal disappeared.");
+    }
+
     private async Task<bool> TryRecoverRegisteredDestinationAsync(
         FileMoveGateLease gate,
         FileMutationJournal journal,
