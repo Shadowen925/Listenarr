@@ -66,7 +66,9 @@ internal sealed partial class AudiobookScanService
                     discovery,
                     candidate);
                 var metadata = await metadataService.ExtractFileMetadataAsync(
-                    pinnedMetadataFile.MetadataPath);
+                    new MetadataFileSource(
+                        pinnedMetadataFile.MetadataPath,
+                        candidate));
                 if (metadata != null
                     && ScanFileDiscovery.MetadataMatchesAudiobook(metadata, audiobook))
                 {

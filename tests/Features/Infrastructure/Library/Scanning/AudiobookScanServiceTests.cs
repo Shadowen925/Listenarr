@@ -143,8 +143,8 @@ public sealed class AudiobookScanServiceTests : BaseTests
         var displaced = Path.Join(root, "original-generation.bin");
         var metadata = new Mock<IMetadataService>(MockBehavior.Strict);
         metadata.Setup(service => service.ExtractFileMetadataAsync(
-                It.IsAny<string>()))
-            .Returns<string>(async extractionPath =>
+                It.IsAny<MetadataFileSource>()))
+            .Returns<MetadataFileSource>(async fileSource =>
             {
                 var displacedOriginal = false;
                 try
@@ -160,7 +160,7 @@ public sealed class AudiobookScanServiceTests : BaseTests
                         // Windows holds a no-delete-share handle during extraction.
                     }
 
-                    var observed = await File.ReadAllTextAsync(extractionPath);
+                    var observed = await File.ReadAllTextAsync(fileSource.ReadPath);
                     return new AudioMetadata
                     {
                         Title = observed,
@@ -190,8 +190,52 @@ public sealed class AudiobookScanServiceTests : BaseTests
             await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id));
         Assert.Equal("Original Book", await File.ReadAllTextAsync(candidate));
         metadata.Verify(
-            service => service.ExtractFileMetadataAsync(It.IsAny<string>()),
+            service => service.ExtractFileMetadataAsync(
+                It.Is<MetadataFileSource>(source =>
+                    source.PublicPath == candidate
+                    && Path.GetExtension(source.PublicPath) == ".m4b")),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ScanAsync_MetadataAttribution_UsesVisibleAudioPathForFormatDetection()
+    {
+        var root = FileService.GetTempDirectory("scan-service-metadata-public-path");
+        var candidate = await FileService.GetFileAsync(
+            root,
+            "01.mp3",
+            "audio");
+        var metadata = new Mock<IMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.ExtractFileMetadataAsync(
+                It.IsAny<MetadataFileSource>()))
+            .ReturnsAsync(new AudioMetadata
+            {
+                Title = "Electric Idol",
+                Artist = "Katee Robert",
+                Duration = TimeSpan.FromSeconds(1),
+                Format = "mp3"
+            });
+        Init(services => services.WithSingleton<IMetadataService>(metadata.Object));
+        var audiobook = await _audiobookRepository.AddAsync(
+            new AudiobookBuilder()
+                .WithTitle("Electric Idol")
+                .WithAuthor("Katee Robert")
+                .WithSeries("Dark Olympus")
+                .WithSeriesNumber("2")
+                .Build());
+
+        var result = await ScanAsync(audiobook, root);
+
+        Assert.Contains(candidate, result.AttributedFiles);
+        Assert.Contains(
+            await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id),
+            file => file.Path == candidate);
+        metadata.Verify(
+            service => service.ExtractFileMetadataAsync(
+                It.Is<MetadataFileSource>(source =>
+                    source.PublicPath == candidate
+                    && Path.GetExtension(source.PublicPath) == ".mp3")),
+            Times.AtLeastOnce);
     }
 
     [Fact]
