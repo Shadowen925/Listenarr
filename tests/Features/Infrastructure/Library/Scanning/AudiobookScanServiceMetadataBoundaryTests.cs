@@ -24,7 +24,7 @@ public sealed class AudiobookScanServiceMetadataBoundaryTests : BaseTests
         var lowerFile = Path.Join(lowerDirectory, "part-b.m4b");
         var metadata = new Mock<IMetadataService>(MockBehavior.Strict);
         metadata.Setup(service => service.ExtractFileMetadataAsync(
-                It.IsAny<string>()))
+                It.IsAny<MetadataFileSource>()))
             .ReturnsAsync(MatchingMetadata());
         Init(services => services.WithSingleton<IMetadataService>(metadata.Object));
         Directory.CreateDirectory(upperDirectory);
@@ -65,7 +65,9 @@ public sealed class AudiobookScanServiceMetadataBoundaryTests : BaseTests
         Assert.Contains(result.Diagnostics, diagnostic =>
             diagnostic.Code == "MetadataAttributionConflict");
         metadata.Verify(
-            service => service.ExtractFileMetadataAsync(It.IsAny<string>()),
+            service => service.ExtractFileMetadataAsync(
+                It.Is<MetadataFileSource>(source =>
+                    source.PublicPath == upperFile || source.PublicPath == lowerFile)),
             Times.Exactly(2));
     }
 

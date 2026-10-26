@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Caching.Memory;
 using Listenarr.Tests.Common;
 
 namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
@@ -881,7 +882,154 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
             }
         }
 
-        private static DownloadCompletionReconciler CreateReconciler(
+        [Fact]
+        public async Task ReconcileAsync_ReusesMetadataForUnchangedNonmatchingFilesAcrossCycles()
+        {
+            var root = CreateTemporaryDirectory();
+            using var metadataCache = new MemoryCache(new MemoryCacheOptions());
+            try
+            {
+                var file = Path.Combine(root, "unrelated-book.m4b");
+                await File.WriteAllBytesAsync(file, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 20,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var metadataService = new Mock<IMetadataService>(MockBehavior.Strict);
+                metadataService
+                    .Setup(service => service.ExtractFileMetadataAsync(file))
+                    .ReturnsAsync(new AudioMetadata
+                    {
+                        Title = "Unrelated Book",
+                        Artist = "Another Author"
+                    });
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata(),
+                    metadataServiceMock: metadataService,
+                    metadataCache: metadataCache);
+                var client = new DownloadClientConfiguration
+                {
+                    Id = "deluge",
+                    DownloadPath = string.Empty
+                };
+                var download = new Download
+                {
+                    Id = "tracked-dune",
+                    AudiobookId = audiobook.Id,
+                    Title = audiobook.Title!,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = client.Id
+                };
+                var settings = new ApplicationSettings();
+
+                Assert.Empty(await reconciler.ReconcileAsync(
+                    client,
+                    [download],
+                    settings,
+                    CancellationToken.None));
+                Assert.Empty(await reconciler.ReconcileAsync(
+                    client,
+                    [download],
+                    settings,
+                    CancellationToken.None));
+
+                await File.WriteAllBytesAsync(file, new byte[64]);
+                Assert.Empty(await reconciler.ReconcileAsync(
+                    client,
+                    [download],
+                    settings,
+                    CancellationToken.None));
+
+                metadataService.Verify(
+                    service => service.ExtractFileMetadataAsync(file),
+                    Times.Exactly(2));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task ReconcileAsync_RevalidatesCachedMatchBeforeAcceptingCandidate()
+        {
+            var root = CreateTemporaryDirectory();
+            using var metadataCache = new MemoryCache(new MemoryCacheOptions());
+            try
+            {
+                var file = Path.Combine(root, "matching-title.m4b");
+                await File.WriteAllBytesAsync(file, new byte[32]);
+                var audiobook = new Audiobook
+                {
+                    Id = 21,
+                    Title = "Dune",
+                    Authors = ["Frank Herbert"],
+                    Asin = "B000R34YKC"
+                };
+                var metadataService = new Mock<IMetadataService>(MockBehavior.Strict);
+                metadataService
+                    .SetupSequence(service => service.ExtractFileMetadataAsync(file))
+                    .ReturnsAsync(new AudioMetadata
+                    {
+                        Asin = audiobook.Asin,
+                        Title = audiobook.Title,
+                        Artist = "Frank Herbert"
+                    })
+                    .ReturnsAsync(new AudioMetadata
+                    {
+                        Title = "A Different Book",
+                        Artist = "Another Author"
+                    });
+                var reconciler = CreateReconciler(
+                    root,
+                    audiobook,
+                    new MutableTimeProvider(DateTimeOffset.UtcNow),
+                    new AudioMetadata(),
+                    metadataServiceMock: metadataService,
+                    metadataCache: metadataCache);
+                var client = new DownloadClientConfiguration
+                {
+                    Id = "deluge",
+                    DownloadPath = string.Empty
+                };
+                var download = new Download
+                {
+                    Id = "tracked-dune",
+                    AudiobookId = audiobook.Id,
+                    Asin = audiobook.Asin,
+                    Title = audiobook.Title!,
+                    Status = DownloadStatus.Downloading,
+                    DownloadClientId = client.Id
+                };
+
+                Assert.Empty(await reconciler.ReconcileAsync(
+                    client,
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None));
+                Assert.Empty(await reconciler.ReconcileAsync(
+                    client,
+                    [download],
+                    new ApplicationSettings(),
+                    CancellationToken.None));
+                Assert.Null(download.GetMetadataString(Download.RecoveredSourceFilesMetadataKey));
+                metadataService.Verify(
+                    service => service.ExtractFileMetadataAsync(file),
+                    Times.Exactly(2));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        private DownloadCompletionReconciler CreateReconciler(
             string localRoot,
             Audiobook audiobook,
             TimeProvider timeProvider,
@@ -890,7 +1038,9 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
             string? translatedLocalRoot = null,
             string clientId = "deluge",
             string? remoteRoot = null,
-            bool candidateMappingUnavailable = false)
+            bool candidateMappingUnavailable = false,
+            Mock<IMetadataService>? metadataServiceMock = null,
+            IMemoryCache? metadataCache = null)
         {
             remoteRoot ??= clientId == "sabnzbd"
                 ? "/data/sabnzbd/completed/"
@@ -936,10 +1086,13 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                     return path;
                 });
 
-            var metadataService = new Mock<IMetadataService>();
-            metadataService
-                .Setup(service => service.ExtractFileMetadataAsync(It.IsAny<string>()))
-                .ReturnsAsync(metadata);
+            var metadataService = metadataServiceMock ?? new Mock<IMetadataService>();
+            if (metadataServiceMock == null)
+            {
+                metadataService
+                    .Setup(service => service.ExtractFileMetadataAsync(It.IsAny<string>()))
+                    .ReturnsAsync(metadata);
+            }
 
             var audiobookRepository = new Mock<IAudiobookRepository>();
             audiobookRepository
@@ -951,6 +1104,7 @@ namespace Listenarr.Tests.Features.Infrastructure.Downloads.Monitoring
                 new LocalFileSystem(),
                 metadataService.Object,
                 audiobookRepository.Object,
+                metadataCache ?? _provider.GetRequiredService<IMemoryCache>(),
                 timeProvider,
                 NullLogger<DownloadCompletionReconciler>.Instance);
         }

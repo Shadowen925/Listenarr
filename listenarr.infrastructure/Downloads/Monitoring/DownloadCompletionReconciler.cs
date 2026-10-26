@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.Downloads.Monitoring
@@ -10,6 +11,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         IFileSystem fileSystem,
         IMetadataService metadataService,
         IAudiobookRepository audiobookRepository,
+        IMemoryCache metadataCache,
         TimeProvider timeProvider,
         ILogger<DownloadCompletionReconciler> logger)
     {

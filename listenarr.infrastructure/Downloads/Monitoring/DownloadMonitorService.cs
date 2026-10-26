@@ -348,7 +348,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
         {
             var intervalSeconds = Math.Clamp(
                 settings.CompletedDownloadReconciliationIntervalSeconds,
-                15,
+                300,
                 3600);
             _nextCompletionReconciliation[client.Id] = timeProvider.GetUtcNow().AddSeconds(intervalSeconds);
         }

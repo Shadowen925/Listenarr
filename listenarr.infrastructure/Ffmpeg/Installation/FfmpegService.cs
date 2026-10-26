@@ -91,11 +91,11 @@ namespace Listenarr.Infrastructure.Ffmpeg.Installation
         {
             if (File.Exists(_ffprobePath))
             {
-                _logger.LogInformation("Found bundled ffprobe at {Path}", _ffprobePath);
+                _logger.LogDebug("Found bundled ffprobe at {Path}", _ffprobePath);
                 return Task.FromResult<string?>(_ffprobePath);
             }
 
-            _logger.LogInformation("No bundled ffprobe found at {Path}", _ffprobePath);
+            _logger.LogDebug("No bundled ffprobe found at {Path}", _ffprobePath);
             return Task.FromResult<string?>(null);
         }
 

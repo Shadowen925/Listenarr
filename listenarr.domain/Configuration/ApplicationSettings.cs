@@ -87,7 +87,8 @@ namespace Listenarr.Domain.Configuration
         public int DownloadCompletionStabilitySeconds { get; set; } = 10;
 
         public bool EnableCompletedDownloadReconciliation { get; set; } = true;
-        public int CompletedDownloadReconciliationIntervalSeconds { get; set; } = 60;
+        // Missing-client recovery can traverse large completed folders; keep its cadence at five minutes or slower.
+        public int CompletedDownloadReconciliationIntervalSeconds { get; set; } = 300;
         public int CompletedDownloadMinimumStabilitySeconds { get; set; } = 60;
         public bool AutomaticImportReconciledDownloads { get; set; } = true;
 

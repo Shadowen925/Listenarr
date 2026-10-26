@@ -1,10 +1,13 @@
 using Listenarr.Domain.Common;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.Downloads.Monitoring
 {
     internal sealed partial class DownloadCompletionReconciler
     {
+        private static readonly TimeSpan CandidateMetadataCacheDuration = TimeSpan.FromMinutes(15);
+
         private async Task<MatchingFileSearchResult> FindMatchingFilesAsync(
             IReadOnlyCollection<string> candidateFiles,
             IDictionary<string, AudioMetadata?> metadataByPath,
@@ -37,7 +40,7 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                     {
                         try
                         {
-                            metadata = await metadataService.ExtractFileMetadataAsync(path);
+                            metadata = await GetCandidateMetadataAsync(path, cancellationToken);
                             cancellationToken.ThrowIfCancellationRequested();
                             metadataByPath[path] = metadata;
                         }
@@ -79,9 +82,54 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                     continue;
                 }
 
+                var verifiedMatchingFiles = new List<(string Path, AudioMetadata? Metadata)>();
+                foreach (var file in matchingFiles)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    AudioMetadata? verifiedMetadata;
+                    try
+                    {
+                        verifiedMetadata = await metadataService.ExtractFileMetadataAsync(file.Path);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        CacheCandidateMetadata(file.Path, verifiedMetadata);
+                    }
+                    catch (UnauthorizedAccessException exception)
+                    {
+                        isComplete = false;
+                        logger.LogWarning(
+                            exception,
+                            "Unable to verify metadata from completed-download candidate {Path}",
+                            LogRedaction.SanitizeFilePath(file.Path));
+                        files.Clear();
+                        break;
+                    }
+                    catch (IOException exception)
+                    {
+                        isComplete = false;
+                        logger.LogWarning(
+                            exception,
+                            "Unable to verify metadata from completed-download candidate {Path}",
+                            LogRedaction.SanitizeFilePath(file.Path));
+                        files.Clear();
+                        break;
+                    }
+
+                    var verifiedFile = (file.Path, verifiedMetadata);
+                    metadataByPath[file.Path] = verifiedMetadata;
+                    if (MatchesAudiobook(verifiedFile, audiobook))
+                    {
+                        verifiedMatchingFiles.Add(verifiedFile);
+                    }
+                }
+
+                if (verifiedMatchingFiles.Count == 0)
+                {
+                    continue;
+                }
+
                 try
                 {
-                    matchingGroups.Add(matchingFiles
+                    matchingGroups.Add(verifiedMatchingFiles
                         .Select(file => new StableCandidateFile(
                             file.Path,
                             fileSystem.GetFileLength(file.Path),
@@ -112,6 +160,49 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
                 matchingGroups.Count,
                 isComplete);
         }
+
+        private async Task<AudioMetadata?> GetCandidateMetadataAsync(
+            string path,
+            CancellationToken cancellationToken)
+        {
+            var cacheKey = CreateCandidateMetadataCacheKey(path);
+            if (metadataCache.TryGetValue(cacheKey, out CachedCandidateMetadata? cached))
+            {
+                return cached?.Metadata;
+            }
+
+            var metadata = await metadataService.ExtractFileMetadataAsync(path);
+            cancellationToken.ThrowIfCancellationRequested();
+            CacheCandidateMetadata(cacheKey, metadata);
+            return metadata;
+        }
+
+        private void CacheCandidateMetadata(string path, AudioMetadata? metadata)
+        {
+            if (metadata != null)
+            {
+                CacheCandidateMetadata(CreateCandidateMetadataCacheKey(path), metadata);
+            }
+        }
+
+        private void CacheCandidateMetadata(
+            CandidateMetadataCacheKey cacheKey,
+            AudioMetadata? metadata)
+        {
+            if (metadata != null)
+            {
+                metadataCache.Set(
+                    cacheKey,
+                    new CachedCandidateMetadata(metadata),
+                    CandidateMetadataCacheDuration);
+            }
+        }
+
+        private CandidateMetadataCacheKey CreateCandidateMetadataCacheKey(string path) =>
+            new(
+                Path.GetFullPath(path),
+                fileSystem.GetFileLength(path),
+                fileSystem.GetLastWriteTimeUtc(path).Ticks);
 
         private bool CanRead(string path)
         {
@@ -181,5 +272,12 @@ namespace Listenarr.Infrastructure.Downloads.Monitoring
 
         private static string Normalize(string? value) =>
             TitleUtils.NormalizeTitle(value ?? string.Empty).Trim();
+
+        private readonly record struct CandidateMetadataCacheKey(
+            string Path,
+            long Length,
+            long LastWriteUtcTicks);
+
+        private sealed record CachedCandidateMetadata(AudioMetadata Metadata);
     }
 }

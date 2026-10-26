@@ -47,7 +47,7 @@ namespace Listenarr.Infrastructure.Ffmpeg.Installation
                 }
 
                 var safeReadPath = Path.GetFullPath(fileSource.ReadPath);
-                _logger.LogInformation("Running bundled ffprobe at {Path} against file {File}", safeFfprobePath, sanitizedPublicPath);
+                _logger.LogDebug("Running bundled ffprobe at {Path} against file {File}", safeFfprobePath, sanitizedPublicPath);
 
                 var startInfo = new ProcessStartInfo
                 {
@@ -66,7 +66,7 @@ namespace Listenarr.Infrastructure.Ffmpeg.Installation
                 startInfo.ArgumentList.Add(safeReadPath);
 
                 var pr = await _processRunner.RunAsync(startInfo, 10000);
-                _logger.LogInformation("ffprobe exit code {Code} for file {File}; stderr length={Len}", pr.ExitCode, sanitizedPublicPath, pr.Stderr?.Length ?? 0);
+                _logger.LogDebug("ffprobe exit code {Code} for file {File}; stderr length={Len}", pr.ExitCode, sanitizedPublicPath, pr.Stderr?.Length ?? 0);
 
                 if (pr.TimedOut || pr.ExitCode != 0)
                 {
@@ -100,7 +100,7 @@ namespace Listenarr.Infrastructure.Ffmpeg.Installation
                 ffprobeData,
                 fileSource.PublicPath);
 
-            _logger.LogInformation("Extracted ffprobe metadata from file: {File}", sanitizedPublicPath);
+            _logger.LogDebug("Extracted ffprobe metadata from file: {File}", sanitizedPublicPath);
             _logger.LogDebug("Parsed metadata: Duration={Duration} seconds, Format={Format}, Bitrate={Bitrate}, SampleRate={SampleRate}, Channels={Channels}", metadata.Duration.TotalSeconds, metadata.Format, metadata.BitRate, metadata.SampleRate, metadata.Channels);
 
             return metadata;
