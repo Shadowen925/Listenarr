@@ -396,6 +396,52 @@ public partial class FileMover
         if (targetEntry == null || !targetMatchesJournal)
         {
             if (targetEntry != null
+                && targetEntry.VisiblePathMatches()
+                && !string.IsNullOrWhiteSpace(journal.SourceSha256)
+                && await MatchesMarkerlessContentAsync(
+                    targetEntry,
+                    journal.SourceLength,
+                    journal.SourceSha256,
+                    cancellationToken))
+            {
+                var observedIdentity = targetEntry.GetObjectIdentity();
+                var outcome = await _fileMutationJournalStore!
+                    .AdvanceWithCommitValidationAsync(
+                        journal.OperationId,
+                        FileMutationJournalState.TargetVerified,
+                        observedIdentity,
+                        audiobookId: null,
+                        error: null,
+                        async token =>
+                        {
+                            using var currentTarget =
+                                gate.DestinationParent.TryOpenExistingFile(
+                                    gate.DestinationName,
+                                    requireDeleteAccess: false);
+                            return currentTarget != null
+                                && currentTarget.VisiblePathMatches()
+                                && currentTarget.MatchesObjectIdentity(observedIdentity)
+                                && await MatchesMarkerlessContentAsync(
+                                    currentTarget,
+                                    journal.SourceLength,
+                                    journal.SourceSha256,
+                                    token)
+                                    ? RegistrationPublicationMatchOutcome.Match
+                                    : RegistrationPublicationMatchOutcome.Mismatch;
+                        },
+                        cancellationToken,
+                        allowVerifiedTargetIdentityReplacement: true);
+                if (outcome == RegistrationPublicationMatchOutcome.Match)
+                {
+                    return await _fileMutationJournalStore.GetAsync(
+                        journal.OperationId,
+                        cancellationToken)
+                        ?? throw new InvalidOperationException(
+                            "The markerless registration journal disappeared.");
+                }
+            }
+
+            if (targetEntry != null
                 && !string.IsNullOrWhiteSpace(
                     journal.TargetPhysicalObjectIdentity)
                 && targetEntry.VisiblePathMatches())

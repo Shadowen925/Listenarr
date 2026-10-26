@@ -152,21 +152,34 @@ internal sealed partial class AudiobookScanService
                         file.PhysicalObjectIdentity);
                 var physicalIdentityMissing = hasDiscoveredIdentity
                     && string.IsNullOrWhiteSpace(file.PhysicalObjectIdentity);
-                if ((physicalGenerationChanged || physicalIdentityMissing)
+                var hasDiscoveredLength = discovery.FileLengths.TryGetValue(
+                    canonicalResolvedPath,
+                    out var discoveredLength);
+                var physicalSizeChanged = hasDiscoveredLength
+                    && file.Size != discoveredLength;
+                if ((physicalGenerationChanged
+                        || physicalIdentityMissing
+                        || physicalSizeChanged)
                     && !isAttributed)
                 {
                     diagnostics.Add(new AudiobookScanDiagnostic(
                         physicalGenerationChanged
                             ? "TrackedFileGenerationChangedWithoutAttribution"
-                            : "TrackedFilePhysicalIdentityNotBackfilled",
+                            : physicalIdentityMissing
+                                ? "TrackedFilePhysicalIdentityNotBackfilled"
+                                : "TrackedFileSizeChangedWithoutAttribution",
                         resolvedPath,
                         physicalGenerationChanged
                             ? "The tracked pathname identifies a replacement generation, but attribution was inconclusive; the existing row was preserved for operator review."
-                            : "The tracked file was not attributed confidently enough to backfill its physical identity."));
+                            : physicalIdentityMissing
+                                ? "The tracked file was not attributed confidently enough to backfill its physical identity."
+                                : "The tracked file was not attributed confidently enough to refresh its stored size."));
                     continue;
                 }
 
-                if ((physicalGenerationChanged || physicalIdentityMissing)
+                if ((physicalGenerationChanged
+                        || physicalIdentityMissing
+                        || physicalSizeChanged)
                     && isAttributed)
                 {
                     await ValidateCommandAsync(command, cancellationToken);
@@ -194,20 +207,30 @@ internal sealed partial class AudiobookScanService
                         diagnostics.Add(new AudiobookScanDiagnostic(
                             physicalGenerationChanged
                                 ? "TrackedFileGenerationReplacementDeferred"
-                                : "TrackedFilePhysicalIdentityBackfillDeferred",
+                                : physicalIdentityMissing
+                                    ? "TrackedFilePhysicalIdentityBackfillDeferred"
+                                    : "TrackedFileSizeRefreshDeferred",
                             resolvedPath,
-                            "The physical file generation changed before its durable row could be updated; the existing row was preserved."));
+                            physicalGenerationChanged
+                                ? "The physical file generation changed before its durable row could be updated; the existing row was preserved."
+                                : physicalIdentityMissing
+                                    ? "The file changed before its physical identity could be recorded; the existing row was preserved."
+                                    : "The file changed before its stored size could be refreshed; the existing row was preserved."));
                         continue;
                     }
 
                     diagnostics.Add(new AudiobookScanDiagnostic(
                         physicalGenerationChanged
                             ? "TrackedFileGenerationReplaced"
-                            : "TrackedFilePhysicalIdentityBackfilled",
+                            : physicalIdentityMissing
+                                ? "TrackedFilePhysicalIdentityBackfilled"
+                                : "TrackedFileSizeRefreshed",
                         resolvedPath,
                         physicalGenerationChanged
                             ? "The tracked pathname now identifies a different physical file generation; the existing row was updated atomically."
-                            : "The tracked file row was enrolled with its verified physical object identity."));
+                            : physicalIdentityMissing
+                                ? "The tracked file row was enrolled with its verified physical object identity."
+                                : $"The tracked file row size was refreshed to {discoveredLength} bytes."));
                     if (physicalGenerationChanged)
                     {
                         await TryAddHistoryAsync(new History

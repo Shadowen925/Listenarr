@@ -96,6 +96,12 @@ namespace Listenarr.Application.Common
             Put("SeriesTitleNumber", series.Length == 0 ? string.Empty : position.Length == 0 ? series : $"{series} #{position}");
             Put("SeriesFolder", series);
             Put("BookSeries", series.Length == 0 || position.Length == 0 ? string.Empty : $"Book {position}");
+            var seriesBook = series.Length == 0 || position.Length == 0
+                ? string.Empty
+                : decimal.TryParse(position, NumberStyles.Number, CultureInfo.InvariantCulture, out var seriesPosition)
+                    ? $"Book {seriesPosition.ToString("00.##", CultureInfo.InvariantCulture)}"
+                    : $"Book {position}";
+            Put("SeriesBook", seriesBook);
             var titleWithSeries = Get("BookTitle");
             Put("BookTitle-WithSeries", series.Length == 0
                 ? titleWithSeries

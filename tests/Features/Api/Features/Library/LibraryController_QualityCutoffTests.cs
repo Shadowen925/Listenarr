@@ -106,5 +106,46 @@ namespace Listenarr.Tests.Features.Api.Features.Library
             // Then
             Assert.False(result);
         }
+
+        [Fact]
+        [Trait("Method", "IsQualityCutoffMetAsync")]
+        [Trait("Scenario", "BlankCutoffTreatsExistingFileAsComplete")]
+        public async Task IsQualityCutoffMetAsync_BlankCutoffTreatsExistingFileAsComplete()
+        {
+            var audiobook = await _audiobookRepository.AddAsync(
+                new AudiobookBuilder()
+                    .WithTitle("Existing File")
+                    .WithQualityProfile(new QualityProfile
+                    {
+                        CutoffQuality = string.Empty,
+                        Qualities =
+                        [
+                            new QualityDefinition
+                            {
+                                Quality = "AAC 128kbps",
+                                Codec = "AAC",
+                                Bitrate = 128,
+                                Priority = 0
+                            }
+                        ]
+                    })
+                    .Build());
+            await _audiobookFileRepository.AddAsync(
+                new AudiobookFileBuilder()
+                    .WithAudiobook(audiobook)
+                    .WithPath(@"C:\books\existing-file\book.m4b")
+                    .WithFormat("m4b")
+                    .WithCoded("aac")
+                    .WithBitrate(126_989)
+                    .WithSize(340_397_441)
+                    .Build());
+
+            var result = await AudiobookQualityCutoffEvaluator.IsQualityCutoffMetAsync(
+                audiobook,
+                _downloadRepository,
+                _audiobookFileRepository);
+
+            Assert.True(result);
+        }
     }
 }

@@ -56,11 +56,11 @@ namespace Listenarr.Application.Audiobooks.Matching
                 return false;
             }
 
-            // Preserve the original guard: an unset or unknown cutoff means "keep searching".
-            var cutoffQuality = profile.Qualities
-                .FirstOrDefault(q => q.Quality == profile.CutoffQuality);
-
-            if (cutoffQuality == null)
+            // A blank cutoff means any existing file satisfies the profile. A named
+            // cutoff that is absent from the profile is invalid and must not suppress search.
+            if (!string.IsNullOrWhiteSpace(profile.CutoffQuality)
+                && profile.Qualities?.Any(quality =>
+                    quality.Quality == profile.CutoffQuality) != true)
             {
                 return false;
             }

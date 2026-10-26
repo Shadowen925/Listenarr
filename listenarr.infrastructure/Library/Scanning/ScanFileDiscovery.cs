@@ -242,6 +242,7 @@ internal static partial class ScanFileDiscovery
             enumeration.EnumeratedDirectories,
             enumeration.DirectoryObjectIdentities,
             enumeration.FileObjectIdentities,
+            enumeration.FileLengths,
             selectedStableIdentifierBoundary,
             identifierBoundaries.Count > 1,
             issues);

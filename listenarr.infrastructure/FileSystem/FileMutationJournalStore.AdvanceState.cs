@@ -172,8 +172,21 @@ internal sealed partial class EfFileMutationJournalStore
         FileMutationJournalState state,
         string? targetPhysicalObjectIdentity,
         int? audiobookId,
-        string? error)
+        string? error,
+        bool allowVerifiedTargetIdentityReplacement = false)
     {
+        var verifiedTargetIdentityReplacement =
+            allowVerifiedTargetIdentityReplacement
+            && journal.State == FileMutationJournalState.TargetIdentityPersisted
+            && state == FileMutationJournalState.TargetVerified
+            && !string.IsNullOrWhiteSpace(journal.TargetPhysicalObjectIdentity)
+            && !string.IsNullOrWhiteSpace(targetPhysicalObjectIdentity);
+        if (allowVerifiedTargetIdentityReplacement
+            && !verifiedTargetIdentityReplacement)
+        {
+            throw new InvalidOperationException(
+                "A target identity can only be replaced during validated target verification.");
+        }
         var registeredTargetRecovery =
             journal.State == FileMutationJournalState.NeedsAttention
             && journal.Error
@@ -222,6 +235,7 @@ internal sealed partial class EfFileMutationJournalStore
         }
         if (!stagedTargetIdentityRefreshed
             && !registeredTargetRecovery
+            && !verifiedTargetIdentityReplacement
             && !string.IsNullOrWhiteSpace(journal.TargetPhysicalObjectIdentity)
             && !string.IsNullOrWhiteSpace(targetPhysicalObjectIdentity)
             && !string.Equals(
@@ -242,6 +256,7 @@ internal sealed partial class EfFileMutationJournalStore
 
         journal.TargetPhysicalObjectIdentity = registeredTargetRecovery
             || stagedTargetIdentityRefreshed
+            || verifiedTargetIdentityReplacement
                 ? targetPhysicalObjectIdentity
                 : journal.TargetPhysicalObjectIdentity ?? targetPhysicalObjectIdentity;
         journal.AudiobookId ??= audiobookId;

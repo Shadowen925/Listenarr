@@ -57,7 +57,8 @@ internal interface IFileMutationJournalStore
         int? audiobookId,
         string? error,
         Func<CancellationToken, Task<RegistrationPublicationMatchOutcome>> validateAsync,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool allowVerifiedTargetIdentityReplacement = false);
 
     FileMutationJournal Advance(
         Guid operationId,
@@ -246,7 +247,8 @@ internal sealed partial class EfFileMutationJournalStore(
             int? audiobookId,
             string? error,
             Func<CancellationToken, Task<RegistrationPublicationMatchOutcome>> validateAsync,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool allowVerifiedTargetIdentityReplacement = false)
     {
         ArgumentNullException.ThrowIfNull(validateAsync);
         ValidateAdvanceRequest(
@@ -274,7 +276,8 @@ internal sealed partial class EfFileMutationJournalStore(
                 state,
                 targetPhysicalObjectIdentity,
                 audiobookId,
-                error);
+                error,
+                allowVerifiedTargetIdentityReplacement);
             if (AfterAdvanceLoadedForTestAsync != null)
             {
                 await AfterAdvanceLoadedForTestAsync();

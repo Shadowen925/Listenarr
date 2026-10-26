@@ -300,6 +300,43 @@ public sealed class AudiobookScanServiceTests : BaseTests
             diagnostic => diagnostic.Code == "TrackedFileGenerationReplaced");
     }
 
+    [Fact]
+    public async Task ScanAsync_TrackedFileSizeIsStale_RefreshesFromPinnedFileLength()
+    {
+        var root = FileService.GetTempDirectory("scan-service-stale-size");
+        var candidate = await FileService.GetFileAsync(
+            root,
+            "Requested Book.m4b",
+            "verified-file-content");
+        var audiobook = await _audiobookRepository.AddAsync(
+            new AudiobookBuilder()
+                .WithTitle("Requested Book")
+                .WithBasePath(root)
+                .Build());
+
+        var initialResult = await ScanAsync(audiobook, root);
+        Assert.Equal(1, initialResult.CreatedCount);
+        var tracked = Assert.Single(
+            await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id));
+        var correctSize = new FileInfo(candidate).Length;
+        Assert.Equal(correctSize, tracked.Size);
+
+        var persisted = Assert.IsType<AudiobookFile>(
+            await _audiobookFileRepository.GetByIdAsync(tracked.Id));
+        persisted.Size = 1;
+        await _audiobookFileRepository.UpdateAsync(persisted);
+
+        var result = await ScanAsync(audiobook, root);
+
+        var refreshed = Assert.Single(
+            await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id));
+        Assert.True(
+            result.Diagnostics.Any(diagnostic =>
+                diagnostic.Code == "TrackedFileSizeRefreshed"),
+            string.Join(", ", result.Diagnostics.Select(diagnostic => diagnostic.Code)));
+        Assert.Equal(correctSize, refreshed.Size);
+    }
+
     [LinuxFact]
     public async Task ScanAsync_CompatibleMergedV1PhysicalToken_DoesNotReportReplacement()
     {

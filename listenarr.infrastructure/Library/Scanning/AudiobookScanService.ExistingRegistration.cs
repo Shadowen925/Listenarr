@@ -128,9 +128,23 @@ internal sealed partial class AudiobookScanService
             // Path equality alone cannot prove that a path-only observation is the
             // same generation as a previously durable ownership record. Preserve
             // the stronger evidence and require repair rather than silently erasing it.
-            return registrationLease.HasDurablePhysicalObjectIdentity
-                && registrationLease.MatchesPhysicalObjectIdentity(
-                    existingFile.PhysicalObjectIdentity);
+            if (!registrationLease.HasDurablePhysicalObjectIdentity
+                || !registrationLease.MatchesPhysicalObjectIdentity(
+                    existingFile.PhysicalObjectIdentity))
+            {
+                return false;
+            }
+
+            using var metadataStream = registrationLease.OpenMetadataReadStream();
+            var currentSize = metadataStream.Length;
+            return existingFile.Size == currentSize
+                || await fileService.RefreshPhysicalGenerationAsync(
+                    audiobook,
+                    existingFile.Id,
+                    existingFile.PhysicalObjectIdentity,
+                    registrationLease,
+                    source,
+                    cancellationToken);
         }
 
         return await fileService.EnsureAudiobookFileAsync(

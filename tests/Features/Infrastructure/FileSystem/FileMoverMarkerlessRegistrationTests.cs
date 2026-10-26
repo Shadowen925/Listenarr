@@ -96,74 +96,40 @@ public sealed class FileMoverMarkerlessRegistrationTests : BaseTests
     }
 
     [Fact]
-    public async Task PrepareCopy_RegisteredTargetAndOriginalContentProofRecoverChangedDestination()
+    public async Task PrepareMove_PublishedTargetWithMatchingContentProofAdoptsReplacement()
     {
         var scenario = await CreateScenarioAsync(
-            "registration-registered-target-recovery");
+            "registration-move-content-proof-recovery");
         var initialCapability = Assert.IsAssignableFrom<
             IFilePublicationSourceCapability>(CreateMover());
         var sourceCapability = await initialCapability.CheckAsync(scenario.Source);
         Assert.True(sourceCapability.IsSupported, sourceCapability.Reason);
         Assert.True(sourceCapability.SourceProof.HasValue);
 
-        string? registeredTargetIdentity = null;
         var interruptedMover = CreateMover(
             afterRegistrationTargetPublishedBeforeState: async () =>
             {
                 File.Delete(scenario.Destination);
                 await File.WriteAllTextAsync(scenario.Destination, "audio");
-                var targetCapability = Assert.IsAssignableFrom<
-                    IFilePublicationSourceCapability>(CreateMover());
-                var targetProof = await targetCapability.CheckAsync(
-                    scenario.Destination);
-                Assert.True(targetProof.IsSupported, targetProof.Reason);
-                registeredTargetIdentity = targetProof.PhysicalObjectIdentity;
             });
 
-        using var rejectedLease =
+        using var recoveredLease =
             await interruptedMover.PrepareActionForRegistrationAsync(
-                FileAction.Copy,
+                FileAction.Move,
                 scenario.Source,
                 scenario.Destination,
                 scenario.OperationId,
                 expectedRegisteredPhysicalObjectIdentity: null,
                 sourceCapability.SourceProof.Value);
 
-        Assert.Null(rejectedLease);
-        Assert.Equal("audio", await File.ReadAllTextAsync(scenario.Destination));
-        Assert.False(string.IsNullOrWhiteSpace(registeredTargetIdentity));
-        await AssertJournalStateAsync(
-            scenario.OperationId,
-            FileMutationJournalState.NeedsAttention,
-            audiobookId: null);
-
-        var recoveryMover = CreateMover();
-        using var recoveredLease =
-            await recoveryMover
-                .PrepareActionForRegistrationWithRegisteredTargetRecoveryAsync(
-                FileAction.Copy,
-                scenario.Source,
-                scenario.Destination,
-                scenario.OperationId,
-                expectedRegisteredPhysicalObjectIdentity: null,
-                sourceCapability.SourceProof.Value,
-                registeredDestinationRecoveryIdentity:
-                    registeredTargetIdentity,
-                registeredDestinationRecoveryAudiobookId: 23);
-
         Assert.NotNull(recoveredLease);
         Assert.True(recoveredLease.MatchesCurrentPublication());
         Assert.Equal("audio", await File.ReadAllTextAsync(scenario.Destination));
         Assert.True(File.Exists(scenario.Source));
-        Assert.True(recoveredLease.PrepareCleanupRecovery(23));
-        Assert.Equal(
-            RegistrationPublicationCompletion.Completed,
-            recoveredLease.CompletePublication());
         await AssertJournalStateAsync(
             scenario.OperationId,
-            FileMutationJournalState.Completed,
-            audiobookId: 23);
-        AssertNoLibraryArtifacts(scenario.Root);
+            FileMutationJournalState.TargetVerified,
+            audiobookId: null);
     }
 
     [Fact]

@@ -71,5 +71,30 @@ namespace Listenarr.Tests.Features.Api.Features.Library
             // Then
             Assert.Equal(Path.Join(RootPath, "Stephen King", "The Dark Tower", "The Gunslinger"), result);
         }
+
+        [Fact]
+        [Trait("Method", "ComputeAudiobookBaseDirectoryFromPattern")]
+        [Trait("Scenario", "LegacySeriesBookTokenRetainsSeparatorsAndPadding")]
+        public void ComputeAudiobookBaseDirectoryFromPattern_LegacySeriesBookTokenRetainsSeparatorsAndPadding()
+        {
+            var audiobook = new AudiobookBuilder()
+                .WithTitle("Electric Idol")
+                .WithAuthor("Katee Robert")
+                .WithSeries("Dark Olympus")
+                .WithSeriesNumber("2")
+                .Build();
+            var pattern = "{Author}{ - Series}/{Series}{ - SeriesBook:00}{ - Title}";
+            var fileNamingService = _provider.GetRequiredService<IFileNamingService>();
+
+            var result = LibraryPathPlanner.ComputeAudiobookBaseDirectoryFromPattern(
+                audiobook,
+                RootPath,
+                pattern,
+                fileNamingService);
+
+            Assert.Equal(
+                Path.Join(RootPath, "Katee Robert - Dark Olympus", "Dark Olympus - Book 02 - Electric Idol"),
+                result);
+        }
     }
 }

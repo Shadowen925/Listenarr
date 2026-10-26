@@ -68,6 +68,17 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             _logger.LogInformation("Audiobook '{Title}': cutoff met={CutoffMet}, best existing quality={BestQuality}",
                 audiobook.Title, cutoffMet, bestExistingQuality ?? "none");
 
+            if (cutoffMet
+                && string.IsNullOrWhiteSpace(audiobook.QualityProfile.CutoffQuality)
+                && quickAddOperation?.State != QuickAddOperationState.NoMatchingReleases)
+            {
+                cutoffMet = await HasVerifiedRegisteredFileAtCutoffAsync(
+                    audiobook,
+                    fileRepository,
+                    audiobookScanService,
+                    stoppingToken);
+            }
+
             if (await TryResolveVerifiedNoMatchAsync(
                 audiobook,
                 quickAddOperation,

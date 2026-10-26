@@ -181,7 +181,9 @@ public partial class AutomaticSearchProcessor
         {
             return false;
         }
-        if (profile.Qualities?.Any(quality => quality.Quality == profile.CutoffQuality) != true)
+        if (!string.IsNullOrWhiteSpace(profile.CutoffQuality)
+            && profile.Qualities?.Any(quality =>
+                quality.Quality == profile.CutoffQuality) != true)
         {
             return false;
         }
@@ -238,7 +240,6 @@ public partial class AutomaticSearchProcessor
                     FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
                 if (stream.Length > 0
-                    && (!file.Size.HasValue || file.Size.Value == stream.Length)
                     && !string.IsNullOrWhiteSpace(audiobook.BasePath)
                     && await audiobookScanService.RegisterExistingFileAsync(
                         audiobook.Id,

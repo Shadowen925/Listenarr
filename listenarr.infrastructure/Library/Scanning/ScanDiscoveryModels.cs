@@ -24,6 +24,7 @@ internal sealed record ScanDiscoveryResult(
     IReadOnlyList<string> EnumeratedDirectories,
     IReadOnlyDictionary<string, string> DirectoryObjectIdentities,
     IReadOnlyDictionary<string, string> FileObjectIdentities,
+    IReadOnlyDictionary<string, long> FileLengths,
     string? SelectedStableIdentifierBoundary,
     bool HasStableIdentifierBoundaryConflict,
     IReadOnlyList<ScanDiscoveryIssue> Issues)
