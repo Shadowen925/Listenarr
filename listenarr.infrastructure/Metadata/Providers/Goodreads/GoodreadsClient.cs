@@ -12,7 +12,6 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Listenarr.Application.Metadata.Goodreads;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.Metadata.Providers.Goodreads

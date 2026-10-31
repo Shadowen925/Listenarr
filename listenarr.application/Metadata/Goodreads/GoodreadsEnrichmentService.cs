@@ -9,7 +9,6 @@
  */
 
 using System.Globalization;
-using Listenarr.Application.Audiobooks.Contracts.Repositories;
 using Listenarr.Application.Search.Matching;
 using Microsoft.Extensions.Logging;
 

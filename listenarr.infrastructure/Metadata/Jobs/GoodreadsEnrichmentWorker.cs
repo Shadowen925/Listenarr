@@ -9,8 +9,6 @@
  */
 
 using System.Collections.Concurrent;
-using Listenarr.Application.Audiobooks.Contracts.Repositories;
-using Listenarr.Application.Metadata.Goodreads;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
