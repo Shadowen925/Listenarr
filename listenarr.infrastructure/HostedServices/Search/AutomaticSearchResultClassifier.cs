@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 
+using Listenarr.Application.Search.Matching;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Infrastructure.HostedServices.Search
@@ -26,59 +27,8 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             return BuildSearchQueries(audiobook).FirstOrDefault() ?? string.Empty;
         }
 
-        public IReadOnlyList<string> BuildSearchQueries(Audiobook audiobook)
-        {
-            var title = audiobook.Title?.Trim();
-            var coreTitle = GetCoreTitle(title);
-            var author = audiobook.Authors?.FirstOrDefault()?.Trim();
-            var primaryMembership = audiobook.SeriesMemberships?.FirstOrDefault(membership => membership.IsPrimary)
-                ?? audiobook.SeriesMemberships?.FirstOrDefault();
-            var series = (audiobook.Series ?? primaryMembership?.SeriesName)?.Trim();
-            var seriesNumber = (audiobook.SeriesNumber ?? primaryMembership?.SeriesNumber)?.Trim();
-            var queries = new List<string>();
-
-            AddQuery(queries, title);
-            AddQuery(queries, coreTitle);
-            AddQuery(queries, coreTitle, author);
-            AddQuery(queries, series, seriesNumber);
-            AddQuery(queries, series, seriesNumber, author);
-            AddQuery(queries, NormalizeTitle(coreTitle));
-            AddQuery(queries, audiobook.Asin);
-
-            return queries.Take(7).ToArray();
-        }
-
-        private static string? GetCoreTitle(string? title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return null;
-            }
-
-            var colon = title.IndexOf(':');
-            return colon > 0 ? title[..colon].Trim() : title.Trim();
-        }
-
-        private static string? NormalizeTitle(string? title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return null;
-            }
-
-            return System.Text.RegularExpressions.Regex.Replace(title, @"[^\p{L}\p{N}]+", " ")
-                .Trim();
-        }
-
-        private static void AddQuery(List<string> queries, params string?[] parts)
-        {
-            var query = string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
-            if (!string.IsNullOrWhiteSpace(query)
-                && !queries.Contains(query, StringComparer.OrdinalIgnoreCase))
-            {
-                queries.Add(query);
-            }
-        }
+        public IReadOnlyList<string> BuildSearchQueries(Audiobook audiobook) =>
+            AudiobookSearchQueryPlanner.Build(audiobook);
 
         public bool IsTorrentResult(SearchResult result)
         {

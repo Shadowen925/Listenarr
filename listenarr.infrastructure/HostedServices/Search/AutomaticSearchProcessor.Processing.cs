@@ -115,7 +115,7 @@ namespace Listenarr.Infrastructure.HostedServices.Search
             Exception? lastSearchException = null;
             try
             {
-                var collected = await CollectSearchResultsAsync(searchService, searchQueries, audiobook.Id);
+                var collected = await CollectSearchResultsAsync(searchService, searchQueries, audiobook.Id, audiobook);
                 rawSearchResults = collected.Results;
                 attemptedQueries = collected.QueriesAttempted;
                 successfulQueries = collected.SuccessfulQueryCount;

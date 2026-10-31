@@ -30,11 +30,14 @@ internal static class MetadataRegistrationExtensions
         services.AddHttpClient<IAudnexusService, AudnexusService>()
             .ConfigurePrimaryHttpMessageHandler(PlatformRegistrationExtensions.CreateExternalHandler)
             .AddPolicyHandler(retryPolicy);
+        services.AddHttpClient<IGoodreadsClient, GoodreadsClient>()
+            .ConfigurePrimaryHttpMessageHandler(PlatformRegistrationExtensions.CreateExternalHandler);
         return services;
     }
 
     public static IServiceCollection AddMetadataServices(this IServiceCollection services)
     {
+        services.AddScoped<IGoodreadsEnrichmentService, GoodreadsEnrichmentService>();
         services.AddScoped<IMetadataService, MetadataService>();
         services.AddScoped<IAsinLookupService, AsinLookupService>();
         services.AddScoped<IAudiobookMetadataService, AudiobookMetadataService>();

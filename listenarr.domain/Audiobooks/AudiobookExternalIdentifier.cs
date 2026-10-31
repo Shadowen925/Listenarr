@@ -21,7 +21,8 @@ namespace Listenarr.Domain.Audiobooks
     {
         Asin = 0,
         Isbn = 1,
-        OpenLibraryId = 2
+        OpenLibraryId = 2,
+        GoodreadsId = 3
     }
 
     public enum AudiobookExternalIdentifierSource
@@ -93,6 +94,23 @@ namespace Listenarr.Domain.Audiobooks
                         if (string.IsNullOrWhiteSpace(candidate))
                         {
                             error = "OpenLibrary ID is invalid.";
+                            return false;
+                        }
+                        normalizedValue = candidate;
+                        return true;
+                    }
+                case AudiobookExternalIdentifierType.GoodreadsId:
+                    {
+                        var candidate = trimmed;
+                        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var goodreadsUri))
+                        {
+                            var segment = goodreadsUri.AbsolutePath.Trim('/').Split('/').LastOrDefault() ?? string.Empty;
+                            candidate = segment.Split('-', '.')[0];
+                        }
+
+                        if (candidate.Length == 0 || candidate.Length > 12 || !candidate.All(char.IsAsciiDigit))
+                        {
+                            error = "Goodreads ID must be numeric.";
                             return false;
                         }
                         normalizedValue = candidate;

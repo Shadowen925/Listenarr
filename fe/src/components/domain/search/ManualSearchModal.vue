@@ -604,6 +604,9 @@ async function search() {
     // Build search query from title and author (fallback if no manual query)
     const query = searchQuery.value.trim() || buildSearchQuery()
     diagnosticQuery.value = query
+    // Only widen the search when the user kept the default query; an edited query is used verbatim.
+    const queryVariants = query === buildSearchQuery() ? buildQueryVariants() : [query]
+    if (queryVariants.length > 1) diagnosticQuery.value = queryVariants.join(' | ')
 
     // Search each indexer individually to show progress
     const allResults: SearchResult[] = []
@@ -637,12 +640,33 @@ async function search() {
           }
         }
 
-        const indexerResultsRaw: unknown[] = await apiService.searchByApi(
-          indexer.id.toString(),
-          query,
-          undefined,
-          opts,
-        )
+        const indexerResultsRaw: unknown[] = []
+        const seenRaw = new Set<string>()
+        let lastError: unknown = null
+        let anySucceeded = false
+        for (const variant of queryVariants) {
+          try {
+            const batch = await apiService.searchByApi(
+              indexer.id.toString(),
+              variant,
+              undefined,
+              opts,
+            )
+            anySucceeded = true
+            for (const item of batch as unknown[]) {
+              const dto = item as Record<string, unknown>
+              const key = String(dto.guid ?? dto.downloadUrl ?? dto.id ?? dto.title ?? '')
+              if (key && seenRaw.has(key)) continue
+              if (key) seenRaw.add(key)
+              indexerResultsRaw.push(item)
+            }
+            // Variants are ordered broad-to-narrow; stop once one finds releases to spare the indexer.
+            if (indexerResultsRaw.length > 0) break
+          } catch (variantError) {
+            lastError = variantError
+          }
+        }
+        if (!anySucceeded && lastError) throw lastError
 
         // Normalize Prowlarr-like IndexerResultDto into local SearchResult shape for the UI
         let normalized: SearchResult[] = []
@@ -899,6 +923,46 @@ async function loadQualityProfileAndScore() {
   } catch (error) {
     logger.warn('Failed to load quality profile or score results:', error)
   }
+}
+
+// Mirrors AudiobookSearchQueryPlanner on the backend: broad-to-narrow partial queries.
+function buildQueryVariants(): string[] {
+  const book = props.audiobook
+  if (!book) return []
+
+  const title = (book.title ?? '').trim()
+  const author = (book.authors?.find((a) => a && a.trim()) ?? '').trim()
+  const core = title.replace(/\s*(?::|\s[-–—]\s|\(|\[).*$/, '').trim() || title
+  const bare = core.replace(/^(?:the|a|an)\s+/i, '').trim() || core
+  const lastName = author.includes(' ') ? author.split(/\s+/).pop() : ''
+  const series = (book.series ?? '').trim()
+  const seriesNumber = (book.seriesNumber ?? '').toString().trim()
+
+  const candidates = [
+    [title, author],
+    [title],
+    [core, author],
+    [core],
+    [book.asin],
+    [bare, author],
+    [bare],
+    [series, seriesNumber, author],
+    [core.replace(/[^\p{L}\p{N}]+/gu, ' ')],
+    [core, lastName],
+    [author],
+  ]
+
+  const seen = new Set<string>()
+  const variants: string[] = []
+  for (const parts of candidates) {
+    const query = parts.filter((p) => p && p.trim()).join(' ').trim()
+    const key = query.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase()
+    if (key && !seen.has(key)) {
+      seen.add(key)
+      variants.push(query)
+    }
+  }
+  return variants.slice(0, 8)
 }
 
 function buildSearchQuery(): string {

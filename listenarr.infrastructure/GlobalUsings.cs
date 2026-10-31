@@ -97,6 +97,8 @@ global using Listenarr.Infrastructure.Metadata.Jobs;
 global using Listenarr.Infrastructure.Metadata.Providers.Audible;
 global using Listenarr.Infrastructure.Metadata.Providers.Audnexus;
 global using Listenarr.Infrastructure.Metadata.Providers.OpenLibrary;
+global using Listenarr.Infrastructure.Metadata.Providers.Goodreads;
+global using Listenarr.Application.Metadata.Goodreads;
 global using Listenarr.Infrastructure.HostedServices.Search;
 global using Listenarr.Infrastructure.DownloadClients.Common;
 global using Listenarr.Infrastructure.DownloadClients.Deluge;

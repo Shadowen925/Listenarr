@@ -15,7 +15,8 @@ public partial class AutomaticSearchProcessor
     private async Task<AutomaticSearchQueryCollection> CollectSearchResultsAsync(
         ISearchService searchService,
         IReadOnlyList<string> searchQueries,
-        int audiobookId)
+        int audiobookId,
+        Audiobook? audiobook = null)
     {
         var results = new List<SearchResult>();
         var queriesAttempted = new List<string>();
@@ -88,6 +89,14 @@ public partial class AutomaticSearchProcessor
                 {
                     results.Add(result);
                 }
+            }
+
+            // Queries run broad-to-narrow; once one yields releases matching this book, the rest only
+            // add indexer load (some indexers take ~7s per query).
+            if (audiobook != null
+                && queryResults.Any(result => Listenarr.Application.Search.Matching.AudiobookSearchResultMatcher.MatchesIdentity(audiobook, result)))
+            {
+                break;
             }
         }
 

@@ -288,14 +288,23 @@ public partial class AutomaticSearchProcessor
                     FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
                 if (stream.Length > 0
-                    && !string.IsNullOrWhiteSpace(audiobook.BasePath)
-                    && await audiobookScanService.RegisterExistingFileAsync(
+                    && !string.IsNullOrWhiteSpace(audiobook.BasePath))
+                {
+                    if (await audiobookScanService.RegisterExistingFileAsync(
                         audiobook.Id,
                         audiobook.BasePath,
                         path,
                         "automatic-search-availability",
                         cancellationToken))
-                {
+                    {
+                        return true;
+                    }
+
+                    // Re-registration is best-effort. The file is already registered with a valid identity,
+                    // meets the cutoff and is readable, so a strict re-check must not trigger endless re-searches.
+                    _logger.LogInformation(
+                        "Registered file for audiobook {AudiobookId} is readable and valid but could not be re-registered; treating it as present",
+                        audiobook.Id);
                     return true;
                 }
             }

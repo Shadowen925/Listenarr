@@ -487,7 +487,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
     }
 
     [Fact]
-    public async Task SearchAudiobookAsync_QueriesTitleAndSeriesPositionVariants()
+    public async Task SearchAudiobookAsync_StopsAfterFirstQueryThatMatchesTheBook()
     {
         using var fixture = new Fixture(("release", 100));
         fixture.Audiobook.Authors = ["Troy Ashford"];
@@ -496,11 +496,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
 
-        Assert.Contains("Test Book Troy Ashford", fixture.SearchQueries);
-        Assert.Contains("Test Book", fixture.SearchQueries);
-        Assert.Contains("Mystic Seekers 1 Troy Ashford", fixture.SearchQueries);
-        Assert.Contains(fixture.Audiobook.Asin, fixture.SearchQueries);
-        Assert.Equal(fixture.SearchQueries.Count, fixture.SearchQueries.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(["Test Book Troy Ashford"], fixture.SearchQueries);
     }
 
     [Fact]
@@ -518,7 +514,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
 
-        Assert.Contains("Heart of Radiance", fixture.SearchQueries);
+        Assert.Contains("Heart of Radiance: A LitRPG Progression Fantasy Luke Chmilenko", fixture.SearchQueries);
         Assert.Equal(["aetherforged-book-3"], fixture.SubmissionOrder);
         Assert.Equal("DownloadQueued", Assert.Single(fixture.Diagnostics).FinalOutcome);
     }
@@ -541,7 +537,7 @@ public sealed class AutomaticSearchProcessorFallbackTests : BaseTests
 
         await fixture.Processor.SearchAudiobookAsync(fixture.Audiobook.Id, CancellationToken.None);
 
-        Assert.Contains("Heart of Radiance", fixture.SearchQueries);
+        Assert.Contains("Heart of Radiance: A LitRPG Progression Fantasy Luke Chmilenko", fixture.SearchQueries);
         Assert.Equal(["title-only-release"], fixture.SubmissionOrder);
     }
 
