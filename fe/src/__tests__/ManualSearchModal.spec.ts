@@ -476,7 +476,7 @@ describe('ManualSearchModal.vue', () => {
     while (Date.now() - start < 3000) {
       await nextTick()
       const badge = wrapper.find('.col-score .score-badge')
-      if (badge.exists() && badge.text().includes('88')) {
+      if (badge.exists() && badge.text().includes('35')) {
         break
       }
       await new Promise((resolve) => setTimeout(resolve, 25))
@@ -488,7 +488,7 @@ describe('ManualSearchModal.vue', () => {
 
     const badge = wrapper.find('.col-score .score-badge')
     expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('88')
+    expect(badge.text()).toContain('35')
     expect(wrapper.find('.edition-mismatch').text()).toBe('Different edition')
     expect(wrapper.find('.col-score [title]').attributes('title')).toContain(
       'Selected edition: Does not match',

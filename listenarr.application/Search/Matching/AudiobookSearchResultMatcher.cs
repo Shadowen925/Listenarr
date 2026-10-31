@@ -386,7 +386,14 @@ namespace Listenarr.Application.Search.Matching
 
         private static bool ContainsTitle(string candidateTitle, string expectedTitle)
         {
-            var expectedTokens = Tokenize(expectedTitle)
+            // "Assassin's Quest" must also match releases that write "Assassins Quest".
+            return ContainsTitleTokens(candidateTitle, expectedTitle, joinApostrophes: false)
+                || ContainsTitleTokens(candidateTitle, expectedTitle, joinApostrophes: true);
+        }
+
+        private static bool ContainsTitleTokens(string candidateTitle, string expectedTitle, bool joinApostrophes)
+        {
+            var expectedTokens = Tokenize(expectedTitle, joinApostrophes)
                 .Where(token => !IgnoredTitleTokens.Contains(token))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (expectedTokens.Count == 0)
@@ -394,7 +401,7 @@ namespace Listenarr.Application.Search.Matching
                 return false;
             }
 
-            var candidateTokens = Tokenize(candidateTitle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var candidateTokens = Tokenize(candidateTitle, joinApostrophes).ToHashSet(StringComparer.OrdinalIgnoreCase);
             return expectedTokens.IsSubsetOf(candidateTokens);
         }
 

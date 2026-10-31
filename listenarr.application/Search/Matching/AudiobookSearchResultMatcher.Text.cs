@@ -81,7 +81,9 @@ namespace Listenarr.Application.Search.Matching
             return match.Success ? ParsePosition(match.Groups[1].Value) : null;
         }
 
-        private static List<string> Tokenize(string? value)
+        private static List<string> Tokenize(string? value) => Tokenize(value, joinApostrophes: false);
+
+        private static List<string> Tokenize(string? value, bool joinApostrophes)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -94,6 +96,11 @@ namespace Listenarr.Application.Search.Matching
             {
                 if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
                 {
+                    if (joinApostrophes && character is '\'' or '\u2019' or '\u2018' or '`')
+                    {
+                        continue;
+                    }
+
                     normalized.Append(char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : ' ');
                 }
             }

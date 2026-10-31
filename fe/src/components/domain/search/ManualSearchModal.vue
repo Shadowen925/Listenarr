@@ -1179,8 +1179,24 @@ function getManualScoreTooltip(resultId: string): string {
   return [qualityDetails, editionSummary, evidence, conflicts].filter(Boolean).join('\n')
 }
 
-// Visible score value for the UI: prefer smartScore when available
+// Visible score: the quality/indexer score blended with how well the release matches the
+// selected book, so a correct edition outranks popular releases of other books.
 function getVisibleScoreValue(resultId: string): number | undefined {
+  const q = getResultScore(resultId)
+  const base = getBaseScoreValue(resultId)
+  if (!q || base === undefined) return base
+
+  if (q.matchesAudiobookEdition === true) {
+    const confidence = Math.max(0, Math.min(100, q.editionMatchConfidence ?? 75))
+    return Math.round(confidence * 0.7 + Math.min(100, base) * 0.3)
+  }
+  if (q.matchesAudiobookEdition === false) {
+    return Math.round(Math.min(35, base * 0.4))
+  }
+  return base
+}
+
+function getBaseScoreValue(resultId: string): number | undefined {
   const q = getResultScore(resultId)
   if (!q) return undefined
 

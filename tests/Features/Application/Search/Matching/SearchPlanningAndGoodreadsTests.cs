@@ -10,6 +10,22 @@ namespace Listenarr.Tests.Features.Application.Search.Matching
     public class SearchPlanningAndGoodreadsTests : BaseTests
     {
         [Fact]
+        public void Matcher_TreatsApostropheTitlesAsEquivalentToUnpunctuatedRelease()
+        {
+            var book = new Audiobook { Title = "Assassin's Quest", Authors = ["Robin Hobb"] };
+            var release = new SearchResult
+            {
+                Title = "Assassins Quest: The Farseer Trilogy, Book 3 (Audible Version ) - Robin Hobb"
+            };
+
+            var evidence = AudiobookSearchResultMatcher.EvaluateIdentity(book, release);
+
+            Assert.True(evidence.IsAccepted);
+            Assert.Contains("TitleMatch", evidence.PositiveEvidence);
+            Assert.True(evidence.Confidence >= 90);
+        }
+
+        [Fact]
         public void Planner_ProducesBroadVariantsWithoutDuplicates()
         {
             var book = new Audiobook
